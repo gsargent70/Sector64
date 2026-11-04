@@ -40,6 +40,8 @@ pub enum Error {
     DiskFull,
     /// The directory track (18) has no room for another directory sector.
     DirectoryFull,
+    /// No directory entry matched the requested name.
+    FileNotFound,
 }
 
 impl fmt::Display for Error {
@@ -77,6 +79,7 @@ impl fmt::Display for Error {
             Error::MissingSideSectors => write!(f, "REL file has no side-sector pointer"),
             Error::DiskFull => write!(f, "not enough free blocks on the disk"),
             Error::DirectoryFull => write!(f, "directory is full"),
+            Error::FileNotFound => write!(f, "file not found"),
         }
     }
 }

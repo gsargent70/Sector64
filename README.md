@@ -51,13 +51,14 @@ job with those failure modes designed out:
   data-block pointers it indexes, and splits the data into fixed-length
   records — same cycle/bounds guards as the other walks.
 
-- **Writing** (`Disk::format`, `write_file`, `as_bytes`): format a blank disk,
-  allocate blocks through the BAM, write a file's data chain, and add its
-  directory entry (extending onto a second directory sector when needed). What
-  it writes is read back byte-for-byte by `c1541` (see Testing).
+- **Writing** (`Disk::format`, `write_file`, `scratch`, `rename`, `as_bytes`):
+  format a blank disk, allocate blocks through the BAM, write a file's data
+  chain and directory entry (extending onto a second directory sector when
+  needed), delete a file (freeing its blocks and side sectors and reusing the
+  slot), and rename in place. What it writes and edits is read back
+  byte-for-byte by `c1541` (see Testing).
 
-Not yet: scratch/rename, 1581/1571 formats, archive/graphics formats. Those are
-the next layers.
+Not yet: 1581/1571 formats, archive/graphics formats. Those are the next layers.
 
 ## Build and run
 

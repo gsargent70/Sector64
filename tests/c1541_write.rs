@@ -92,3 +92,67 @@ fn c1541_reads_what_we_write() {
         assert_eq!(disk.blocks_free().unwrap(), free, "blocks free vs c1541");
     }
 }
+
+#[test]
+fn c1541_sees_scratch_and_rename() {
+    if !c1541_available() {
+        eprintln!("skipping: c1541 (VICE) not found on PATH");
+        return;
+    }
+
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("c1541_edit");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    let mut disk = Disk::format("edittest", "01");
+    let keep = pseudo_bytes(10, 600);
+    let doomed = pseudo_bytes(20, 400);
+    let renamed = pseudo_bytes(30, 900);
+    disk.write_file("keepme", FileType::Prg, &keep).unwrap();
+    disk.write_file("doomed", FileType::Prg, &doomed).unwrap();
+    disk.write_file("before", FileType::Prg, &renamed).unwrap();
+
+    disk.scratch("doomed").unwrap();
+    disk.rename("before", "after").unwrap();
+
+    let img = dir.join("edited.d64");
+    fs::write(&img, disk.as_bytes()).unwrap();
+
+    // The scratched file is gone, the renamed one is present under its new name.
+    let out = Command::new("c1541").arg(&img).arg("-dir").output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+    assert!(!text.contains("doomed"), "scratched file still listed");
+    assert!(!text.contains("before"), "old name still listed");
+    assert!(text.contains("after"), "renamed file not listed");
+    assert_eq!(
+        text.lines().filter(|l| l.contains(" prg")).count(),
+        2,
+        "expected keepme + after"
+    );
+
+    // c1541 reads the renamed file back; its data is unchanged.
+    let out = dir.join("after.ref");
+    assert!(Command::new("c1541")
+        .arg(&img)
+        .arg("-read")
+        .arg("after")
+        .arg(&out)
+        .status()
+        .unwrap()
+        .success());
+    assert_eq!(fs::read(&out).unwrap(), renamed);
+
+    // The scratched file can no longer be read.
+    assert!(!Command::new("c1541")
+        .arg(&img)
+        .arg("-read")
+        .arg("doomed")
+        .arg(dir.join("doomed.ref"))
+        .status()
+        .unwrap()
+        .success());
+
+    if let Some(free) = blocks_free_from_dir(&img) {
+        assert_eq!(disk.blocks_free().unwrap(), free, "blocks free vs c1541 after edits");
+    }
+}

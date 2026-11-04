@@ -663,6 +663,78 @@ impl Disk {
         b[o + 31] = (n_blocks >> 8) as u8;
         Ok(())
     }
+
+    /// Locate the directory slot of the first used entry matching `name`
+    /// (case-insensitive), as (track, sector, slot).
+    fn entry_location(&self, name: &str) -> Result<Option<(u8, u8, usize)>> {
+        let target = name.to_ascii_uppercase();
+        let (mut track, mut sector) = (DIRECTORY_TRACK, DIRECTORY_FIRST_SECTOR);
+        let mut visited: Vec<(u8, u8)> = Vec::new();
+        loop {
+            if visited.contains(&(track, sector)) {
+                return Err(Error::DirectoryCycle { track, sector });
+            }
+            visited.push((track, sector));
+            let block = self.block(track, sector)?;
+            let (next_track, next_sector) = (block[0], block[1]);
+            for i in 0..SLOTS_PER_SECTOR {
+                let o = i * SLOT_SIZE;
+                if block[o + 2] == 0 {
+                    continue; // unused slot
+                }
+                let mut slot = [0u8; SLOT_SIZE];
+                slot.copy_from_slice(&block[o..o + SLOT_SIZE]);
+                let entry = Entry::parse(&slot);
+                if entry.is_used() && entry.name.to_ascii_uppercase() == target {
+                    return Ok(Some((track, sector, i)));
+                }
+            }
+            if next_track == 0 {
+                return Ok(None);
+            }
+            track = next_track;
+            sector = next_sector;
+        }
+    }
+
+    /// Delete a file: free its data blocks (and side sectors, for REL) in the
+    /// BAM and mark its directory slot reusable. Returns the number of blocks
+    /// freed. The directory itself is not shrunk, matching CBM DOS.
+    pub fn scratch(&mut self, name: &str) -> Result<usize> {
+        let (dt, ds, slot) = self.entry_location(name)?.ok_or(Error::FileNotFound)?;
+        let entry = {
+            let b = self.block(dt, ds)?;
+            let mut s = [0u8; SLOT_SIZE];
+            s.copy_from_slice(&b[slot * SLOT_SIZE..slot * SLOT_SIZE + SLOT_SIZE]);
+            Entry::parse(&s)
+        };
+
+        let mut freed = 0usize;
+        for (t, s) in self.file_block_chain(entry.first_track, entry.first_sector)? {
+            self.bam_set(t, s, false);
+            freed += 1;
+        }
+        if entry.file_type == FileType::Rel && entry.side_track != 0 {
+            for (t, s) in self.side_sector_chain(&entry)? {
+                self.bam_set(t, s, false);
+                freed += 1;
+            }
+        }
+
+        // Clear the file-type byte, which marks the slot free for reuse.
+        self.block_mut(dt, ds)?[slot * SLOT_SIZE + 2] = 0;
+        Ok(freed)
+    }
+
+    /// Rename a file in place, leaving its data untouched.
+    pub fn rename(&mut self, old: &str, new: &str) -> Result<()> {
+        let (dt, ds, slot) = self.entry_location(old)?.ok_or(Error::FileNotFound)?;
+        let name = petscii::encode_field(new, 16);
+        let b = self.block_mut(dt, ds)?;
+        let o = slot * SLOT_SIZE;
+        b[o + 5..o + 21].copy_from_slice(&name);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -991,5 +1063,47 @@ mod tests {
         );
         assert_eq!(disk.blocks_free().unwrap(), before); // unchanged
         assert!(disk.directory().unwrap().is_empty());
+    }
+
+    #[test]
+    fn scratch_frees_blocks_and_hides_entry() {
+        let mut disk = Disk::format("d", "01");
+        disk.write_file("keep", FileType::Prg, &[1u8; 300]).unwrap(); // 2 blocks
+        disk.write_file("gone", FileType::Prg, &[2u8; 600]).unwrap(); // 3 blocks
+        let before = disk.blocks_free().unwrap();
+
+        assert_eq!(disk.scratch("gone").unwrap(), 3);
+        assert_eq!(disk.blocks_free().unwrap(), before + 3);
+        assert_eq!(disk.scratch("missing").err(), Some(Error::FileNotFound));
+
+        let disk = Disk::load(disk.as_bytes().to_vec()).unwrap();
+        assert!(disk.find_entry("gone").unwrap().is_none());
+        assert!(disk.find_entry("keep").unwrap().is_some());
+        assert!(disk.validate().unwrap().is_clean());
+    }
+
+    #[test]
+    fn scratched_slot_is_reused() {
+        let mut disk = Disk::format("d", "01");
+        disk.write_file("a", FileType::Prg, &[0u8; 10]).unwrap();
+        disk.scratch("a").unwrap();
+        disk.write_file("b", FileType::Prg, &[0u8; 10]).unwrap();
+        let dir = disk.directory().unwrap();
+        assert_eq!(dir.len(), 1); // reused the freed slot
+        assert_eq!(dir[0].name, "B");
+    }
+
+    #[test]
+    fn rename_changes_name_only() {
+        let mut disk = Disk::format("d", "01");
+        let data = vec![7u8; 500];
+        disk.write_file("oldname", FileType::Prg, &data).unwrap();
+        disk.rename("oldname", "newname").unwrap();
+        assert_eq!(disk.rename("missing", "x").err(), Some(Error::FileNotFound));
+
+        let disk = Disk::load(disk.as_bytes().to_vec()).unwrap();
+        assert!(disk.find_entry("oldname").unwrap().is_none());
+        let e = disk.find_entry("newname").unwrap().unwrap();
+        assert_eq!(disk.read_entry(&e).unwrap(), data); // data intact
     }
 }
