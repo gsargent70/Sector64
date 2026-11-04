@@ -67,6 +67,10 @@ cargo test                           # unit tests, incl. malformed-image rejecti
 cargo run --bin d64ls -- disk.d64    # directory listing
 cargo run --bin d64extract -- disk.d64 GAME > game.prg   # extract one file
 cargo run --bin d64val -- disk.d64                       # validate vs. the BAM
+cargo run --bin d64write -- format disk.d64 "my disk" 01 # create a blank image
+cargo run --bin d64write -- add disk.d64 hello hello.prg # write a host file in
+cargo run --bin d64write -- rename disk.d64 hello hi     # rename
+cargo run --bin d64write -- delete disk.d64 hi           # scratch
 ```
 
 Example listing:
@@ -115,6 +119,7 @@ against a real disk.
 | `src/bin/d64ls.rs` | CLI directory listing |
 | `src/bin/d64extract.rs` | CLI: extract one file to stdout |
 | `src/bin/d64val.rs` | CLI: validate the disk against its BAM |
+| `src/bin/d64write.rs` | CLI: format, add, delete, rename |
 
 ## License
 

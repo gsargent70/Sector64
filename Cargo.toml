@@ -20,5 +20,9 @@ path = "src/bin/d64extract.rs"
 name = "d64val"
 path = "src/bin/d64val.rs"
 
+[[bin]]
+name = "d64write"
+path = "src/bin/d64write.rs"
+
 [profile.release]
 overflow-checks = true  # keep arithmetic checks on even in release; this is a parser.
