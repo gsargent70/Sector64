@@ -49,6 +49,18 @@ impl FileType {
         }
     }
 
+    /// The low-nibble type code stored in a directory entry.
+    pub fn to_nibble(self) -> u8 {
+        match self {
+            FileType::Del => 0,
+            FileType::Seq => 1,
+            FileType::Prg => 2,
+            FileType::Usr => 3,
+            FileType::Rel => 4,
+            FileType::Other(n) => n & 0x0F,
+        }
+    }
+
     /// Three-letter mnemonic as shown in a classic directory listing.
     pub fn mnemonic(self) -> &'static str {
         match self {

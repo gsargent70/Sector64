@@ -1,6 +1,7 @@
 # d64
 
-A small, clean-room reader for Commodore 1541 **D64** disk images, in Rust.
+A small, clean-room library for Commodore 1541 **D64** disk images, in Rust —
+reading, validation, and now writing.
 
 Written from the publicly documented 1541 disk format. It is **not** derived
 from DirMaster or any other tool's code, and it contains none of their fonts,
@@ -50,7 +51,13 @@ job with those failure modes designed out:
   data-block pointers it indexes, and splits the data into fixed-length
   records — same cycle/bounds guards as the other walks.
 
-Not yet: writing, archive/graphics formats. Those are the next layers.
+- **Writing** (`Disk::format`, `write_file`, `as_bytes`): format a blank disk,
+  allocate blocks through the BAM, write a file's data chain, and add its
+  directory entry (extending onto a second directory sector when needed). What
+  it writes is read back byte-for-byte by `c1541` (see Testing).
+
+Not yet: scratch/rename, 1581/1571 formats, archive/graphics formats. Those are
+the next layers.
 
 ## Build and run
 
@@ -76,10 +83,13 @@ not share code with:
 
 1. **Unit tests** (`src/*.rs`): synthetic images and the malformed-input
    rejections. Always run.
-2. **`c1541` differential** (`tests/c1541_diff.rs`): builds a disk with VICE's
-   `c1541`, then checks directory, blocks-free, and per-file extraction
-   byte-for-byte against `c1541`'s own output. Runs when `c1541` is on `PATH`,
-   skips cleanly otherwise.
+2. **`c1541` read differential** (`tests/c1541_diff.rs`): builds a disk with
+   VICE's `c1541`, then checks directory, blocks-free, and per-file extraction
+   byte-for-byte against `c1541`'s own output.
+   **`c1541` write round-trip** (`tests/c1541_write.rs`): formats and writes
+   files with this crate, then confirms `c1541` reads them all back
+   byte-for-byte and agrees on the file count and free blocks. Both run when
+   `c1541` is on `PATH`, skip cleanly otherwise.
 3. **Emulator-minted REL** (`tests/rel_fixture.rs`): reads `fixtures/rel.d64`, a
    relative file created by the emulated 1541 DOS (VICE `x64sc` running
    `fixtures/makerel.bas`), and checks the side-sector path returns the exact

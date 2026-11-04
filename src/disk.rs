@@ -88,6 +88,70 @@ impl Disk {
         Ok(disk)
     }
 
+    /// Create a blank, freshly formatted 35-track disk with the given name and
+    /// id, ready for [`Disk::write_file`].
+    pub fn format(name: &str, id: &str) -> Disk {
+        let track_count = 35u8;
+        let data_len = geometry::total_blocks(track_count) as usize * BLOCK_SIZE;
+        let mut disk = Disk {
+            data: vec![0u8; data_len],
+            track_count,
+            data_len,
+            dos: DosFormat::Cbm,
+        };
+
+        let bam_off = geometry::ts_to_offset(DIRECTORY_TRACK, 0, track_count).unwrap();
+        {
+            let b = &mut disk.data[bam_off..bam_off + BLOCK_SIZE];
+            b[0] = DIRECTORY_TRACK;
+            b[1] = DIRECTORY_FIRST_SECTOR;
+            b[2] = b'A'; // DOS version
+            b[3] = 0;
+            // Every track starts fully free.
+            for track in 1..=track_count {
+                let spt = geometry::sectors_per_track(track, track_count).unwrap();
+                let e = 4 + (track as usize - 1) * 4;
+                b[e] = spt;
+                let mut bits: u32 = 0;
+                for s in 0..spt {
+                    bits |= 1 << s;
+                }
+                b[e + 1] = bits as u8;
+                b[e + 2] = (bits >> 8) as u8;
+                b[e + 3] = (bits >> 16) as u8;
+            }
+            // Header: name ($90), id ($A2), DOS type "2A".
+            b[0x90..0xA0].copy_from_slice(&petscii::encode_field(name, 16));
+            b[0xA0] = petscii::PAD;
+            b[0xA1] = petscii::PAD;
+            let id_bytes = petscii::encode_field(id, 2);
+            b[0xA2] = id_bytes[0];
+            b[0xA3] = id_bytes[1];
+            b[0xA4] = petscii::PAD;
+            b[0xA5] = b'2';
+            b[0xA6] = b'A';
+            b[0xA7] = petscii::PAD;
+            b[0xA8] = petscii::PAD;
+            b[0xA9] = petscii::PAD;
+            b[0xAA] = petscii::PAD;
+        }
+        // First directory sector: empty, chain-terminated.
+        let dir_off = geometry::ts_to_offset(DIRECTORY_TRACK, DIRECTORY_FIRST_SECTOR, track_count)
+            .unwrap();
+        disk.data[dir_off] = 0;
+        disk.data[dir_off + 1] = 0xFF;
+
+        // Reserve the BAM and the first directory sector.
+        disk.bam_set(DIRECTORY_TRACK, 0, true);
+        disk.bam_set(DIRECTORY_TRACK, DIRECTORY_FIRST_SECTOR, true);
+        disk
+    }
+
+    /// The raw image bytes, for saving to a `.d64` file.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.data
+    }
+
     pub fn track_count(&self) -> u8 {
         self.track_count
     }
@@ -401,6 +465,204 @@ impl Disk {
         let records = stream.chunks(record_len as usize).map(<[u8]>::to_vec).collect();
         Ok(RelFile { record_len, records })
     }
+
+    // --- writing -------------------------------------------------------------
+
+    /// Mutable borrow of one 256-byte block, with the same start+length check
+    /// as [`Disk::block`].
+    pub fn block_mut(&mut self, track: u8, sector: u8) -> Result<&mut [u8]> {
+        let offset = geometry::ts_to_offset(track, sector, self.track_count)?;
+        let end = offset
+            .checked_add(BLOCK_SIZE)
+            .filter(|&e| e <= self.data_len)
+            .ok_or(Error::Truncated {
+                track,
+                sector,
+                offset,
+                data_len: self.data_len,
+            })?;
+        Ok(&mut self.data[offset..end])
+    }
+
+    /// Byte offset of a track's standard BAM entry (tracks 1–35).
+    fn bam_entry_offset(&self, track: u8) -> Option<usize> {
+        if track == 0 || track > bam::BAM_TRACKS || track > self.track_count {
+            return None;
+        }
+        let bam_off = geometry::ts_to_offset(DIRECTORY_TRACK, 0, self.track_count).ok()?;
+        Some(bam_off + 4 + (track as usize - 1) * 4)
+    }
+
+    /// Whether (track, sector) is currently free in the BAM.
+    fn bam_is_free(&self, track: u8, sector: u8) -> bool {
+        match self.bam_entry_offset(track) {
+            Some(base) => {
+                let byte = self.data[base + 1 + (sector / 8) as usize];
+                byte & (1 << (sector % 8)) != 0
+            }
+            None => false,
+        }
+    }
+
+    /// Mark (track, sector) allocated (`true`) or free (`false`) in the BAM,
+    /// keeping the per-track free count in step.
+    fn bam_set(&mut self, track: u8, sector: u8, allocated: bool) {
+        let Some(base) = self.bam_entry_offset(track) else {
+            return;
+        };
+        let byte_idx = base + 1 + (sector / 8) as usize;
+        let bit = 1u8 << (sector % 8);
+        let currently_free = self.data[byte_idx] & bit != 0;
+        if allocated && currently_free {
+            self.data[byte_idx] &= !bit;
+            self.data[base] = self.data[base].saturating_sub(1);
+        } else if !allocated && !currently_free {
+            self.data[byte_idx] |= bit;
+            self.data[base] = self.data[base].saturating_add(1);
+        }
+    }
+
+    /// Free data blocks available (tracks 1–35, excluding the directory track).
+    fn count_free_data_blocks(&self) -> usize {
+        let mut n = 0;
+        for track in 1..=bam::BAM_TRACKS {
+            if track == DIRECTORY_TRACK {
+                continue;
+            }
+            if let Some(base) = self.bam_entry_offset(track) {
+                n += self.data[base] as usize;
+            }
+        }
+        n
+    }
+
+    /// Allocate the first free block off the directory track, marking it used.
+    fn allocate_data_block(&mut self) -> Result<(u8, u8)> {
+        for track in 1..=self.track_count {
+            if track == DIRECTORY_TRACK {
+                continue;
+            }
+            let spt = geometry::sectors_per_track(track, self.track_count).unwrap();
+            for sector in 0..spt {
+                if self.bam_is_free(track, sector) {
+                    self.bam_set(track, sector, true);
+                    return Ok((track, sector));
+                }
+            }
+        }
+        Err(Error::DiskFull)
+    }
+
+    /// Allocate a free sector on the directory track for a new directory block.
+    fn allocate_dir_block(&mut self) -> Result<(u8, u8)> {
+        let spt = geometry::sectors_per_track(DIRECTORY_TRACK, self.track_count).unwrap();
+        for sector in 0..spt {
+            if self.bam_is_free(DIRECTORY_TRACK, sector) {
+                self.bam_set(DIRECTORY_TRACK, sector, true);
+                return Ok((DIRECTORY_TRACK, sector));
+            }
+        }
+        Err(Error::DirectoryFull)
+    }
+
+    /// Find a free directory slot, extending the directory chain with a new
+    /// sector if every existing one is full. Returns (track, sector, slot).
+    fn find_dir_slot(&mut self) -> Result<(u8, u8, usize)> {
+        let (mut track, mut sector) = (DIRECTORY_TRACK, DIRECTORY_FIRST_SECTOR);
+        let mut visited: Vec<(u8, u8)> = Vec::new();
+        loop {
+            if visited.contains(&(track, sector)) {
+                return Err(Error::DirectoryCycle { track, sector });
+            }
+            visited.push((track, sector));
+
+            let (next_track, next_sector, empty_slot) = {
+                let block = self.block(track, sector)?;
+                let slot = (0..SLOTS_PER_SECTOR).find(|&i| block[i * SLOT_SIZE + 2] == 0);
+                (block[0], block[1], slot)
+            };
+            if let Some(slot) = empty_slot {
+                return Ok((track, sector, slot));
+            }
+            if next_track == 0 {
+                // Extend: allocate a new directory sector and link to it.
+                let (nt, ns) = self.allocate_dir_block()?;
+                {
+                    let b = self.block_mut(track, sector)?;
+                    b[0] = nt;
+                    b[1] = ns;
+                }
+                {
+                    let b = self.block_mut(nt, ns)?;
+                    b.fill(0);
+                    b[0] = 0;
+                    b[1] = 0xFF;
+                }
+                return Ok((nt, ns, 0));
+            }
+            track = next_track;
+            sector = next_sector;
+        }
+    }
+
+    /// Write a new file to the disk: allocate its data chain, update the BAM,
+    /// and add a directory entry. Files are written closed.
+    ///
+    /// Returns [`Error::DiskFull`] (without modifying the disk) if there is not
+    /// enough space for the data.
+    pub fn write_file(&mut self, name: &str, file_type: FileType, data: &[u8]) -> Result<()> {
+        let n_blocks = data.len().div_ceil(254).max(1);
+        if self.count_free_data_blocks() < n_blocks {
+            return Err(Error::DiskFull);
+        }
+
+        // Reserve the directory slot first (may consume a directory-track block).
+        let (dt, ds, slot) = self.find_dir_slot()?;
+
+        // Allocate the data blocks (guaranteed by the check above).
+        let mut blocks = Vec::with_capacity(n_blocks);
+        for _ in 0..n_blocks {
+            blocks.push(self.allocate_data_block()?);
+        }
+
+        // Write the data chain.
+        for (i, &(t, s)) in blocks.iter().enumerate() {
+            let last = i + 1 == blocks.len();
+            let next = if last { (0u8, 0xFFu8) } else { blocks[i + 1] };
+            let start = i * 254;
+            let b = self.block_mut(t, s)?;
+            b.fill(0);
+            if last {
+                let remaining = &data[start..];
+                b[0] = 0;
+                b[1] = (remaining.len() + 1) as u8; // index of last used byte
+                b[2..2 + remaining.len()].copy_from_slice(remaining);
+            } else {
+                b[0] = next.0;
+                b[1] = next.1;
+                b[2..256].copy_from_slice(&data[start..start + 254]);
+            }
+        }
+
+        // Write the directory entry.
+        let (ft, fs) = blocks[0];
+        let name_bytes = petscii::encode_field(name, 16);
+        let type_byte = 0x80 | file_type.to_nibble();
+        let b = self.block_mut(dt, ds)?;
+        let o = slot * SLOT_SIZE;
+        b[o] = 0;
+        b[o + 1] = 0;
+        b[o + 2] = type_byte;
+        b[o + 3] = ft;
+        b[o + 4] = fs;
+        b[o + 5..o + 21].copy_from_slice(&name_bytes);
+        for x in &mut b[o + 21..o + 30] {
+            *x = 0;
+        }
+        b[o + 30] = n_blocks as u8;
+        b[o + 31] = (n_blocks >> 8) as u8;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -670,5 +932,64 @@ mod tests {
         let disk = Disk::load(synthetic()).unwrap();
         let prg = disk.find_entry("game").unwrap().unwrap(); // GAME is a PRG
         assert_eq!(disk.read_rel(&prg).err(), Some(Error::NotRelativeFile));
+    }
+
+    #[test]
+    fn blank_format_is_consistent() {
+        let disk = Disk::format("my disk", "42");
+        assert_eq!(disk.track_count(), 35);
+        assert_eq!(disk.blocks_free().unwrap(), 664);
+        assert_eq!(disk.header().unwrap().name, "MY DISK");
+        assert_eq!(disk.header().unwrap().id, "42");
+        assert!(disk.directory().unwrap().is_empty());
+        assert!(disk.validate().unwrap().is_clean());
+    }
+
+    #[test]
+    fn write_then_read_back() {
+        let mut disk = Disk::format("my disk", "42");
+        let alpha = vec![0xABu8; 300]; // 2 blocks
+        let beta: Vec<u8> = (0..1000u32).map(|x| x as u8).collect(); // 4 blocks
+        disk.write_file("alpha", FileType::Prg, &alpha).unwrap();
+        disk.write_file("beta", FileType::Seq, &beta).unwrap();
+
+        // Reload from the raw bytes to prove it is all in the image.
+        let disk = Disk::load(disk.as_bytes().to_vec()).unwrap();
+        let dir = disk.directory().unwrap();
+        assert_eq!(dir.len(), 2);
+
+        let a = disk.find_entry("alpha").unwrap().unwrap();
+        assert_eq!(a.file_type, FileType::Prg);
+        assert_eq!(disk.read_entry(&a).unwrap(), alpha);
+        let b = disk.find_entry("beta").unwrap().unwrap();
+        assert_eq!(b.file_type, FileType::Seq);
+        assert_eq!(disk.read_entry(&b).unwrap(), beta);
+
+        assert!(disk.validate().unwrap().is_clean());
+        assert_eq!(disk.blocks_free().unwrap(), 664 - 6); // 2 + 4 data blocks
+    }
+
+    #[test]
+    fn write_spills_to_second_directory_sector() {
+        let mut disk = Disk::format("d", "01");
+        for i in 0..12u8 {
+            disk.write_file(&format!("f{i}"), FileType::Prg, &[i; 10]).unwrap();
+        }
+        let disk = Disk::load(disk.as_bytes().to_vec()).unwrap();
+        assert_eq!(disk.directory().unwrap().len(), 12); // needs 2 directory sectors
+        assert!(disk.validate().unwrap().is_clean());
+    }
+
+    #[test]
+    fn disk_full_is_reported_without_mutation() {
+        let mut disk = Disk::format("d", "01");
+        let before = disk.blocks_free().unwrap();
+        let too_big = vec![0u8; 664 * 254 + 1];
+        assert_eq!(
+            disk.write_file("big", FileType::Prg, &too_big).err(),
+            Some(Error::DiskFull)
+        );
+        assert_eq!(disk.blocks_free().unwrap(), before); // unchanged
+        assert!(disk.directory().unwrap().is_empty());
     }
 }

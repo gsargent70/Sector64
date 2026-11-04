@@ -26,6 +26,25 @@ pub fn field_to_string(field: &[u8]) -> String {
     field[..end].iter().map(|&b| char_of(b)).collect()
 }
 
+/// Encode one display character as an uppercase-PETSCII byte. Characters
+/// outside the printable `$20..=$5F` range become `?`.
+pub fn encode_char(c: char) -> u8 {
+    let u = c.to_ascii_uppercase() as u32;
+    if (0x20..=0x5F).contains(&u) {
+        u as u8
+    } else {
+        b'?'
+    }
+}
+
+/// Encode a name into a fixed-width CBM field, truncated to `width` and padded
+/// with `PAD` (shifted space).
+pub fn encode_field(name: &str, width: usize) -> Vec<u8> {
+    let mut v: Vec<u8> = name.chars().take(width).map(encode_char).collect();
+    v.resize(width, PAD);
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

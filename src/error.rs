@@ -36,6 +36,10 @@ pub enum Error {
     InvalidRecordLength,
     /// A REL file's directory entry has no side-sector pointer.
     MissingSideSectors,
+    /// Not enough free blocks on the disk to write a file.
+    DiskFull,
+    /// The directory track (18) has no room for another directory sector.
+    DirectoryFull,
 }
 
 impl fmt::Display for Error {
@@ -71,6 +75,8 @@ impl fmt::Display for Error {
             Error::NotRelativeFile => write!(f, "not a relative (REL) file"),
             Error::InvalidRecordLength => write!(f, "REL record length is zero"),
             Error::MissingSideSectors => write!(f, "REL file has no side-sector pointer"),
+            Error::DiskFull => write!(f, "not enough free blocks on the disk"),
+            Error::DirectoryFull => write!(f, "directory is full"),
         }
     }
 }
