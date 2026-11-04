@@ -1,7 +1,7 @@
 # d64
 
-A small, clean-room library for Commodore 1541 **D64** disk images, in Rust —
-reading, validation, and now writing.
+A small, clean-room library for Commodore **D64** (1541) and **D81** (1581)
+disk images, in Rust — reading, writing, and validation.
 
 Written from the publicly documented 1541 disk format. It is **not** derived
 from DirMaster or any other tool's code, and it contains none of their fonts,
@@ -58,7 +58,13 @@ job with those failure modes designed out:
   slot), and rename in place. What it writes and edits is read back
   byte-for-byte by `c1541` (see Testing).
 
-Not yet: 1581/1571 formats, archive/graphics formats. Those are the next layers.
+- **1581 / D81** (`Disk::format_d81`, and `load` auto-detects by size): the
+  80-track geometry, two-sector BAM on track 40, and 1581 header. Reading,
+  writing, scratch/rename and validation all work the same as for the 1541;
+  what it reads and writes is confirmed byte-for-byte against `c1541` in both
+  directions (see Testing).
+
+Not yet: 1571 (D71), archive/graphics formats. Those are the next layers.
 
 ## Build and run
 

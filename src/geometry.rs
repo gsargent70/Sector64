@@ -59,6 +59,76 @@ pub fn ts_to_offset(track: u8, sector: u8, track_count: u8) -> Result<usize> {
     Ok(ts_to_block(track, sector, track_count)? as usize * BLOCK_SIZE)
 }
 
+/// The layout of a disk image: track/sector addressing and where the directory
+/// lives. One value per supported drive family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Geometry {
+    /// 1541 D64: 35 or 40 tracks, speed-zoned, directory on track 18.
+    Cbm1541 { tracks: u8 },
+    /// 1581 D81: 80 tracks of 40 sectors, directory on track 40.
+    Cbm1581,
+}
+
+impl Geometry {
+    /// Total track count.
+    pub fn tracks(self) -> u8 {
+        match self {
+            Geometry::Cbm1541 { tracks } => tracks,
+            Geometry::Cbm1581 => 80,
+        }
+    }
+
+    /// Sectors on a 1-indexed track, or `None` when out of range.
+    pub fn sectors_per_track(self, track: u8) -> Option<u8> {
+        match self {
+            Geometry::Cbm1541 { tracks } => sectors_per_track(track, tracks),
+            Geometry::Cbm1581 => (1..=80).contains(&track).then_some(40),
+        }
+    }
+
+    /// Total data blocks on the disk.
+    pub fn total_blocks(self) -> u32 {
+        (1..=self.tracks())
+            .map(|t| self.sectors_per_track(t).expect("t in range") as u32)
+            .sum()
+    }
+
+    /// Block index (0-based, disk order) of (track, sector), bounds-checked.
+    pub fn ts_to_block(self, track: u8, sector: u8) -> Result<u32> {
+        let spt = self
+            .sectors_per_track(track)
+            .ok_or(Error::InvalidTrackSector { track, sector })?;
+        if sector >= spt {
+            return Err(Error::InvalidTrackSector { track, sector });
+        }
+        let before: u32 = (1..track)
+            .map(|t| self.sectors_per_track(t).expect("t < track") as u32)
+            .sum();
+        Ok(before + sector as u32)
+    }
+
+    /// Byte offset of (track, sector) within the data area, bounds-checked.
+    pub fn ts_to_offset(self, track: u8, sector: u8) -> Result<usize> {
+        Ok(self.ts_to_block(track, sector)? as usize * BLOCK_SIZE)
+    }
+
+    /// Track holding the directory and BAM.
+    pub fn directory_track(self) -> u8 {
+        match self {
+            Geometry::Cbm1541 { .. } => 18,
+            Geometry::Cbm1581 => 40,
+        }
+    }
+
+    /// First directory-entry sector (the BAM sits before it).
+    pub fn directory_first_sector(self) -> u8 {
+        match self {
+            Geometry::Cbm1541 { .. } => 1,
+            Geometry::Cbm1581 => 3,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,6 +157,29 @@ mod tests {
         // Track 18, sector 0 is block 357 (sum of tracks 1..17 = 17*21 = 357).
         assert_eq!(ts_to_block(18, 0, 35).unwrap(), 357);
         assert_eq!(ts_to_offset(18, 1, 35).unwrap(), 358 * BLOCK_SIZE);
+    }
+
+    #[test]
+    fn d81_geometry() {
+        let g = Geometry::Cbm1581;
+        assert_eq!(g.tracks(), 80);
+        assert_eq!(g.sectors_per_track(1), Some(40));
+        assert_eq!(g.sectors_per_track(80), Some(40));
+        assert_eq!(g.sectors_per_track(81), None);
+        assert_eq!(g.total_blocks(), 3200);
+        assert_eq!(g.directory_track(), 40);
+        assert_eq!(g.directory_first_sector(), 3);
+        // Linear LSN addressing: track 2 sector 0 is block 40.
+        assert_eq!(g.ts_to_block(2, 0).unwrap(), 40);
+        assert!(g.ts_to_offset(1, 40).is_err());
+    }
+
+    #[test]
+    fn d64_geometry_matches_free_functions() {
+        let g = Geometry::Cbm1541 { tracks: 35 };
+        assert_eq!(g.total_blocks(), 683);
+        assert_eq!(g.directory_track(), 18);
+        assert_eq!(g.ts_to_offset(18, 1).unwrap(), 358 * BLOCK_SIZE);
     }
 
     #[test]

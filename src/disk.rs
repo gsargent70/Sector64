@@ -4,17 +4,21 @@ use crate::bam::{self, Bam, DosFormat};
 use crate::directory::{Entry, FileType, SLOTS_PER_SECTOR, SLOT_SIZE};
 use crate::error::{Error, Result};
 use crate::geometry::{
-    self, BLOCK_SIZE, DIRECTORY_FIRST_SECTOR, DIRECTORY_TRACK,
+    self, Geometry, BLOCK_SIZE, DIRECTORY_FIRST_SECTOR, DIRECTORY_TRACK,
 };
 use crate::petscii;
 
 /// A loaded D64 disk image.
 pub struct Disk {
     data: Vec<u8>,
+    /// Track/sector addressing and directory location for this image family.
+    geom: Geometry,
+    /// Track count, cached from `geom`.
     track_count: u8,
     /// Length of the data area in bytes (excludes any trailing error-info map).
     data_len: usize,
-    /// BAM format; detected at load for 40-track images, overridable.
+    /// 1541 extended-BAM format; detected at load for 40-track images. Unused
+    /// for the 1581.
     dos: DosFormat,
 }
 
@@ -67,22 +71,24 @@ impl Disk {
     /// for data reads.
     pub fn load(bytes: impl Into<Vec<u8>>) -> Result<Disk> {
         let data = bytes.into();
-        let track_count = match data.len() {
-            174848 | 175531 => 35,
-            196608 | 197376 => 40,
+        let geom = match data.len() {
+            174848 | 175531 => Geometry::Cbm1541 { tracks: 35 },
+            196608 | 197376 => Geometry::Cbm1541 { tracks: 40 },
+            819200 | 822400 => Geometry::Cbm1581,
             n => return Err(Error::UnknownImageSize(n)),
         };
-        let data_len = geometry::total_blocks(track_count) as usize * BLOCK_SIZE;
+        let data_len = geom.total_blocks() as usize * BLOCK_SIZE;
         let mut disk = Disk {
             data,
-            track_count,
+            geom,
+            track_count: geom.tracks(),
             data_len,
             dos: DosFormat::Cbm,
         };
-        // For 40-track images, guess the extended-BAM format from the sector.
-        if track_count > bam::BAM_TRACKS {
+        // For 1541 40-track images, guess the extended-BAM format from the sector.
+        if matches!(geom, Geometry::Cbm1541 { tracks } if tracks > bam::BAM_TRACKS) {
             if let Ok(sector) = disk.block(DIRECTORY_TRACK, 0) {
-                disk.dos = bam::detect_dos(sector, track_count);
+                disk.dos = bam::detect_dos(sector, disk.track_count);
             }
         }
         Ok(disk)
@@ -95,6 +101,7 @@ impl Disk {
         let data_len = geometry::total_blocks(track_count) as usize * BLOCK_SIZE;
         let mut disk = Disk {
             data: vec![0u8; data_len],
+            geom: Geometry::Cbm1541 { tracks: 35 },
             track_count,
             data_len,
             dos: DosFormat::Cbm,
@@ -167,12 +174,88 @@ impl Disk {
         self.dos = dos;
     }
 
+    /// The image's geometry (1541 or 1581).
+    pub fn geometry(&self) -> Geometry {
+        self.geom
+    }
+
+    fn dir_track(&self) -> u8 {
+        self.geom.directory_track()
+    }
+
+    fn dir_first(&self) -> u8 {
+        self.geom.directory_first_sector()
+    }
+
+    /// Create a blank, freshly formatted 1581 (D81, 80-track) disk.
+    pub fn format_d81(name: &str, id: &str) -> Disk {
+        let geom = Geometry::Cbm1581;
+        let data_len = geom.total_blocks() as usize * BLOCK_SIZE;
+        let mut disk = Disk {
+            data: vec![0u8; data_len],
+            geom,
+            track_count: geom.tracks(),
+            data_len,
+            dos: DosFormat::Cbm,
+        };
+        let id_bytes = petscii::encode_field(id, 2);
+
+        // Header, track 40 sector 0.
+        {
+            let off = geom.ts_to_offset(40, 0).unwrap();
+            let b = &mut disk.data[off..off + BLOCK_SIZE];
+            b[0] = 40;
+            b[1] = 3; // first directory sector
+            b[2] = b'D'; // DOS version
+            b[0x04..0x14].copy_from_slice(&petscii::encode_field(name, 16));
+            b[0x14] = petscii::PAD;
+            b[0x15] = petscii::PAD;
+            b[0x16] = id_bytes[0];
+            b[0x17] = id_bytes[1];
+            b[0x18] = petscii::PAD;
+            b[0x19] = b'3';
+            b[0x1A] = b'D';
+            b[0x1B] = petscii::PAD;
+            b[0x1C] = petscii::PAD;
+        }
+
+        // Two BAM sectors: 40/1 covers tracks 1–40, 40/2 covers 41–80.
+        for (sector, next, lo, hi) in
+            [(1u8, (40u8, 2u8), 1u8, 40u8), (2u8, (0u8, 0xFFu8), 41u8, 80u8)]
+        {
+            let off = geom.ts_to_offset(40, sector).unwrap();
+            let b = &mut disk.data[off..off + BLOCK_SIZE];
+            b[0] = next.0;
+            b[1] = next.1;
+            b[2] = b'D';
+            b[3] = !b'D'; // one's-complement verification byte (0xBB)
+            b[4] = id_bytes[0];
+            b[5] = id_bytes[1];
+            for track in lo..=hi {
+                let e = 0x10 + (track - lo) as usize * 6;
+                b[e] = 40; // all 40 sectors free
+                b[e + 1..e + 6].copy_from_slice(&[0xFF; 5]);
+            }
+        }
+
+        // First directory sector, empty and terminated.
+        let dir_off = geom.ts_to_offset(40, 3).unwrap();
+        disk.data[dir_off] = 0;
+        disk.data[dir_off + 1] = 0xFF;
+
+        // Reserve the header, both BAM sectors, and the first directory sector.
+        for sector in 0..=3u8 {
+            disk.bam_set(40, sector, true);
+        }
+        disk
+    }
+
     /// Borrow one 256-byte block by track/sector.
     ///
     /// Both the start offset *and* the full block length are checked against
     /// the data area — the explicit fix for the original's start-only gate.
     pub fn block(&self, track: u8, sector: u8) -> Result<&[u8]> {
-        let offset = geometry::ts_to_offset(track, sector, self.track_count)?;
+        let offset = self.geom.ts_to_offset(track, sector)?;
         let end = offset
             .checked_add(BLOCK_SIZE)
             .filter(|&e| e <= self.data_len)
@@ -185,17 +268,26 @@ impl Disk {
         Ok(&self.data[offset..end])
     }
 
-    /// Parse the disk header (name, id, DOS type) from track 18, sector 0.
+    /// Parse the disk header (name, id, DOS type) from the header sector.
     pub fn header(&self) -> Result<Header> {
-        let bam = self.block(DIRECTORY_TRACK, 0)?;
-        Ok(Header {
-            name: petscii::field_to_string(&bam[0x90..0xA0]),
-            id: petscii::field_to_string(&bam[0xA2..0xA4]),
-            dos_type: petscii::field_to_string(&bam[0xA5..0xA7]),
-        })
+        let b = self.block(self.dir_track(), 0)?;
+        match self.geom {
+            Geometry::Cbm1541 { .. } => Ok(Header {
+                name: petscii::field_to_string(&b[0x90..0xA0]),
+                id: petscii::field_to_string(&b[0xA2..0xA4]),
+                dos_type: petscii::field_to_string(&b[0xA5..0xA7]),
+            }),
+            Geometry::Cbm1581 => Ok(Header {
+                name: petscii::field_to_string(&b[0x04..0x14]),
+                id: petscii::field_to_string(&b[0x16..0x18]),
+                dos_type: petscii::field_to_string(&b[0x19..0x1B]),
+            }),
+        }
     }
 
-    /// Parse the BAM from track 18, sector 0, using this disk's DOS format.
+    /// Parse the 1541 BAM from track 18, sector 0. **1541 only** — for the 1581
+    /// use [`Disk::blocks_free`] and [`Disk::validate`], which handle its
+    /// two-sector BAM.
     pub fn bam(&self) -> Result<Bam> {
         Ok(Bam::parse(
             self.block(DIRECTORY_TRACK, 0)?,
@@ -204,10 +296,10 @@ impl Disk {
         ))
     }
 
-    /// Blocks free, summed from the standard 35-track BAM (track 18 excluded,
-    /// as on real hardware). Extended-track BAMs vary by DOS and are not summed.
+    /// Blocks free, summed from the BAM over every track except the directory
+    /// track — the figure a directory footer shows.
     pub fn blocks_free(&self) -> Result<u16> {
-        Ok(self.bam()?.free_blocks())
+        Ok(self.total_free())
     }
 
     /// Walk the directory chain from 18/1 and return every used entry.
@@ -219,10 +311,10 @@ impl Disk {
     pub fn directory(&self) -> Result<Vec<Entry>> {
         let mut entries = Vec::new();
         let mut visited: Vec<(u8, u8)> = Vec::new();
-        let max_sectors = geometry::total_blocks(self.track_count) as usize;
+        let max_sectors = self.geom.total_blocks() as usize;
 
-        let mut track = DIRECTORY_TRACK;
-        let mut sector = DIRECTORY_FIRST_SECTOR;
+        let mut track = self.dir_track();
+        let mut sector = self.dir_first();
 
         loop {
             if visited.contains(&(track, sector)) {
@@ -300,7 +392,7 @@ impl Disk {
         if first_track == 0 {
             return Ok(chain);
         }
-        let max_blocks = geometry::total_blocks(self.track_count) as usize;
+        let max_blocks = self.geom.total_blocks() as usize;
         let (mut track, mut sector) = (first_track, first_sector);
         loop {
             if chain.contains(&(track, sector)) {
@@ -345,10 +437,9 @@ impl Disk {
     /// fault that stops a walk (an out-of-range link or a cycle) surfaces as an
     /// `Err` rather than a report entry.
     pub fn validate(&self) -> Result<ValidationReport> {
-        let bam = self.bam()?;
         let mut used: Vec<(u8, u8)> = Vec::new();
         let mut report = ValidationReport {
-            blocks_free: bam.free_blocks(),
+            blocks_free: self.total_free(),
             ..Default::default()
         };
 
@@ -367,8 +458,8 @@ impl Disk {
         for &(track, sector) in &used {
             // A block used by a file but marked free is an inconsistency. Tracks
             // the BAM does not cover (extended tracks under an unknown DOS)
-            // return an error from is_allocated and are skipped here.
-            if bam.is_allocated(track, sector) == Ok(false) {
+            // return an error from bam_is_allocated and are skipped here.
+            if self.bam_is_allocated(track, sector) == Ok(false) {
                 report.used_but_free.push((track, sector));
             }
         }
@@ -389,7 +480,7 @@ impl Disk {
             return Err(Error::MissingSideSectors);
         }
         let mut chain: Vec<(u8, u8)> = Vec::new();
-        let max_blocks = geometry::total_blocks(self.track_count) as usize;
+        let max_blocks = self.geom.total_blocks() as usize;
         let (mut track, mut sector) = (entry.side_track, entry.side_sector);
         loop {
             if chain.contains(&(track, sector)) {
@@ -419,7 +510,7 @@ impl Disk {
     pub fn rel_data_blocks(&self, entry: &Entry) -> Result<Vec<(u8, u8)>> {
         let side = self.side_sector_chain(entry)?;
         let mut blocks: Vec<(u8, u8)> = Vec::new();
-        let max_blocks = geometry::total_blocks(self.track_count) as usize;
+        let max_blocks = self.geom.total_blocks() as usize;
         'outer: for &(t, s) in &side {
             let ss = self.block(t, s)?;
             let mut off = SIDE_SECTOR_POINTER_BASE;
@@ -471,7 +562,7 @@ impl Disk {
     /// Mutable borrow of one 256-byte block, with the same start+length check
     /// as [`Disk::block`].
     pub fn block_mut(&mut self, track: u8, sector: u8) -> Result<&mut [u8]> {
-        let offset = geometry::ts_to_offset(track, sector, self.track_count)?;
+        let offset = self.geom.ts_to_offset(track, sector)?;
         let end = offset
             .checked_add(BLOCK_SIZE)
             .filter(|&e| e <= self.data_len)
@@ -484,65 +575,120 @@ impl Disk {
         Ok(&mut self.data[offset..end])
     }
 
-    /// Byte offset of a track's standard BAM entry (tracks 1–35).
-    fn bam_entry_offset(&self, track: u8) -> Option<usize> {
-        if track == 0 || track > bam::BAM_TRACKS || track > self.track_count {
+    /// Byte offsets of a track's BAM entry: (free-count byte, bitmap start,
+    /// bitmap length). `None` when the track's BAM is not represented (e.g.
+    /// 1541 extended tracks under an unknown DOS).
+    fn bam_cell(&self, track: u8) -> Option<(usize, usize, usize)> {
+        if track == 0 || track > self.track_count {
             return None;
         }
-        let bam_off = geometry::ts_to_offset(DIRECTORY_TRACK, 0, self.track_count).ok()?;
-        Some(bam_off + 4 + (track as usize - 1) * 4)
+        match self.geom {
+            Geometry::Cbm1541 { .. } => {
+                let bam_off = self.geom.ts_to_offset(18, 0).ok()?;
+                if track <= bam::BAM_TRACKS {
+                    let base = bam_off + 4 + (track as usize - 1) * 4;
+                    Some((base, base + 1, 3))
+                } else {
+                    let ext = match self.dos {
+                        DosFormat::Dolphin => 0xAC,
+                        DosFormat::Speed => 0xC0,
+                        DosFormat::Cbm => return None,
+                    };
+                    let base = bam_off + ext + (track as usize - 36) * 4;
+                    Some((base, base + 1, 3))
+                }
+            }
+            Geometry::Cbm1581 => {
+                let (sector, idx) = if track <= 40 {
+                    (1u8, track as usize - 1)
+                } else {
+                    (2u8, track as usize - 41)
+                };
+                let sec_off = self.geom.ts_to_offset(40, sector).ok()?;
+                let base = sec_off + 0x10 + idx * 6;
+                Some((base, base + 1, 5))
+            }
+        }
     }
 
     /// Whether (track, sector) is currently free in the BAM.
     fn bam_is_free(&self, track: u8, sector: u8) -> bool {
-        match self.bam_entry_offset(track) {
-            Some(base) => {
-                let byte = self.data[base + 1 + (sector / 8) as usize];
+        match self.bam_cell(track) {
+            Some((_, bitmap, _)) => {
+                let byte = self.data[bitmap + (sector / 8) as usize];
                 byte & (1 << (sector % 8)) != 0
             }
             None => false,
         }
     }
 
+    /// Whether (track, sector) is allocated, bounds-checked. Errors for an
+    /// out-of-range track/sector or a track the BAM does not cover.
+    fn bam_is_allocated(&self, track: u8, sector: u8) -> Result<bool> {
+        let spt = self
+            .geom
+            .sectors_per_track(track)
+            .ok_or(Error::InvalidTrackSector { track, sector })?;
+        if sector >= spt {
+            return Err(Error::InvalidTrackSector { track, sector });
+        }
+        let (_, bitmap, _) = self
+            .bam_cell(track)
+            .ok_or(Error::InvalidTrackSector { track, sector })?;
+        let byte = self.data[bitmap + (sector / 8) as usize];
+        Ok(byte & (1 << (sector % 8)) == 0)
+    }
+
     /// Mark (track, sector) allocated (`true`) or free (`false`) in the BAM,
     /// keeping the per-track free count in step.
     fn bam_set(&mut self, track: u8, sector: u8, allocated: bool) {
-        let Some(base) = self.bam_entry_offset(track) else {
+        let Some((count, bitmap, _)) = self.bam_cell(track) else {
             return;
         };
-        let byte_idx = base + 1 + (sector / 8) as usize;
+        let byte_idx = bitmap + (sector / 8) as usize;
         let bit = 1u8 << (sector % 8);
         let currently_free = self.data[byte_idx] & bit != 0;
         if allocated && currently_free {
             self.data[byte_idx] &= !bit;
-            self.data[base] = self.data[base].saturating_sub(1);
+            self.data[count] = self.data[count].saturating_sub(1);
         } else if !allocated && !currently_free {
             self.data[byte_idx] |= bit;
-            self.data[base] = self.data[base].saturating_add(1);
+            self.data[count] = self.data[count].saturating_add(1);
         }
     }
 
-    /// Free data blocks available (tracks 1–35, excluding the directory track).
-    fn count_free_data_blocks(&self) -> usize {
-        let mut n = 0;
-        for track in 1..=bam::BAM_TRACKS {
-            if track == DIRECTORY_TRACK {
-                continue;
-            }
-            if let Some(base) = self.bam_entry_offset(track) {
-                n += self.data[base] as usize;
+    /// The free-count byte the BAM records for a track.
+    fn free_count(&self, track: u8) -> Option<u8> {
+        self.bam_cell(track).map(|(count, _, _)| self.data[count])
+    }
+
+    /// Blocks free across every track except the directory track.
+    fn total_free(&self) -> u16 {
+        let dir = self.dir_track();
+        let mut n = 0u16;
+        for track in 1..=self.track_count {
+            if track != dir {
+                if let Some(c) = self.free_count(track) {
+                    n = n.saturating_add(c as u16);
+                }
             }
         }
         n
     }
 
+    /// Free data blocks available (every track except the directory track).
+    fn count_free_data_blocks(&self) -> usize {
+        self.total_free() as usize
+    }
+
     /// Allocate the first free block off the directory track, marking it used.
     fn allocate_data_block(&mut self) -> Result<(u8, u8)> {
+        let dir = self.dir_track();
         for track in 1..=self.track_count {
-            if track == DIRECTORY_TRACK {
+            if track == dir {
                 continue;
             }
-            let spt = geometry::sectors_per_track(track, self.track_count).unwrap();
+            let spt = self.geom.sectors_per_track(track).unwrap();
             for sector in 0..spt {
                 if self.bam_is_free(track, sector) {
                     self.bam_set(track, sector, true);
@@ -555,11 +701,12 @@ impl Disk {
 
     /// Allocate a free sector on the directory track for a new directory block.
     fn allocate_dir_block(&mut self) -> Result<(u8, u8)> {
-        let spt = geometry::sectors_per_track(DIRECTORY_TRACK, self.track_count).unwrap();
+        let dir = self.dir_track();
+        let spt = self.geom.sectors_per_track(dir).unwrap();
         for sector in 0..spt {
-            if self.bam_is_free(DIRECTORY_TRACK, sector) {
-                self.bam_set(DIRECTORY_TRACK, sector, true);
-                return Ok((DIRECTORY_TRACK, sector));
+            if self.bam_is_free(dir, sector) {
+                self.bam_set(dir, sector, true);
+                return Ok((dir, sector));
             }
         }
         Err(Error::DirectoryFull)
@@ -568,7 +715,7 @@ impl Disk {
     /// Find a free directory slot, extending the directory chain with a new
     /// sector if every existing one is full. Returns (track, sector, slot).
     fn find_dir_slot(&mut self) -> Result<(u8, u8, usize)> {
-        let (mut track, mut sector) = (DIRECTORY_TRACK, DIRECTORY_FIRST_SECTOR);
+        let (mut track, mut sector) = (self.dir_track(), self.dir_first());
         let mut visited: Vec<(u8, u8)> = Vec::new();
         loop {
             if visited.contains(&(track, sector)) {
@@ -668,7 +815,7 @@ impl Disk {
     /// (case-insensitive), as (track, sector, slot).
     fn entry_location(&self, name: &str) -> Result<Option<(u8, u8, usize)>> {
         let target = name.to_ascii_uppercase();
-        let (mut track, mut sector) = (DIRECTORY_TRACK, DIRECTORY_FIRST_SECTOR);
+        let (mut track, mut sector) = (self.dir_track(), self.dir_first());
         let mut visited: Vec<(u8, u8)> = Vec::new();
         loop {
             if visited.contains(&(track, sector)) {
@@ -1105,5 +1252,36 @@ mod tests {
         assert!(disk.find_entry("oldname").unwrap().is_none());
         let e = disk.find_entry("newname").unwrap().unwrap();
         assert_eq!(disk.read_entry(&e).unwrap(), data); // data intact
+    }
+
+    #[test]
+    fn d81_format_write_read_roundtrip() {
+        let mut disk = Disk::format_d81("big disk", "99");
+        assert_eq!(disk.track_count(), 80);
+        assert_eq!(disk.geometry(), Geometry::Cbm1581);
+        assert_eq!(disk.blocks_free().unwrap(), 3160);
+        assert_eq!(disk.header().unwrap().name, "BIG DISK");
+        assert_eq!(disk.header().unwrap().id, "99");
+        assert_eq!(disk.header().unwrap().dos_type, "3D");
+
+        let data: Vec<u8> = (0..2000u32).map(|x| (x * 7) as u8).collect(); // 8 blocks
+        disk.write_file("payload", FileType::Prg, &data).unwrap();
+        disk.write_file("second", FileType::Seq, &[0xEE; 50]).unwrap();
+
+        let disk = Disk::load(disk.as_bytes().to_vec()).unwrap();
+        assert_eq!(disk.geometry(), Geometry::Cbm1581);
+        assert_eq!(disk.directory().unwrap().len(), 2);
+        let e = disk.find_entry("payload").unwrap().unwrap();
+        assert_eq!(disk.read_entry(&e).unwrap(), data);
+        assert!(disk.validate().unwrap().is_clean());
+        assert_eq!(disk.blocks_free().unwrap(), 3160 - 8 - 1);
+    }
+
+    #[test]
+    fn d81_bam_is_bounds_checked() {
+        let disk = Disk::format_d81("d", "01");
+        assert!(disk.block(80, 39).is_ok()); // last block
+        assert!(disk.block(80, 40).is_err()); // sector out of range
+        assert!(disk.block(81, 0).is_err()); // track out of range
     }
 }

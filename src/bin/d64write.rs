@@ -21,7 +21,9 @@ fn main() -> ExitCode {
     let strs: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
 
     let result = match strs.first().map(String::as_str) {
-        Some("format") if strs.len() == 4 => cmd_format(&strs[1], &strs[2], &strs[3]),
+        Some("format") if strs.len() == 4 || strs.len() == 5 => {
+            cmd_format(&strs[1], &strs[2], &strs[3], strs.get(4).map(String::as_str))
+        }
         Some("add") if strs.len() == 4 || strs.len() == 5 => {
             cmd_add(&strs[1], &strs[2], &strs[3], strs.get(4).map(String::as_str))
         }
@@ -30,7 +32,7 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "usage:\n  \
-                 d64write format <image.d64> <disk name> <id>\n  \
+                 d64write format <image> <disk name> <id> [d64|d81]\n  \
                  d64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]\n  \
                  d64write delete <image.d64> <cbm name>\n  \
                  d64write rename <image.d64> <old name> <new name>"
@@ -70,13 +72,20 @@ fn save(image: &str, disk: &Disk) -> Result<(), String> {
     std::fs::write(image, disk.as_bytes()).map_err(|e| format!("cannot write {image}: {e}"))
 }
 
-fn cmd_format(image: &str, name: &str, id: &str) -> Result<String, String> {
+fn cmd_format(image: &str, name: &str, id: &str, kind: Option<&str>) -> Result<String, String> {
     if Path::new(image).exists() {
         return Err(format!("{image} already exists; refusing to overwrite"));
     }
-    let disk = Disk::format(name, id);
+    let disk = match kind.map(str::to_ascii_lowercase).as_deref() {
+        None | Some("d64") => Disk::format(name, id),
+        Some("d81") => Disk::format_d81(name, id),
+        Some(other) => return Err(format!("unknown disk kind '{other}' (use d64 or d81)")),
+    };
     save(image, &disk)?;
-    Ok(format!("formatted {image}: \"{name}\" {id}, {} blocks free", disk.blocks_free().unwrap_or(0)))
+    Ok(format!(
+        "formatted {image}: \"{name}\" {id}, {} blocks free",
+        disk.blocks_free().unwrap_or(0)
+    ))
 }
 
 fn cmd_add(image: &str, name: &str, host: &str, ty: Option<&str>) -> Result<String, String> {
