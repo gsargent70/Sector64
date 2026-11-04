@@ -1,0 +1,24 @@
+[package]
+name = "d64"
+version = "0.1.0"
+edition = "2021"
+description = "Clean-room reader for Commodore 1541 D64 disk images"
+license = "MIT OR Apache-2.0"
+
+# No external dependencies: the crate builds offline and has no supply chain.
+[dependencies]
+
+[[bin]]
+name = "d64ls"
+path = "src/bin/d64ls.rs"
+
+[[bin]]
+name = "d64extract"
+path = "src/bin/d64extract.rs"
+
+[[bin]]
+name = "d64val"
+path = "src/bin/d64val.rs"
+
+[profile.release]
+overflow-checks = true  # keep arithmetic checks on even in release; this is a parser.
