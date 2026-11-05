@@ -108,6 +108,13 @@ job with those failure modes designed out:
   `Error::UnsupportedArcMethod` for now — the decoders are the next layer, and
   the captured per-entry checksum is the oracle they will be verified against.
 
+- **PC64 single-file** (`parse_p00`, `s64write import`): the `.P00`/`.S00`/
+  `.U00`/`.R00`/`.D00` container — a 26-byte `C64File` header (16-byte CBM name,
+  reserved and REL-record bytes) in front of the raw file. The CBM type comes
+  from the extension letter, which `s64write import` applies. Validated against
+  a real `.p00`: the name and payload parse exactly, and the payload round-trips
+  byte-for-byte when written to a disk and read back by `c1541`.
+
 - **Self-extracting archives** (`parse_sda`, `parse_lha` → `LhaEntry`, `s64arc`,
   `s64lha`): two self-extractor families that bundle an archive behind a C64
   loader. A **`.SDA`** (self-dissolving) is an ARC archive behind a BASIC

@@ -106,6 +106,7 @@ fn no_panics_on_arbitrary_input() {
             let _ = parse_t64(&buf);
             let _ = parse_lnx(&buf);
             let _ = parse_lbr(&buf);
+            let _ = sector64::parse_p00(&buf);
             let _ = parse_zipcode([&buf, &buf, &buf, &buf]);
             // Exercise the G64 GCR decoder with a valid magic so the decode
             // path runs on fuzzed track tables and bitstreams.

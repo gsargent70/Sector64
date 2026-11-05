@@ -244,6 +244,24 @@ pub fn parse_lbr(bytes: &[u8]) -> Result<Vec<ImportFile>> {
     Ok(files)
 }
 
+/// Parse a **PC64** single-file container (`.P00`/`.S00`/`.U00`/`.R00`/`.D00`).
+///
+/// The 26-byte header is `C64File\0`, a 16-byte NUL-padded CBM name, a reserved
+/// byte, and a REL record-size byte; the file data (a PRG keeps its two-byte
+/// load address) follows. The CBM file *type* is carried by the extension, not
+/// the file, so this defaults to PRG — callers that know the extension set the
+/// type from its first letter.
+pub fn parse_p00(bytes: &[u8]) -> Result<ImportFile> {
+    if bytes.len() < 26 || &bytes[..7] != b"C64File" {
+        return Err(Error::InvalidContainer);
+    }
+    Ok(ImportFile {
+        name: name_trimmed(&bytes[8..24]),
+        file_type: FileType::Prg,
+        data: bytes[26..].to_vec(),
+    })
+}
+
 /// Decode a **Zip-Code** archive (the four `1!`…`4!` files) into a 35-track D64
 /// image (174848 bytes).
 ///
@@ -506,6 +524,28 @@ mod tests {
         let f = write_zipcode(&d64).unwrap();
         let back = parse_zipcode([&f[0], &f[1], &f[2], &f[3]]).unwrap();
         assert_eq!(back, d64);
+    }
+
+    #[test]
+    fn parses_a_p00_container() {
+        let mut p = b"C64File\0".to_vec();
+        let mut name = b"MY PROG".to_vec();
+        name.resize(16, 0); // NUL-padded name field
+        p.extend_from_slice(&name);
+        p.push(0); // reserved
+        p.push(0); // rel record size
+        let data = vec![0x01u8, 0x08, 0x2c, 0x08]; // load address + a bit
+        p.extend_from_slice(&data);
+        let f = parse_p00(&p).unwrap();
+        assert_eq!(f.name, "MY PROG");
+        assert_eq!(f.file_type, FileType::Prg);
+        assert_eq!(f.data, data);
+    }
+
+    #[test]
+    fn rejects_non_p00() {
+        assert_eq!(parse_p00(b"not a pc64 file at all!!!!").err(), Some(Error::InvalidContainer));
+        assert_eq!(parse_p00(b"C64File").err(), Some(Error::InvalidContainer)); // too short
     }
 
     fn build_lbr(entries: &[(&str, &str, &[u8])]) -> Vec<u8> {

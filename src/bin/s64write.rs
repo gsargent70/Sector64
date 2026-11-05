@@ -38,7 +38,7 @@ fn main() -> ExitCode {
                  s64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]\n  \
                  s64write delete <image.d64> <cbm name>\n  \
                  s64write rename <image.d64> <old name> <new name>\n  \
-                 s64write import <image.d64> <archive.t64|.lnx|.lbr>\n  \
+                 s64write import <image.d64> <archive.t64|.lnx|.lbr|.p00>\n  \
                  s64write unzip  <out.d64> <zipcode base>   (reads 1!base..4!base)"
             );
             return ExitCode::from(2);
@@ -120,6 +120,24 @@ fn cmd_delete(image: &str, name: &str) -> Result<String, String> {
     ))
 }
 
+/// A PC64 container extension is a type letter followed by two digits
+/// (`.p00`, `.s07`, …); map the letter to a CBM file type.
+fn p00_file_type(lower: &str) -> Option<FileType> {
+    let ext = lower.rsplit('.').next()?;
+    let b = ext.as_bytes();
+    if b.len() != 3 || !b[1].is_ascii_digit() || !b[2].is_ascii_digit() {
+        return None;
+    }
+    match b[0] {
+        b'p' => Some(FileType::Prg),
+        b's' => Some(FileType::Seq),
+        b'u' => Some(FileType::Usr),
+        b'r' => Some(FileType::Rel),
+        b'd' => Some(FileType::Del),
+        _ => None,
+    }
+}
+
 fn cmd_import(image: &str, archive: &str) -> Result<String, String> {
     let bytes = std::fs::read(archive).map_err(|e| format!("cannot read {archive}: {e}"))?;
     let lower = archive.to_ascii_lowercase();
@@ -129,8 +147,14 @@ fn cmd_import(image: &str, archive: &str) -> Result<String, String> {
         sector64::parse_lnx(&bytes).map_err(|e| format!("{archive}: {e}"))?
     } else if lower.ends_with(".lbr") {
         sector64::parse_lbr(&bytes).map_err(|e| format!("{archive}: {e}"))?
+    } else if let Some(ft) = p00_file_type(&lower) {
+        let mut f = sector64::parse_p00(&bytes).map_err(|e| format!("{archive}: {e}"))?;
+        f.file_type = ft; // the CBM type comes from the extension, not the file
+        vec![f]
     } else {
-        return Err(format!("unsupported archive '{archive}' (expected .t64, .lnx or .lbr)"));
+        return Err(format!(
+            "unsupported archive '{archive}' (expected .t64, .lnx, .lbr or .p00/.s00/.u00/.r00/.d00)"
+        ));
     };
     let mut disk = load(image)?;
     let mut n = 0;

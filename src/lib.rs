@@ -32,7 +32,9 @@ pub mod disk;
 
 pub use arc::{parse_arc, parse_sda, ArcEntry, ArcMethod};
 pub use bam::{Bam, DosFormat};
-pub use container::{parse_lbr, parse_lnx, parse_t64, parse_zipcode, write_zipcode, ImportFile};
+pub use container::{
+    parse_lbr, parse_lnx, parse_p00, parse_t64, parse_zipcode, write_zipcode, ImportFile,
+};
 pub use directory::{Entry, FileType};
 pub use g64::to_d64 as g64_to_d64;
 pub use lha::{parse_lha, LhaEntry};
