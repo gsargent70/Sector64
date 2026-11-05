@@ -118,7 +118,13 @@ not share code with:
    files with this crate, then confirms `c1541` reads them all back
    byte-for-byte and agrees on the file count and free blocks. Both run when
    `c1541` is on `PATH`, skip cleanly otherwise.
-3. **Emulator-minted REL** (`tests/rel_fixture.rs`): reads `fixtures/rel.d64`, a
+   The `t64`/`lnx`/`zipcode` importers have their own `c1541` differentials too.
+3. **Robustness fuzzing** (`tests/fuzz_robustness.rs`): a dependency-free,
+   deterministic fuzzer that throws random and corrupted input at every parser
+   and asserts none panic — including buffers at the exact image sizes and valid
+   disks with bytes flipped. For coverage-guided libFuzzer fuzzing, see
+   [`fuzz/`](fuzz/) (needs nightly).
+4. **Emulator-minted REL** (`tests/rel_fixture.rs`): reads `fixtures/rel.d64`, a
    relative file created by the emulated 1541 DOS (VICE `x64sc` running
    `fixtures/makerel.bas`), and checks the side-sector path returns the exact
    records written. `c1541` cannot read REL files, so this is the only

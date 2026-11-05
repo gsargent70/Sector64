@@ -1,0 +1,32 @@
+# Coverage-guided fuzzing harness (libFuzzer via cargo-fuzz).
+# This is a standalone crate, not part of the main build. It requires a nightly
+# toolchain and `cargo install cargo-fuzz`; it is not run by `cargo test`.
+[package]
+name = "d64-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.7"
+d64 = { path = ".." }
+
+[[bin]]
+name = "image"
+path = "fuzz_targets/image.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "containers"
+path = "fuzz_targets/containers.rs"
+test = false
+doc = false
+bench = false
+
+# Detach from any parent workspace.
+[workspace]
