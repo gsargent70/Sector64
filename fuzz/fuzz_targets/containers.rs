@@ -4,7 +4,7 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let _ = d64::parse_t64(data);
-    let _ = d64::parse_lnx(data);
-    let _ = d64::parse_zipcode([data, data, data, data]);
+    let _ = sector64::parse_t64(data);
+    let _ = sector64::parse_lnx(data);
+    let _ = sector64::parse_zipcode([data, data, data, data]);
 });

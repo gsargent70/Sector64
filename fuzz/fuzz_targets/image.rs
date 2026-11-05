@@ -3,7 +3,7 @@
 
 use libfuzzer_sys::fuzz_target;
 
-use d64::Disk;
+use sector64::Disk;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(disk) = Disk::load(data.to_vec()) else {

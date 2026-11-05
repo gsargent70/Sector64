@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use d64::{Disk, FileType};
+use sector64::{Disk, FileType};
 
 fn pseudo_bytes(seed: u32, len: usize) -> Vec<u8> {
     let mut x = seed.wrapping_mul(2654435761).wrapping_add(1);

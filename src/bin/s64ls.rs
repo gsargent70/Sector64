@@ -1,22 +1,22 @@
-//! `d64ls` — print the directory of a D64 image in the classic CBM layout.
+//! `s64ls` — print the directory of a D64 image in the classic CBM layout.
 //!
-//! Usage: `d64ls <image.d64>`
+//! Usage: `s64ls <image.d64>`
 
 use std::process::ExitCode;
 
-use d64::Disk;
+use sector64::Disk;
 
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
     let Some(path) = args.next() else {
-        eprintln!("usage: d64ls <image.d64>");
+        eprintln!("usage: s64ls <image.d64>");
         return ExitCode::from(2);
     };
 
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("d64ls: cannot read {}: {e}", path.to_string_lossy());
+            eprintln!("s64ls: cannot read {}: {e}", path.to_string_lossy());
             return ExitCode::FAILURE;
         }
     };
@@ -24,7 +24,7 @@ fn main() -> ExitCode {
     let disk = match Disk::load(bytes) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("d64ls: {e}");
+            eprintln!("s64ls: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -32,13 +32,13 @@ fn main() -> ExitCode {
     match print_listing(&disk) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("d64ls: {e}");
+            eprintln!("s64ls: {e}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn print_listing(disk: &Disk) -> d64::Result<()> {
+fn print_listing(disk: &Disk) -> sector64::Result<()> {
     let header = disk.header()?;
     // Reverse-video header line, as `LOAD"$",8` would show it.
     println!("0 \"{:<16}\" {} {}", header.name, header.id, header.dos_type);

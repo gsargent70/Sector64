@@ -8,7 +8,7 @@
 //! [`Disk::directory`] rejects cycles and over-long chains.
 //!
 //! ```no_run
-//! use d64::Disk;
+//! use sector64::Disk;
 //! let disk = Disk::load(std::fs::read("disk.d64")?)?;
 //! let header = disk.header()?;
 //! println!("0 \"{}\" {}", header.name, header.id);

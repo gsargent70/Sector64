@@ -10,7 +10,7 @@
 
 use std::panic;
 
-use d64::{parse_lnx, parse_t64, parse_zipcode, Disk, FileType};
+use sector64::{parse_lnx, parse_t64, parse_zipcode, Disk, FileType};
 
 /// Tiny deterministic PRNG (SplitMix64-ish) so failures are reproducible.
 struct Rng(u64);

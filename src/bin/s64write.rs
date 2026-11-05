@@ -1,10 +1,10 @@
-//! `d64write` — create and edit D64 images from the shell.
+//! `s64write` — create and edit D64 images from the shell.
 //!
 //! ```text
-//! d64write format <image.d64> <disk name> <id>
-//! d64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]
-//! d64write delete <image.d64> <cbm name>
-//! d64write rename <image.d64> <old name> <new name>
+//! s64write format <image.d64> <disk name> <id>
+//! s64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]
+//! s64write delete <image.d64> <cbm name>
+//! s64write rename <image.d64> <old name> <new name>
 //! ```
 //!
 //! `add` stores the host file's raw bytes (for a PRG, that includes its two-byte
@@ -14,7 +14,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::ExitCode;
 
-use d64::{Disk, FileType};
+use sector64::{Disk, FileType};
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -34,12 +34,12 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "usage:\n  \
-                 d64write format <image> <disk name> <id> [d64|d71|d81]\n  \
-                 d64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]\n  \
-                 d64write delete <image.d64> <cbm name>\n  \
-                 d64write rename <image.d64> <old name> <new name>\n  \
-                 d64write import <image.d64> <archive.t64|.lnx>\n  \
-                 d64write unzip  <out.d64> <zipcode base>   (reads 1!base..4!base)"
+                 s64write format <image> <disk name> <id> [d64|d71|d81]\n  \
+                 s64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]\n  \
+                 s64write delete <image.d64> <cbm name>\n  \
+                 s64write rename <image.d64> <old name> <new name>\n  \
+                 s64write import <image.d64> <archive.t64|.lnx>\n  \
+                 s64write unzip  <out.d64> <zipcode base>   (reads 1!base..4!base)"
             );
             return ExitCode::from(2);
         }
@@ -51,7 +51,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(msg) => {
-            eprintln!("d64write: {msg}");
+            eprintln!("s64write: {msg}");
             ExitCode::FAILURE
         }
     }
@@ -124,9 +124,9 @@ fn cmd_import(image: &str, archive: &str) -> Result<String, String> {
     let bytes = std::fs::read(archive).map_err(|e| format!("cannot read {archive}: {e}"))?;
     let lower = archive.to_ascii_lowercase();
     let files = if lower.ends_with(".t64") {
-        d64::parse_t64(&bytes).map_err(|e| format!("{archive}: {e}"))?
+        sector64::parse_t64(&bytes).map_err(|e| format!("{archive}: {e}"))?
     } else if lower.ends_with(".lnx") {
-        d64::parse_lnx(&bytes).map_err(|e| format!("{archive}: {e}"))?
+        sector64::parse_lnx(&bytes).map_err(|e| format!("{archive}: {e}"))?
     } else {
         return Err(format!("unsupported archive '{archive}' (expected .t64 or .lnx)"));
     };
@@ -159,7 +159,7 @@ fn cmd_unzip(out_image: &str, base: &str) -> Result<String, String> {
         let path = parent.join(format!("{i}!{name}"));
         data.push(std::fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?);
     }
-    let d64 = d64::parse_zipcode([&data[0], &data[1], &data[2], &data[3]])
+    let d64 = sector64::parse_zipcode([&data[0], &data[1], &data[2], &data[3]])
         .map_err(|e| format!("decoding zipcode '{base}': {e}"))?;
     std::fs::write(out_image, &d64).map_err(|e| format!("cannot write {out_image}: {e}"))?;
     Ok(format!("unzipped {base} to {out_image} ({} bytes)", d64.len()))

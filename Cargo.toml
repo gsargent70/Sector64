@@ -1,5 +1,5 @@
 [package]
-name = "d64"
+name = "sector64"
 version = "0.1.0"
 edition = "2021"
 description = "Clean-room reader for Commodore 1541 D64 disk images"
@@ -9,20 +9,20 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 
 [[bin]]
-name = "d64ls"
-path = "src/bin/d64ls.rs"
+name = "s64ls"
+path = "src/bin/s64ls.rs"
 
 [[bin]]
-name = "d64extract"
-path = "src/bin/d64extract.rs"
+name = "s64extract"
+path = "src/bin/s64extract.rs"
 
 [[bin]]
-name = "d64val"
-path = "src/bin/d64val.rs"
+name = "s64val"
+path = "src/bin/s64val.rs"
 
 [[bin]]
-name = "d64write"
-path = "src/bin/d64write.rs"
+name = "s64write"
+path = "src/bin/s64write.rs"
 
 [profile.release]
 overflow-checks = true  # keep arithmetic checks on even in release; this is a parser.

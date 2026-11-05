@@ -1,7 +1,8 @@
-# d64
+# Sector64
 
-A small, clean-room library for Commodore **D64** (1541), **D71** (1571), and
-**D81** (1581) disk images, in Rust — reading, writing, and validation.
+A small, clean-room Rust library (crate `sector64`) for Commodore **D64**
+(1541), **D71** (1571), and **D81** (1581) disk images — reading, writing, and
+validation.
 
 Written from the publicly documented 1541 disk format. It is **not** derived
 from DirMaster or any other tool's code, and it contains none of their fonts,
@@ -70,13 +71,13 @@ job with those failure modes designed out:
   (including files that span both sides), scratch/rename and validation all
   work, confirmed byte-for-byte against `c1541` in both directions.
 
-- **Archive import** (`parse_t64`, `parse_lnx` → `ImportFile`, `d64write
+- **Archive import** (`parse_t64`, `parse_lnx` → `ImportFile`, `s64write
   import`): reads **T64** tape archives and **LNX** (Lynx) archives and
   reconstructs each file. Both confirmed byte-for-byte against `c1541`'s
   independent readers (`tape` and `unlynx`), and `parse_lnx` was validated
   against a real-world `.lnx`.
 
-- **Zip-Code** (`parse_zipcode` / `write_zipcode`, `d64write unzip`): decodes
+- **Zip-Code** (`parse_zipcode` / `write_zipcode`, `s64write unzip`): decodes
   and encodes the four-file `1!`…`4!` disk-compression format (raw / fill / RLE
   per sector). A D64 round-trips through it, and `c1541 unzip` reproduces the
   source from our encoding — so our bytes are real Zip-Code.
@@ -87,13 +88,13 @@ Not yet: GEOS/graphics formats. Those are the next layers.
 
 ```sh
 cargo test                           # unit tests, incl. malformed-image rejections
-cargo run --bin d64ls -- disk.d64    # directory listing
-cargo run --bin d64extract -- disk.d64 GAME > game.prg   # extract one file
-cargo run --bin d64val -- disk.d64                       # validate vs. the BAM
-cargo run --bin d64write -- format disk.d64 "my disk" 01 # create a blank image
-cargo run --bin d64write -- add disk.d64 hello hello.prg # write a host file in
-cargo run --bin d64write -- rename disk.d64 hello hi     # rename
-cargo run --bin d64write -- delete disk.d64 hi           # scratch
+cargo run --bin s64ls -- disk.d64    # directory listing
+cargo run --bin s64extract -- disk.d64 GAME > game.prg   # extract one file
+cargo run --bin s64val -- disk.d64                       # validate vs. the BAM
+cargo run --bin s64write -- format disk.d64 "my disk" 01 # create a blank image
+cargo run --bin s64write -- add disk.d64 hello hello.prg # write a host file in
+cargo run --bin s64write -- rename disk.d64 hello hi     # rename
+cargo run --bin s64write -- delete disk.d64 hi           # scratch
 ```
 
 Example listing:
@@ -145,10 +146,10 @@ against a real disk.
 | `src/bam.rs`       | Block Availability Map: free counts + allocation bitmap |
 | `src/petscii.rs`   | minimal PETSCII→UTF-8 for display |
 | `src/error.rs`     | error type (every malformed input is a recoverable error) |
-| `src/bin/d64ls.rs` | CLI directory listing |
-| `src/bin/d64extract.rs` | CLI: extract one file to stdout |
-| `src/bin/d64val.rs` | CLI: validate the disk against its BAM |
-| `src/bin/d64write.rs` | CLI: format, add, delete, rename |
+| `src/bin/s64ls.rs` | CLI directory listing |
+| `src/bin/s64extract.rs` | CLI: extract one file to stdout |
+| `src/bin/s64val.rs` | CLI: validate the disk against its BAM |
+| `src/bin/s64write.rs` | CLI: format, add, delete, rename |
 
 ## License
 

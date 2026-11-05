@@ -9,7 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use d64::{parse_zipcode, write_zipcode};
+use sector64::{parse_zipcode, write_zipcode};
 
 fn c1541_available() -> bool {
     Command::new("c1541")

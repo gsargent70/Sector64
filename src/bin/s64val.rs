@@ -1,6 +1,6 @@
-//! `d64val` — validate a D64 image against its BAM.
+//! `s64val` — validate a D64 image against its BAM.
 //!
-//! Usage: `d64val <image.d64>`
+//! Usage: `s64val <image.d64>`
 //!
 //! Walks every file's block chain and compares it to the Block Availability
 //! Map, reporting cross-linked blocks and blocks used but marked free. Exits
@@ -8,25 +8,25 @@
 
 use std::process::ExitCode;
 
-use d64::Disk;
+use sector64::Disk;
 
 fn main() -> ExitCode {
     let Some(path) = std::env::args_os().nth(1) else {
-        eprintln!("usage: d64val <image.d64>");
+        eprintln!("usage: s64val <image.d64>");
         return ExitCode::from(2);
     };
 
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("d64val: cannot read {}: {e}", path.to_string_lossy());
+            eprintln!("s64val: cannot read {}: {e}", path.to_string_lossy());
             return ExitCode::FAILURE;
         }
     };
     let disk = match Disk::load(bytes) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("d64val: {e}");
+            eprintln!("s64val: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -35,7 +35,7 @@ fn main() -> ExitCode {
         Ok(r) => r,
         Err(e) => {
             // A structural fault (bad link, cycle) stops the walk.
-            eprintln!("d64val: structural error: {e}");
+            eprintln!("s64val: structural error: {e}");
             return ExitCode::FAILURE;
         }
     };

@@ -12,7 +12,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4.7"
-d64 = { path = ".." }
+sector64 = { path = ".." }
 
 [[bin]]
 name = "image"

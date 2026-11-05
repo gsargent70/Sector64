@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use d64::parse_lnx;
+use sector64::parse_lnx;
 
 fn c1541_available() -> bool {
     Command::new("c1541")

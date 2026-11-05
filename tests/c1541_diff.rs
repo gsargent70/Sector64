@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use d64::Disk;
+use sector64::Disk;
 
 /// Deterministic pseudo-random bytes (a tiny LCG), so no `rand` dependency and
 /// the images are reproducible.

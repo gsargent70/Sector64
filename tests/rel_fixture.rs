@@ -8,7 +8,7 @@
 //! so this fixture is the only way to check the side-sector path against real
 //! DOS output.
 
-use d64::{Disk, FileType};
+use sector64::{Disk, FileType};
 
 #[test]
 fn reads_emulator_minted_rel() {
