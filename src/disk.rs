@@ -70,7 +70,12 @@ impl Disk {
     /// trailing per-block error map). The error map, when present, is ignored
     /// for data reads.
     pub fn load(bytes: impl Into<Vec<u8>>) -> Result<Disk> {
-        let data = bytes.into();
+        let mut data = bytes.into();
+        // A G64 is a GCR bitstream image; decode it to a sector-level D64 first,
+        // then read it with the ordinary machinery.
+        if data.starts_with(b"GCR-1541") {
+            data = crate::g64::to_d64(&data)?;
+        }
         let geom = match data.len() {
             174848 | 175531 => Geometry::Cbm1541 { tracks: 35 },
             196608 | 197376 => Geometry::Cbm1541 { tracks: 40 },

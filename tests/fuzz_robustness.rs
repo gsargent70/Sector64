@@ -107,6 +107,12 @@ fn no_panics_on_arbitrary_input() {
             let _ = parse_lnx(&buf);
             let _ = parse_lbr(&buf);
             let _ = parse_zipcode([&buf, &buf, &buf, &buf]);
+            // Exercise the G64 GCR decoder with a valid magic so the decode
+            // path runs on fuzzed track tables and bitstreams.
+            let mut g64 = b"GCR-1541".to_vec();
+            g64.extend_from_slice(&buf);
+            let _ = Disk::load(g64.clone());
+            let _ = sector64::g64_to_d64(&g64);
             if let Ok(entries) = parse_arc(&buf) {
                 for e in entries {
                     let _ = e.decode();

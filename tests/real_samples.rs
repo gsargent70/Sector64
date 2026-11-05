@@ -114,7 +114,7 @@ fn disk_images(dir: &Path) -> Vec<PathBuf> {
         .filter(|p| {
             matches!(
                 p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
-                Some("d64" | "d71" | "d81")
+                Some("d64" | "d71" | "d81" | "g64")
             )
         })
         .collect()

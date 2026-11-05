@@ -86,6 +86,17 @@ job with those failure modes designed out:
   per sector). A D64 round-trips through it, and `c1541 unzip` reproduces the
   source from our encoding — so our bytes are real Zip-Code.
 
+- **G64** (`g64::to_d64`, and `Disk::load` auto-detects the `GCR-1541`
+  signature): the GCR *bitstream*-level 1541 format. Where a D64 stores decoded
+  sectors, a G64 stores each track's raw recorded bitstream (sync marks and
+  all), which is how it represents copy protection. The reader walks the track
+  table, scans each track's bitstream for syncs, GCR-decodes every sector (5
+  recorded bits → 4 data bits) and verifies the header and data checksums,
+  assembling a standard 35-track D64 that the ordinary machinery then reads.
+  Undecodable/protected sectors are left zero rather than erroring. Confirmed
+  byte-for-byte against `c1541` reading the G64 directly (every file on a real
+  Epyx disk). `s64ls`/`s64extract`/`s64val` therefore work on a `.g64` directly.
+
 - **ARC archive** (`parse_arc` → `ArcEntry`, `s64arc`): walks a Commodore
   **ARC** archive (ARC230 and compatibles — the C64 format, unrelated to MS-DOS
   ARC) into its entries, validating every header field and the 254-byte block
@@ -161,6 +172,7 @@ against a real disk.
 | `src/directory.rs` | 32-byte slot layout and entry parsing |
 | `src/bam.rs`       | Block Availability Map: free counts + allocation bitmap |
 | `src/container.rs` | T64 / LNX / LBR / Zip-Code importers |
+| `src/g64.rs`       | G64 GCR bitstream decode → D64 |
 | `src/petscii.rs`   | minimal PETSCII→UTF-8 for display |
 | `src/error.rs`     | error type (every malformed input is a recoverable error) |
 | `src/bin/s64ls.rs` | CLI directory listing |
