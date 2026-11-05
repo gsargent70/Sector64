@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use sector64::parse_zipcode;
+use sector64::{parse_zipcode, Disk};
 
 fn samples_dir() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("SECTOR64_SAMPLES") {
@@ -100,5 +100,109 @@ fn real_zipcode_sets_match_c1541() {
         );
         assert_eq!(fs::read(&out).unwrap(), mine, "decode mismatch on {base}");
         eprintln!("ok: zip-code set {base} ({} bytes)", mine.len());
+    }
+}
+
+/// Disk images (`.d64`/`.d71`/`.d81`) in `dir`.
+fn disk_images(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            matches!(
+                p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
+                Some("d64" | "d71" | "d81")
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn real_disk_images_match_c1541() {
+    let Some(dir) = samples_dir() else {
+        eprintln!("skipping: no samples directory");
+        return;
+    };
+    if !c1541_available() {
+        eprintln!("skipping: c1541 not found");
+        return;
+    }
+    let images = disk_images(&dir);
+    if images.is_empty() {
+        eprintln!("no disk images found in {}", dir.display());
+        return;
+    }
+
+    let work = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("real_images");
+    let _ = fs::remove_dir_all(&work);
+    fs::create_dir_all(&work).unwrap();
+
+    for img in images {
+        let label = img.file_name().unwrap().to_string_lossy().into_owned();
+        let disk = match Disk::load(fs::read(&img).unwrap()) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("skip {label}: {e}");
+                continue;
+            }
+        };
+        let entries = disk.directory().unwrap_or_else(|e| panic!("{label}: directory: {e}"));
+
+        let mut compared = 0usize;
+        let mut skipped = 0usize;
+        for entry in &entries {
+            let mine = disk
+                .read_entry(entry)
+                .unwrap_or_else(|e| panic!("{label}: read {}: {e}", entry.name));
+
+            // c1541 reads by lowercase name; a trailing '*' absorbs name padding.
+            // A name beginning with '-' collides with c1541's option parsing
+            // (it reports "invalid filename"), so such names can't be addressed
+            // through the CLI at all — skip the cross-check for them rather than
+            // assert against a tool that can't name the file.
+            let pattern = format!("{}*", entry.name.to_lowercase());
+            if pattern.starts_with('-') {
+                eprintln!("  skip {}: c1541 can't address a name starting with '-'", entry.name);
+                skipped += 1;
+                continue;
+            }
+            let out = work.join("ref");
+            let _ = fs::remove_file(&out);
+            let ok = Command::new("c1541")
+                .arg(&img)
+                .arg("-read")
+                .arg(&pattern)
+                .arg(&out)
+                .status()
+                .unwrap()
+                .success();
+            if !ok {
+                eprintln!("  skip {}: c1541 -read failed for pattern {pattern:?}", entry.name);
+                skipped += 1;
+                continue;
+            }
+            let theirs = fs::read(&out).unwrap();
+            // A wildcard can still match the wrong file; guard with the block
+            // count from the directory (a chain of N blocks holds at most N*254
+            // data bytes). An impossible length means the pattern hit something
+            // else, so skip rather than report a false mismatch.
+            let max_bytes = entry.blocks as usize * 254;
+            if theirs.len() > max_bytes {
+                eprintln!(
+                    "  skip {}: c1541 pattern matched a larger file ({} > {} blocks*254)",
+                    entry.name,
+                    theirs.len(),
+                    entry.blocks
+                );
+                skipped += 1;
+                continue;
+            }
+            assert_eq!(theirs, mine, "{label}: bytes differ for {}", entry.name);
+            compared += 1;
+        }
+        eprintln!("ok: {label} ({} files, {compared} verified vs c1541, {skipped} skipped)", entries.len());
     }
 }
