@@ -28,7 +28,7 @@ pub mod petscii;
 pub mod disk;
 
 pub use bam::{Bam, DosFormat};
-pub use container::{parse_t64, ImportFile};
+pub use container::{parse_lnx, parse_t64, ImportFile};
 pub use directory::{Entry, FileType};
 pub use disk::{Disk, Header, RelFile, ValidationReport};
 pub use error::{Error, Result};

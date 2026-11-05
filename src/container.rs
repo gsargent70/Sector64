@@ -76,6 +76,106 @@ pub fn parse_t64(bytes: &[u8]) -> Result<Vec<ImportFile>> {
     Ok(files)
 }
 
+/// Collected decimal value of all ASCII digits in a segment (ignoring the
+/// surrounding spaces Lynx pads its numbers with).
+fn parse_uint(seg: &[u8]) -> usize {
+    seg.iter()
+        .filter(|b| b.is_ascii_digit())
+        .fold(0usize, |a, &b| a.saturating_mul(10).saturating_add((b - b'0') as usize))
+}
+
+/// Return the bytes up to (not including) the next CR, and the cursor past it.
+fn read_line(bytes: &[u8], cur: usize) -> Option<(&[u8], usize)> {
+    let rel = bytes.get(cur..)?.iter().position(|&b| b == 0x0D)?;
+    Some((&bytes[cur..cur + rel], cur + rel + 1))
+}
+
+/// Parse a **Lynx** (`.lnx`) archive.
+///
+/// After an optional BASIC "un-lynx" loader, the header is PETSCII text: a line
+/// carrying the header size in 254-byte blocks and the `*LYNX` signature, then a
+/// file count, then per file a 16-byte name, block count, type char and
+/// last-block byte count (CR-separated). File data begins at `blocks × 254`,
+/// each file stored in whole blocks; a file's real length is
+/// `(blocks - 1) × 254 + (last_bytes - 1)`.
+pub fn parse_lnx(bytes: &[u8]) -> Result<Vec<ImportFile>> {
+    // The signature sits in the first header block; find it and the number that
+    // precedes it on the same line (the header size in blocks). The marker is
+    // "*LYNX" — the asterisk distinguishes it from the word "LYNX" that appears
+    // in the BASIC "USE LYNX TO DISSOLVE" loader string.
+    let scan_end = bytes.len().min(512);
+    let sig = bytes[..scan_end]
+        .windows(5)
+        .position(|w| w == b"*LYNX")
+        .ok_or(Error::InvalidContainer)?
+        + 1; // point at the "L"
+    let line_start = bytes[..sig].iter().rposition(|&b| b == 0x0D).map_or(0, |i| i + 1);
+    let dir_blocks = parse_uint(&bytes[line_start..sig]);
+    if dir_blocks == 0 {
+        return Err(Error::InvalidContainer);
+    }
+
+    // Skip to just past the signature line, then read the file count.
+    let sig_cr = bytes[sig..]
+        .iter()
+        .position(|&b| b == 0x0D)
+        .ok_or(Error::InvalidContainer)?
+        + sig;
+    let mut cur = sig_cr + 1;
+    let (seg, nc) = read_line(bytes, cur).ok_or(Error::InvalidContainer)?;
+    cur = nc;
+    let num_files = parse_uint(seg);
+
+    let mut files = Vec::new();
+    let mut data_off = dir_blocks * 254;
+    for _ in 0..num_files {
+        let name = bytes.get(cur..cur + 16).ok_or(Error::InvalidContainer)?;
+        cur += 16;
+        if bytes.get(cur) == Some(&0x0D) {
+            cur += 1;
+        }
+        let (seg, nc) = read_line(bytes, cur).ok_or(Error::InvalidContainer)?;
+        cur = nc;
+        let blocks = parse_uint(seg);
+        let (seg, nc) = read_line(bytes, cur).ok_or(Error::InvalidContainer)?;
+        cur = nc;
+        let type_char = seg.iter().copied().find(|b| !b.is_ascii_whitespace()).unwrap_or(b'P');
+        let (seg, nc) = read_line(bytes, cur).ok_or(Error::InvalidContainer)?;
+        cur = nc;
+        let last_bytes = parse_uint(seg);
+
+        let file_type = match type_char {
+            b'S' | b's' => FileType::Seq,
+            b'U' | b'u' => FileType::Usr,
+            b'R' | b'r' => FileType::Rel,
+            _ => FileType::Prg,
+        };
+        if file_type == FileType::Rel {
+            // REL files carry an extra record-length line.
+            let (_, nc) = read_line(bytes, cur).ok_or(Error::InvalidContainer)?;
+            cur = nc;
+        }
+
+        let length = if blocks == 0 {
+            0
+        } else {
+            (blocks - 1) * 254 + last_bytes.saturating_sub(1)
+        };
+        let avail = bytes.len().saturating_sub(data_off);
+        let data = bytes
+            .get(data_off..data_off + length.min(avail))
+            .ok_or(Error::InvalidContainer)?
+            .to_vec();
+        files.push(ImportFile {
+            name: name_trimmed(name),
+            file_type,
+            data,
+        });
+        data_off += blocks * 254;
+    }
+    Ok(files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,5 +230,62 @@ mod tests {
     fn rejects_non_t64() {
         assert_eq!(parse_t64(b"not a tape at all..............").err(), Some(Error::InvalidContainer));
         assert_eq!(parse_t64(&[]).err(), Some(Error::InvalidContainer));
+    }
+
+    /// Build a minimal Lynx archive (self-made BASIC stub + text directory).
+    pub(crate) fn build_lnx(files: &[(&str, char, Vec<u8>)]) -> Vec<u8> {
+        let blocks = |l: usize| l.div_ceil(254).max(1);
+        let last = |l: usize| l - (blocks(l) - 1) * 254 + 1;
+        // Minimal BASIC stub: load address + one "0 REM" line, program-terminated.
+        let stub: &[u8] = &[0x01, 0x08, 0x09, 0x08, 0x00, 0x00, 0x8F, 0x00, 0x00, 0x00];
+        let header = |db: usize| -> Vec<u8> {
+            let mut s = stub.to_vec();
+            s.extend_from_slice(format!("\r {db}  *LYNX TEST\r{}\r", files.len()).as_bytes());
+            for (name, ty, data) in files {
+                let mut nm = name.as_bytes().to_vec();
+                nm.resize(16, b' ');
+                s.extend_from_slice(&nm);
+                s.extend_from_slice(
+                    format!("\r{}\r{}\r{}\r", blocks(data.len()), ty, last(data.len())).as_bytes(),
+                );
+            }
+            s
+        };
+        let mut db = 1;
+        loop {
+            let need = blocks(header(db).len());
+            if need == db {
+                break;
+            }
+            db = need;
+        }
+        let mut out = header(db);
+        out.resize(db * 254, 0);
+        for (_, _, data) in files {
+            let start = out.len();
+            out.extend_from_slice(data);
+            out.resize(start + blocks(data.len()) * 254, 0);
+        }
+        out
+    }
+
+    #[test]
+    fn parses_a_lynx_archive() {
+        let f1 = vec![0x11u8; 100];
+        let f2: Vec<u8> = (0..300u32).map(|x| x as u8).collect();
+        let lnx = build_lnx(&[("FIRST", 'P', f1.clone()), ("SECOND", 'S', f2.clone())]);
+        let files = parse_lnx(&lnx).unwrap();
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].name, "FIRST");
+        assert_eq!(files[0].file_type, FileType::Prg);
+        assert_eq!(files[0].data, f1);
+        assert_eq!(files[1].name, "SECOND");
+        assert_eq!(files[1].file_type, FileType::Seq);
+        assert_eq!(files[1].data, f2);
+    }
+
+    #[test]
+    fn rejects_non_lynx() {
+        assert_eq!(parse_lnx(b"no signature here at all").err(), Some(Error::InvalidContainer));
     }
 }

@@ -37,7 +37,7 @@ fn main() -> ExitCode {
                  d64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]\n  \
                  d64write delete <image.d64> <cbm name>\n  \
                  d64write rename <image.d64> <old name> <new name>\n  \
-                 d64write import <image.d64> <archive.t64>"
+                 d64write import <image.d64> <archive.t64|.lnx>"
             );
             return ExitCode::from(2);
         }
@@ -123,8 +123,10 @@ fn cmd_import(image: &str, archive: &str) -> Result<String, String> {
     let lower = archive.to_ascii_lowercase();
     let files = if lower.ends_with(".t64") {
         d64::parse_t64(&bytes).map_err(|e| format!("{archive}: {e}"))?
+    } else if lower.ends_with(".lnx") {
+        d64::parse_lnx(&bytes).map_err(|e| format!("{archive}: {e}"))?
     } else {
-        return Err(format!("unsupported archive '{archive}' (expected .t64)"));
+        return Err(format!("unsupported archive '{archive}' (expected .t64 or .lnx)"));
     };
     let mut disk = load(image)?;
     let mut n = 0;
