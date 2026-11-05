@@ -108,8 +108,21 @@ job with those failure modes designed out:
   `Error::UnsupportedArcMethod` for now — the decoders are the next layer, and
   the captured per-entry checksum is the oracle they will be verified against.
 
-Not yet: ARC decompression (RLE/Huffman/LZ), and GEOS/graphics formats. Those
-are the next layers.
+- **Self-extracting archives** (`parse_sda`, `parse_lha` → `LhaEntry`, `s64arc`,
+  `s64lha`): two self-extractor families that bundle an archive behind a C64
+  loader. A **`.SDA`** (self-dissolving) is an ARC archive behind a BASIC
+  dissolver — `parse_sda` finds the embedded archive at `(line − 6) × 254` and
+  reads it with [`parse_arc`]. A **`.SFX`** is an **LHA** archive behind a
+  loader — `parse_lha` locates the first level-0 header past the stub by its
+  checksum, walks the entries (name, CBM type, method, sizes, CRC) and ends at
+  the terminator or trailing padding. Both **list** real samples correctly
+  (SURVIVOR.SDA, and RAS-1.SFX's 20 members / SWB.SFX). As with a bare ARC,
+  **stored** members extract; the compressed methods (ARC crunch, LHA `-lh1-`
+  LZHUF) return their respective `Unsupported…Method` error — the decoders are
+  the next layer, with the stored CRC/checksum kept as the oracle.
+
+Not yet: ARC and LHA decompression (RLE/Huffman/LZ/LZHUF), and GEOS/graphics
+formats. Those are the next layers.
 
 ## Build and run
 
@@ -179,8 +192,10 @@ against a real disk.
 | `src/bin/s64extract.rs` | CLI: extract one file to stdout |
 | `src/bin/s64val.rs` | CLI: validate the disk against its BAM |
 | `src/bin/s64write.rs` | CLI: format, add, delete, rename |
-| `src/arc.rs`       | Commodore ARC archive walk + stored decode |
-| `src/bin/s64arc.rs` | CLI: list / extract an ARC archive |
+| `src/arc.rs`       | Commodore ARC archive + SDA walk + stored decode |
+| `src/lha.rs`       | LHA / SFX archive walk + stored decode |
+| `src/bin/s64arc.rs` | CLI: list / extract an ARC or SDA archive |
+| `src/bin/s64lha.rs` | CLI: list / extract an LHA or SFX archive |
 
 ## License
 

@@ -46,6 +46,8 @@ pub enum Error {
     InvalidContainer,
     /// An ARC entry uses a compression method this crate cannot yet decode.
     UnsupportedArcMethod(u8),
+    /// An LHA entry uses a compression method this crate cannot yet decode.
+    UnsupportedLhaMethod([u8; 5]),
 }
 
 impl fmt::Display for Error {
@@ -87,6 +89,9 @@ impl fmt::Display for Error {
             Error::InvalidContainer => write!(f, "malformed or unrecognized container archive"),
             Error::UnsupportedArcMethod(m) => {
                 write!(f, "ARC compression method {m} is not yet supported")
+            }
+            Error::UnsupportedLhaMethod(m) => {
+                write!(f, "LHA method {} is not yet supported", String::from_utf8_lossy(m))
             }
         }
     }

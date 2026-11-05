@@ -1,16 +1,18 @@
-//! `s64arc` — list or extract a Commodore **ARC** archive.
+//! `s64arc` — list or extract a Commodore **ARC** or **SDA** archive.
 //!
 //! Usage:
-//!   `s64arc list <archive.arc>`              list the entries
-//!   `s64arc extract <archive.arc> <name>`    extract one file to stdout
+//!   `s64arc list <archive.arc|.sda>`              list the entries
+//!   `s64arc extract <archive.arc|.sda> <name>`    extract one file to stdout
 //!
-//! Only stored (method 0) entries can be extracted today; compressed entries
-//! report the method that is not yet supported.
+//! A `.sda` self-dissolving archive is detected by its BASIC loader and its
+//! embedded ARC archive is read. Only stored (method 0) entries can be
+//! extracted today; compressed entries report the method that is not yet
+//! supported.
 
 use std::io::Write;
 use std::process::ExitCode;
 
-use sector64::{parse_arc, ArcEntry};
+use sector64::{parse_arc, parse_sda, ArcEntry};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -31,7 +33,14 @@ fn load(path: &str) -> Result<Vec<ArcEntry>, ExitCode> {
         eprintln!("s64arc: cannot read {path}: {e}");
         ExitCode::FAILURE
     })?;
-    parse_arc(&bytes).map_err(|e| {
+    // A `.SDA` self-dissolving archive is a C64 BASIC loader ($0801) with an
+    // ARC archive appended; a bare `.ARC` starts at the header.
+    let parsed = if bytes.starts_with(&[0x01, 0x08]) {
+        parse_sda(&bytes)
+    } else {
+        parse_arc(&bytes)
+    };
+    parsed.map_err(|e| {
         eprintln!("s64arc: {e}");
         ExitCode::FAILURE
     })

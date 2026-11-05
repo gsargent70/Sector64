@@ -175,6 +175,50 @@ fn arc_name(field: &[u8]) -> String {
 /// The base header length up to and including the name-length byte.
 const HEADER_BASE: usize = 11;
 
+/// Parse a **self-dissolving archive** (`.SDA`): an ARC archive with a C64
+/// BASIC+ML dissolver prepended.
+///
+/// The dissolver is a program that loads at `$0801`; per the ARC convention the
+/// embedded archive starts at `(first BASIC line number − 6) × 254`, minus one
+/// more byte when the `SYS` argument begins with the digit `7`. Everything past
+/// that point is an ordinary ARC archive, so this strips the stub and defers to
+/// [`parse_arc`].
+pub fn parse_sda(bytes: &[u8]) -> Result<Vec<ArcEntry>> {
+    let start = sda_archive_offset(bytes).ok_or(Error::InvalidContainer)?;
+    let archive = bytes.get(start..).ok_or(Error::InvalidContainer)?;
+    // The computed offset must land on an ARC header version byte.
+    if archive.first().is_none_or(|&v| v != 1 && v != 2) {
+        return Err(Error::InvalidContainer);
+    }
+    parse_arc(archive)
+}
+
+/// The offset of the embedded ARC archive within an SDA, from the BASIC loader.
+fn sda_archive_offset(bytes: &[u8]) -> Option<usize> {
+    // A C64 BASIC program loads at $0801.
+    if bytes.len() < 16 || bytes[0] != 0x01 || bytes[1] != 0x08 {
+        return None;
+    }
+    // bytes[2..4] is the next-line link; bytes[4..6] is the first line number.
+    let line = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+    let mut off = line.checked_sub(6)?.checked_mul(254)?;
+    // The ARC convention: a SYS argument starting with '7' means one byte less.
+    if sys_argument(bytes).and_then(|a| a.first().copied()) == Some(b'7') {
+        off = off.checked_sub(1)?;
+    }
+    Some(off)
+}
+
+/// The decimal `SYS` argument digits in a BASIC loader line (token `$9E`).
+fn sys_argument(bytes: &[u8]) -> Option<&[u8]> {
+    let p = bytes.iter().position(|&b| b == 0x9E)?;
+    let rest = bytes.get(p + 1..)?;
+    let ds = rest.iter().position(|b| b.is_ascii_digit())?;
+    let d = &rest[ds..];
+    let de = d.iter().position(|b| !b.is_ascii_digit()).unwrap_or(d.len());
+    Some(&d[..de])
+}
+
 /// Parse an ARC archive into its entries.
 ///
 /// `bytes` must start at the archive header (self-dissolving `.SDA`/`.SFX`
@@ -321,5 +365,33 @@ mod tests {
     fn zero_block_count_is_rejected() {
         let a = vec![1, 0, 0, 0, 0, 0, 0, 0, 0, b'P', 1, b'X', 0, 0, 0, 0];
         assert!(parse_arc(&a).is_err());
+    }
+
+    #[test]
+    fn parses_an_sda_after_its_basic_stub() {
+        // A BASIC loader at $0801 whose first line number is 7, so the embedded
+        // ARC starts at (7 - 6) * 254 = 254.
+        let mut sda = vec![0x01, 0x08]; // load address
+        sda.extend_from_slice(&[0x0d, 0x08]); // next-line link
+        sda.extend_from_slice(&[7, 0]); // line number 7
+        sda.push(0x9e); // SYS token
+        sda.extend_from_slice(b"2061"); // SYS argument (not starting with 7)
+        sda.resize(254, 0); // pad the stub to the archive start
+        // One stored ARC entry at offset 254.
+        let mut entry = vec![1, 0, 0x02, 0x01, 4, 0, 0, 1, 0, b'P', 2, b'A', b'B'];
+        entry.extend_from_slice(&[1, 2, 3, 4]);
+        entry.resize(BLOCK, 0);
+        sda.extend_from_slice(&entry);
+        sda.push(0x1a); // terminator
+
+        let entries = parse_sda(&sda).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "AB");
+        assert_eq!(entries[0].decode().unwrap(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn rejects_sda_that_is_not_basic() {
+        assert_eq!(parse_sda(b"not a basic program").err(), Some(Error::InvalidContainer));
     }
 }

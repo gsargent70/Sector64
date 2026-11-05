@@ -118,6 +118,12 @@ fn no_panics_on_arbitrary_input() {
                     let _ = e.decode();
                 }
             }
+            let _ = sector64::parse_sda(&buf);
+            if let Ok(entries) = sector64::parse_lha(&buf) {
+                for e in entries {
+                    let _ = e.decode();
+                }
+            }
         }
     });
 

@@ -26,13 +26,15 @@ pub mod directory;
 pub mod error;
 pub mod g64;
 pub mod geometry;
+pub mod lha;
 pub mod petscii;
 pub mod disk;
 
-pub use arc::{parse_arc, ArcEntry, ArcMethod};
+pub use arc::{parse_arc, parse_sda, ArcEntry, ArcMethod};
 pub use bam::{Bam, DosFormat};
 pub use container::{parse_lbr, parse_lnx, parse_t64, parse_zipcode, write_zipcode, ImportFile};
 pub use directory::{Entry, FileType};
 pub use g64::to_d64 as g64_to_d64;
+pub use lha::{parse_lha, LhaEntry};
 pub use disk::{Disk, Header, RelFile, ValidationReport};
 pub use error::{Error, Result};
