@@ -71,11 +71,15 @@ job with those failure modes designed out:
   (including files that span both sides), scratch/rename and validation all
   work, confirmed byte-for-byte against `c1541` in both directions.
 
-- **Archive import** (`parse_t64`, `parse_lnx` → `ImportFile`, `s64write
-  import`): reads **T64** tape archives and **LNX** (Lynx) archives and
-  reconstructs each file. Both confirmed byte-for-byte against `c1541`'s
-  independent readers (`tape` and `unlynx`), and `parse_lnx` was validated
-  against a real-world `.lnx`.
+- **Archive import** (`parse_t64`, `parse_lnx`, `parse_lbr` → `ImportFile`,
+  `s64write import`): reads **T64** tape archives, **LNX** (Lynx) archives, and
+  **LBR** libraries and reconstructs each file. T64/LNX are confirmed
+  byte-for-byte against `c1541`'s independent readers (`tape` and `unlynx`), and
+  `parse_lnx` was validated against a real-world `.lnx`. **LBR** (the C64
+  library format — a CR-delimited `DWB` text directory plus concatenated,
+  uncompressed member data; not the CP/M `.lbr`) was validated against a real
+  7-member library: its directory parses exactly, and every member round-trips
+  byte-for-byte when written to a disk and read back by `c1541`.
 
 - **Zip-Code** (`parse_zipcode` / `write_zipcode`, `s64write unzip`): decodes
   and encodes the four-file `1!`…`4!` disk-compression format (raw / fill / RLE
@@ -156,6 +160,7 @@ against a real disk.
 | `src/disk.rs`      | image loading, block accessor, header, BAM, directory walk |
 | `src/directory.rs` | 32-byte slot layout and entry parsing |
 | `src/bam.rs`       | Block Availability Map: free counts + allocation bitmap |
+| `src/container.rs` | T64 / LNX / LBR / Zip-Code importers |
 | `src/petscii.rs`   | minimal PETSCII→UTF-8 for display |
 | `src/error.rs`     | error type (every malformed input is a recoverable error) |
 | `src/bin/s64ls.rs` | CLI directory listing |

@@ -38,7 +38,7 @@ fn main() -> ExitCode {
                  s64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]\n  \
                  s64write delete <image.d64> <cbm name>\n  \
                  s64write rename <image.d64> <old name> <new name>\n  \
-                 s64write import <image.d64> <archive.t64|.lnx>\n  \
+                 s64write import <image.d64> <archive.t64|.lnx|.lbr>\n  \
                  s64write unzip  <out.d64> <zipcode base>   (reads 1!base..4!base)"
             );
             return ExitCode::from(2);
@@ -127,8 +127,10 @@ fn cmd_import(image: &str, archive: &str) -> Result<String, String> {
         sector64::parse_t64(&bytes).map_err(|e| format!("{archive}: {e}"))?
     } else if lower.ends_with(".lnx") {
         sector64::parse_lnx(&bytes).map_err(|e| format!("{archive}: {e}"))?
+    } else if lower.ends_with(".lbr") {
+        sector64::parse_lbr(&bytes).map_err(|e| format!("{archive}: {e}"))?
     } else {
-        return Err(format!("unsupported archive '{archive}' (expected .t64 or .lnx)"));
+        return Err(format!("unsupported archive '{archive}' (expected .t64, .lnx or .lbr)"));
     };
     let mut disk = load(image)?;
     let mut n = 0;

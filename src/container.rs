@@ -180,6 +180,70 @@ pub fn parse_lnx(bytes: &[u8]) -> Result<Vec<ImportFile>> {
     Ok(files)
 }
 
+/// Parse an **LBR** library (`.lbr`) archive.
+///
+/// The C64 LBR (not the CP/M `.lbr`) is a bare, uncompressed container: a
+/// CR-delimited text directory followed by the files' data concatenated in
+/// order. The directory opens with a `DWB <count> ` line, then three
+/// CR-terminated fields per file — name, one-character type (`P`/`S`/`U`/`R`/
+/// `D`), and byte size (decimal, space-padded). File data starts immediately
+/// after the directory, each file exactly its stated size (a PRG keeps its
+/// two-byte load address).
+///
+/// Every field read and the per-file slice are bounds-checked; malformed input
+/// yields [`Error::InvalidContainer`] rather than a panic.
+pub fn parse_lbr(bytes: &[u8]) -> Result<Vec<ImportFile>> {
+    if !bytes.starts_with(b"DWB") {
+        return Err(Error::InvalidContainer);
+    }
+    // Header line: "DWB <count> " — the only number on it is the file count.
+    let (header, mut cur) = read_line(bytes, 0).ok_or(Error::InvalidContainer)?;
+    let count = parse_uint(header);
+    // A library has at least one member, and can't hold more entries than the
+    // file has bytes (each directory token is at least one byte plus its CR).
+    if count == 0 || count > bytes.len() {
+        return Err(Error::InvalidContainer);
+    }
+
+    // First pass: read the directory (name, type, size) for every member.
+    let mut metas: Vec<(String, FileType, usize)> = Vec::with_capacity(count.min(4096));
+    for _ in 0..count {
+        let (name_seg, nc) = read_line(bytes, cur).ok_or(Error::InvalidContainer)?;
+        cur = nc;
+        let (type_seg, nc) = read_line(bytes, cur).ok_or(Error::InvalidContainer)?;
+        cur = nc;
+        let (size_seg, nc) = read_line(bytes, cur).ok_or(Error::InvalidContainer)?;
+        cur = nc;
+
+        let type_char = type_seg.iter().copied().find(|b| !b.is_ascii_whitespace()).unwrap_or(b'P');
+        let file_type = match type_char {
+            b'S' | b's' => FileType::Seq,
+            b'U' | b'u' => FileType::Usr,
+            b'R' | b'r' => FileType::Rel,
+            b'D' | b'd' => FileType::Del,
+            _ => FileType::Prg,
+        };
+        let name: String = name_seg.iter().map(|&b| petscii::char_of(b)).collect();
+        let name = name.trim_end().to_string();
+        metas.push((name, file_type, parse_uint(size_seg)));
+    }
+
+    // Second pass: carve out each member's data, concatenated after the directory.
+    let mut off = cur;
+    let mut files = Vec::with_capacity(metas.len());
+    for (name, file_type, size) in metas {
+        let end = off.checked_add(size).ok_or(Error::InvalidContainer)?;
+        let data = bytes.get(off..end).ok_or(Error::InvalidContainer)?.to_vec();
+        off = end;
+        files.push(ImportFile {
+            name,
+            file_type,
+            data,
+        });
+    }
+    Ok(files)
+}
+
 /// Decode a **Zip-Code** archive (the four `1!`…`4!` files) into a 35-track D64
 /// image (174848 bytes).
 ///
@@ -442,5 +506,48 @@ mod tests {
         let f = write_zipcode(&d64).unwrap();
         let back = parse_zipcode([&f[0], &f[1], &f[2], &f[3]]).unwrap();
         assert_eq!(back, d64);
+    }
+
+    fn build_lbr(entries: &[(&str, &str, &[u8])]) -> Vec<u8> {
+        let mut dir = format!("DWB {} \r", entries.len()).into_bytes();
+        for (name, typ, data) in entries {
+            dir.extend_from_slice(name.as_bytes());
+            dir.push(0x0D);
+            dir.extend_from_slice(typ.as_bytes());
+            dir.push(0x0D);
+            dir.extend_from_slice(format!(" {} ", data.len()).as_bytes());
+            dir.push(0x0D);
+        }
+        let mut out = dir;
+        for (_, _, data) in entries {
+            out.extend_from_slice(data);
+        }
+        out
+    }
+
+    #[test]
+    fn parses_an_lbr_library() {
+        let boot: Vec<u8> = vec![0x01, 0x08, 0x99, 0x00];
+        let data: Vec<u8> = (0..500u32).map(|x| x as u8).collect();
+        let lbr = build_lbr(&[
+            ("BOOT", "P", &boot),
+            ("MY DATA", "S", &data), // name with an embedded space
+        ]);
+        let files = parse_lbr(&lbr).unwrap();
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].name, "BOOT");
+        assert_eq!(files[0].file_type, FileType::Prg);
+        assert_eq!(files[0].data, boot);
+        assert_eq!(files[1].name, "MY DATA");
+        assert_eq!(files[1].file_type, FileType::Seq);
+        assert_eq!(files[1].data, data);
+    }
+
+    #[test]
+    fn rejects_non_lbr_and_truncated() {
+        assert_eq!(parse_lbr(b"not a library").err(), Some(Error::InvalidContainer));
+        // Directory promises a 999-byte file the data area can't satisfy.
+        let bad = b"DWB 1 \rX\rP\r 999 \rshort".to_vec();
+        assert_eq!(parse_lbr(&bad).err(), Some(Error::InvalidContainer));
     }
 }

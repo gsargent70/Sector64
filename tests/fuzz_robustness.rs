@@ -10,7 +10,7 @@
 
 use std::panic;
 
-use sector64::{parse_arc, parse_lnx, parse_t64, parse_zipcode, Disk, FileType};
+use sector64::{parse_arc, parse_lbr, parse_lnx, parse_t64, parse_zipcode, Disk, FileType};
 
 /// Tiny deterministic PRNG (SplitMix64-ish) so failures are reproducible.
 struct Rng(u64);
@@ -105,6 +105,7 @@ fn no_panics_on_arbitrary_input() {
             let _ = Disk::load(buf.clone());
             let _ = parse_t64(&buf);
             let _ = parse_lnx(&buf);
+            let _ = parse_lbr(&buf);
             let _ = parse_zipcode([&buf, &buf, &buf, &buf]);
             if let Ok(entries) = parse_arc(&buf) {
                 for e in entries {

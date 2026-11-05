@@ -30,7 +30,7 @@ pub mod disk;
 
 pub use arc::{parse_arc, ArcEntry, ArcMethod};
 pub use bam::{Bam, DosFormat};
-pub use container::{parse_lnx, parse_t64, parse_zipcode, write_zipcode, ImportFile};
+pub use container::{parse_lbr, parse_lnx, parse_t64, parse_zipcode, write_zipcode, ImportFile};
 pub use directory::{Entry, FileType};
 pub use disk::{Disk, Header, RelFile, ValidationReport};
 pub use error::{Error, Result};
