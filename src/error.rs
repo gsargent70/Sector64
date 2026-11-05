@@ -42,8 +42,10 @@ pub enum Error {
     DirectoryFull,
     /// No directory entry matched the requested name.
     FileNotFound,
-    /// A container archive (T64/LNX) was malformed or not recognized.
+    /// A container archive (T64/LNX/ARC) was malformed or not recognized.
     InvalidContainer,
+    /// An ARC entry uses a compression method this crate cannot yet decode.
+    UnsupportedArcMethod(u8),
 }
 
 impl fmt::Display for Error {
@@ -83,6 +85,9 @@ impl fmt::Display for Error {
             Error::DirectoryFull => write!(f, "directory is full"),
             Error::FileNotFound => write!(f, "file not found"),
             Error::InvalidContainer => write!(f, "malformed or unrecognized container archive"),
+            Error::UnsupportedArcMethod(m) => {
+                write!(f, "ARC compression method {m} is not yet supported")
+            }
         }
     }
 }

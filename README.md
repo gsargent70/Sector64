@@ -82,7 +82,19 @@ job with those failure modes designed out:
   per sector). A D64 round-trips through it, and `c1541 unzip` reproduces the
   source from our encoding — so our bytes are real Zip-Code.
 
-Not yet: GEOS/graphics formats. Those are the next layers.
+- **ARC archive** (`parse_arc` → `ArcEntry`, `s64arc`): walks a Commodore
+  **ARC** archive (ARC230 and compatibles — the C64 format, unrelated to MS-DOS
+  ARC) into its entries, validating every header field and the 254-byte block
+  arithmetic, rejecting cycles/overflow, and stopping at the trailing padding.
+  Each entry exposes its version, compression method, 16-bit checksum, original
+  size, file type and name. **Listing works today** and is validated against
+  real archives' known contents; **extraction is implemented only for stored
+  (method 0)** entries. The compressed methods (RLE, Huffman, LZ) return
+  `Error::UnsupportedArcMethod` for now — the decoders are the next layer, and
+  the captured per-entry checksum is the oracle they will be verified against.
+
+Not yet: ARC decompression (RLE/Huffman/LZ), and GEOS/graphics formats. Those
+are the next layers.
 
 ## Build and run
 
@@ -150,6 +162,8 @@ against a real disk.
 | `src/bin/s64extract.rs` | CLI: extract one file to stdout |
 | `src/bin/s64val.rs` | CLI: validate the disk against its BAM |
 | `src/bin/s64write.rs` | CLI: format, add, delete, rename |
+| `src/arc.rs`       | Commodore ARC archive walk + stored decode |
+| `src/bin/s64arc.rs` | CLI: list / extract an ARC archive |
 
 ## License
 
