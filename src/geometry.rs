@@ -65,6 +65,8 @@ pub fn ts_to_offset(track: u8, sector: u8, track_count: u8) -> Result<usize> {
 pub enum Geometry {
     /// 1541 D64: 35 or 40 tracks, speed-zoned, directory on track 18.
     Cbm1541 { tracks: u8 },
+    /// 1571 D71: 70 tracks — two 1541 sides — directory on track 18.
+    Cbm1571,
     /// 1581 D81: 80 tracks of 40 sectors, directory on track 40.
     Cbm1581,
 }
@@ -74,6 +76,7 @@ impl Geometry {
     pub fn tracks(self) -> u8 {
         match self {
             Geometry::Cbm1541 { tracks } => tracks,
+            Geometry::Cbm1571 => 70,
             Geometry::Cbm1581 => 80,
         }
     }
@@ -82,6 +85,14 @@ impl Geometry {
     pub fn sectors_per_track(self, track: u8) -> Option<u8> {
         match self {
             Geometry::Cbm1541 { tracks } => sectors_per_track(track, tracks),
+            // Side 1 (tracks 36–70) mirrors side 0's speed zones.
+            Geometry::Cbm1571 => {
+                if track == 0 || track > 70 {
+                    None
+                } else {
+                    sectors_per_track(if track <= 35 { track } else { track - 35 }, 35)
+                }
+            }
             Geometry::Cbm1581 => (1..=80).contains(&track).then_some(40),
         }
     }
@@ -115,7 +126,7 @@ impl Geometry {
     /// Track holding the directory and BAM.
     pub fn directory_track(self) -> u8 {
         match self {
-            Geometry::Cbm1541 { .. } => 18,
+            Geometry::Cbm1541 { .. } | Geometry::Cbm1571 => 18,
             Geometry::Cbm1581 => 40,
         }
     }
@@ -123,7 +134,7 @@ impl Geometry {
     /// First directory-entry sector (the BAM sits before it).
     pub fn directory_first_sector(self) -> u8 {
         match self {
-            Geometry::Cbm1541 { .. } => 1,
+            Geometry::Cbm1541 { .. } | Geometry::Cbm1571 => 1,
             Geometry::Cbm1581 => 3,
         }
     }

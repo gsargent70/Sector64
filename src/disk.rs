@@ -74,6 +74,7 @@ impl Disk {
         let geom = match data.len() {
             174848 | 175531 => Geometry::Cbm1541 { tracks: 35 },
             196608 | 197376 => Geometry::Cbm1541 { tracks: 40 },
+            349696 | 351062 => Geometry::Cbm1571,
             819200 | 822400 => Geometry::Cbm1581,
             n => return Err(Error::UnknownImageSize(n)),
         };
@@ -250,6 +251,70 @@ impl Disk {
         disk
     }
 
+    /// Create a blank, freshly formatted 1571 (D71, 70-track double-sided) disk.
+    pub fn format_d71(name: &str, id: &str) -> Disk {
+        let geom = Geometry::Cbm1571;
+        let data_len = geom.total_blocks() as usize * BLOCK_SIZE;
+        let mut disk = Disk {
+            data: vec![0u8; data_len],
+            geom,
+            track_count: geom.tracks(),
+            data_len,
+            dos: DosFormat::Cbm,
+        };
+
+        // Header / side-0 BAM sector (18/0).
+        {
+            let off = geom.ts_to_offset(18, 0).unwrap();
+            let b = &mut disk.data[off..off + BLOCK_SIZE];
+            b[0] = 18;
+            b[1] = 1;
+            b[2] = b'A';
+            b[3] = 0x80; // double-sided flag
+            b[0x90..0xA0].copy_from_slice(&petscii::encode_field(name, 16));
+            b[0xA0] = petscii::PAD;
+            b[0xA1] = petscii::PAD;
+            let id_bytes = petscii::encode_field(id, 2);
+            b[0xA2] = id_bytes[0];
+            b[0xA3] = id_bytes[1];
+            b[0xA4] = petscii::PAD;
+            b[0xA5] = b'2';
+            b[0xA6] = b'A';
+            b[0xA7] = petscii::PAD;
+            b[0xA8] = petscii::PAD;
+            b[0xA9] = petscii::PAD;
+            b[0xAA] = petscii::PAD;
+        }
+
+        // Mark every track fully free (counts + bitmaps, across both BAM areas).
+        for track in 1..=70u8 {
+            let spt = geom.sectors_per_track(track).unwrap();
+            let (count, bitmap, _) = disk.bam_cell(track).unwrap();
+            disk.data[count] = spt;
+            let mut bits: u32 = 0;
+            for s in 0..spt {
+                bits |= 1 << s;
+            }
+            disk.data[bitmap] = bits as u8;
+            disk.data[bitmap + 1] = (bits >> 8) as u8;
+            disk.data[bitmap + 2] = (bits >> 16) as u8;
+        }
+
+        // First directory sector, empty and terminated.
+        let dir_off = geom.ts_to_offset(18, 1).unwrap();
+        disk.data[dir_off] = 0;
+        disk.data[dir_off + 1] = 0xFF;
+
+        // Reserve 18/0, 18/1, and all of track 53 (the side-1 directory track,
+        // which a real 1571 reserves whole).
+        disk.bam_set(18, 0, true);
+        disk.bam_set(18, 1, true);
+        for sector in 0..geom.sectors_per_track(53).unwrap() {
+            disk.bam_set(53, sector, true);
+        }
+        disk
+    }
+
     /// Borrow one 256-byte block by track/sector.
     ///
     /// Both the start offset *and* the full block length are checked against
@@ -272,7 +337,7 @@ impl Disk {
     pub fn header(&self) -> Result<Header> {
         let b = self.block(self.dir_track(), 0)?;
         match self.geom {
-            Geometry::Cbm1541 { .. } => Ok(Header {
+            Geometry::Cbm1541 { .. } | Geometry::Cbm1571 => Ok(Header {
                 name: petscii::field_to_string(&b[0x90..0xA0]),
                 id: petscii::field_to_string(&b[0xA2..0xA4]),
                 dos_type: petscii::field_to_string(&b[0xA5..0xA7]),
@@ -596,6 +661,19 @@ impl Disk {
                     };
                     let base = bam_off + ext + (track as usize - 36) * 4;
                     Some((base, base + 1, 3))
+                }
+            }
+            Geometry::Cbm1571 => {
+                let bam_off = self.geom.ts_to_offset(18, 0).ok()?;
+                if track <= 35 {
+                    // Side 0: identical to the 1541 BAM.
+                    let base = bam_off + 4 + (track as usize - 1) * 4;
+                    Some((base, base + 1, 3))
+                } else {
+                    // Side 1: free counts live at $DD in 18/0, bitmaps in 53/0.
+                    let count = bam_off + 0xDD + (track as usize - 36);
+                    let bitmap = self.geom.ts_to_offset(53, 0).ok()? + (track as usize - 36) * 3;
+                    Some((count, bitmap, 3))
                 }
             }
             Geometry::Cbm1581 => {
@@ -1283,5 +1361,37 @@ mod tests {
         assert!(disk.block(80, 39).is_ok()); // last block
         assert!(disk.block(80, 40).is_err()); // sector out of range
         assert!(disk.block(81, 0).is_err()); // track out of range
+    }
+
+    #[test]
+    fn d71_format_write_read_roundtrip() {
+        let mut disk = Disk::format_d71("double", "71");
+        assert_eq!(disk.track_count(), 70);
+        assert_eq!(disk.geometry(), Geometry::Cbm1571);
+        assert_eq!(disk.blocks_free().unwrap(), 1328); // matches c1541's blank D71
+        assert_eq!(disk.header().unwrap().name, "DOUBLE");
+        assert_eq!(disk.header().unwrap().id, "71");
+
+        // Larger than side 0's 664-block capacity, so it must spill to side 1.
+        let data: Vec<u8> = (0..175_000u32).map(|x| (x * 3) as u8).collect();
+        let n_blocks = data.len().div_ceil(254); // 690 blocks
+        disk.write_file("big", FileType::Prg, &data).unwrap();
+
+        let disk = Disk::load(disk.as_bytes().to_vec()).unwrap();
+        assert_eq!(disk.geometry(), Geometry::Cbm1571);
+        let e = disk.find_entry("big").unwrap().unwrap();
+        let chain = disk.file_block_chain(e.first_track, e.first_sector).unwrap();
+        assert!(chain.iter().any(|&(t, _)| t > 35), "file should reach side 1");
+        assert_eq!(disk.read_entry(&e).unwrap(), data);
+        assert!(disk.validate().unwrap().is_clean());
+        assert_eq!(disk.blocks_free().unwrap(), 1328 - n_blocks as u16);
+    }
+
+    #[test]
+    fn d71_side1_bounds() {
+        let disk = Disk::format_d71("d", "01");
+        assert!(disk.block(70, 16).is_ok()); // last track, 17 sectors (0..16)
+        assert!(disk.block(70, 17).is_err());
+        assert!(disk.block(71, 0).is_err());
     }
 }

@@ -32,7 +32,7 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "usage:\n  \
-                 d64write format <image> <disk name> <id> [d64|d81]\n  \
+                 d64write format <image> <disk name> <id> [d64|d71|d81]\n  \
                  d64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]\n  \
                  d64write delete <image.d64> <cbm name>\n  \
                  d64write rename <image.d64> <old name> <new name>"
@@ -78,8 +78,9 @@ fn cmd_format(image: &str, name: &str, id: &str, kind: Option<&str>) -> Result<S
     }
     let disk = match kind.map(str::to_ascii_lowercase).as_deref() {
         None | Some("d64") => Disk::format(name, id),
+        Some("d71") => Disk::format_d71(name, id),
         Some("d81") => Disk::format_d81(name, id),
-        Some(other) => return Err(format!("unknown disk kind '{other}' (use d64 or d81)")),
+        Some(other) => return Err(format!("unknown disk kind '{other}' (use d64, d71, or d81)")),
     };
     save(image, &disk)?;
     Ok(format!(
