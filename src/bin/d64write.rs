@@ -30,6 +30,7 @@ fn main() -> ExitCode {
         Some("delete") if strs.len() == 3 => cmd_delete(&strs[1], &strs[2]),
         Some("rename") if strs.len() == 4 => cmd_rename(&strs[1], &strs[2], &strs[3]),
         Some("import") if strs.len() == 3 => cmd_import(&strs[1], &strs[2]),
+        Some("unzip") if strs.len() == 3 => cmd_unzip(&strs[1], &strs[2]),
         _ => {
             eprintln!(
                 "usage:\n  \
@@ -37,7 +38,8 @@ fn main() -> ExitCode {
                  d64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]\n  \
                  d64write delete <image.d64> <cbm name>\n  \
                  d64write rename <image.d64> <old name> <new name>\n  \
-                 d64write import <image.d64> <archive.t64|.lnx>"
+                 d64write import <image.d64> <archive.t64|.lnx>\n  \
+                 d64write unzip  <out.d64> <zipcode base>   (reads 1!base..4!base)"
             );
             return ExitCode::from(2);
         }
@@ -140,6 +142,27 @@ fn cmd_import(image: &str, archive: &str) -> Result<String, String> {
         "imported {n} file(s) from {archive}, {} blocks free",
         disk.blocks_free().unwrap_or(0)
     ))
+}
+
+fn cmd_unzip(out_image: &str, base: &str) -> Result<String, String> {
+    if Path::new(out_image).exists() {
+        return Err(format!("{out_image} already exists; refusing to overwrite"));
+    }
+    let p = Path::new(base);
+    let name = p
+        .file_name()
+        .ok_or_else(|| format!("invalid zipcode base '{base}'"))?
+        .to_string_lossy();
+    let parent = p.parent().unwrap_or_else(|| Path::new("."));
+    let mut data = Vec::new();
+    for i in 1..=4u8 {
+        let path = parent.join(format!("{i}!{name}"));
+        data.push(std::fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?);
+    }
+    let d64 = d64::parse_zipcode([&data[0], &data[1], &data[2], &data[3]])
+        .map_err(|e| format!("decoding zipcode '{base}': {e}"))?;
+    std::fs::write(out_image, &d64).map_err(|e| format!("cannot write {out_image}: {e}"))?;
+    Ok(format!("unzipped {base} to {out_image} ({} bytes)", d64.len()))
 }
 
 fn cmd_rename(image: &str, old: &str, new: &str) -> Result<String, String> {

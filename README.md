@@ -76,8 +76,12 @@ job with those failure modes designed out:
   independent readers (`tape` and `unlynx`), and `parse_lnx` was validated
   against a real-world `.lnx`.
 
-Not yet: other archive/graphics formats, write-out to archives. Those are the
-next layers.
+- **Zip-Code** (`parse_zipcode` / `write_zipcode`, `d64write unzip`): decodes
+  and encodes the four-file `1!`…`4!` disk-compression format (raw / fill / RLE
+  per sector). A D64 round-trips through it, and `c1541 unzip` reproduces the
+  source from our encoding — so our bytes are real Zip-Code.
+
+Not yet: GEOS/graphics formats. Those are the next layers.
 
 ## Build and run
 
