@@ -20,6 +20,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bam;
+pub mod container;
 pub mod directory;
 pub mod error;
 pub mod geometry;
@@ -27,6 +28,7 @@ pub mod petscii;
 pub mod disk;
 
 pub use bam::{Bam, DosFormat};
+pub use container::{parse_t64, ImportFile};
 pub use directory::{Entry, FileType};
 pub use disk::{Disk, Header, RelFile, ValidationReport};
 pub use error::{Error, Result};

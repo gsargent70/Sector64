@@ -29,13 +29,15 @@ fn main() -> ExitCode {
         }
         Some("delete") if strs.len() == 3 => cmd_delete(&strs[1], &strs[2]),
         Some("rename") if strs.len() == 4 => cmd_rename(&strs[1], &strs[2], &strs[3]),
+        Some("import") if strs.len() == 3 => cmd_import(&strs[1], &strs[2]),
         _ => {
             eprintln!(
                 "usage:\n  \
                  d64write format <image> <disk name> <id> [d64|d71|d81]\n  \
                  d64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]\n  \
                  d64write delete <image.d64> <cbm name>\n  \
-                 d64write rename <image.d64> <old name> <new name>"
+                 d64write rename <image.d64> <old name> <new name>\n  \
+                 d64write import <image.d64> <archive.t64>"
             );
             return ExitCode::from(2);
         }
@@ -112,6 +114,28 @@ fn cmd_delete(image: &str, name: &str) -> Result<String, String> {
     save(image, &disk)?;
     Ok(format!(
         "deleted \"{name}\", freed {freed} blocks, {} blocks free",
+        disk.blocks_free().unwrap_or(0)
+    ))
+}
+
+fn cmd_import(image: &str, archive: &str) -> Result<String, String> {
+    let bytes = std::fs::read(archive).map_err(|e| format!("cannot read {archive}: {e}"))?;
+    let lower = archive.to_ascii_lowercase();
+    let files = if lower.ends_with(".t64") {
+        d64::parse_t64(&bytes).map_err(|e| format!("{archive}: {e}"))?
+    } else {
+        return Err(format!("unsupported archive '{archive}' (expected .t64)"));
+    };
+    let mut disk = load(image)?;
+    let mut n = 0;
+    for f in &files {
+        disk.write_file(&f.name, f.file_type, &f.data)
+            .map_err(|e| format!("importing \"{}\": {e}", f.name))?;
+        n += 1;
+    }
+    save(image, &disk)?;
+    Ok(format!(
+        "imported {n} file(s) from {archive}, {} blocks free",
         disk.blocks_free().unwrap_or(0)
     ))
 }

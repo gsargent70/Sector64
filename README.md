@@ -70,7 +70,11 @@ job with those failure modes designed out:
   (including files that span both sides), scratch/rename and validation all
   work, confirmed byte-for-byte against `c1541` in both directions.
 
-Not yet: archive/graphics formats. Those are the next layers.
+- **T64 import** (`parse_t64` → `ImportFile`, `d64write import`): reads a tape
+  archive's entries and reconstructs each PRG (load address + data). Confirmed
+  against `c1541`'s independent `tape` reader byte-for-byte.
+
+Not yet: LNX import, other archive/graphics formats. Those are the next layers.
 
 ## Build and run
 

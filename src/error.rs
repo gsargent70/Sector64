@@ -42,6 +42,8 @@ pub enum Error {
     DirectoryFull,
     /// No directory entry matched the requested name.
     FileNotFound,
+    /// A container archive (T64/LNX) was malformed or not recognized.
+    InvalidContainer,
 }
 
 impl fmt::Display for Error {
@@ -80,6 +82,7 @@ impl fmt::Display for Error {
             Error::DiskFull => write!(f, "not enough free blocks on the disk"),
             Error::DirectoryFull => write!(f, "directory is full"),
             Error::FileNotFound => write!(f, "file not found"),
+            Error::InvalidContainer => write!(f, "malformed or unrecognized container archive"),
         }
     }
 }
