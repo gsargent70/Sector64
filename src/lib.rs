@@ -38,7 +38,8 @@ pub use arc::{parse_arc, parse_sda, ArcEntry, ArcMethod};
 pub use cvt::{geos_type_name, parse_cvt, CvtInfo, GeosStructure};
 pub use bam::{Bam, DosFormat};
 pub use container::{
-    parse_lbr, parse_lnx, parse_p00, parse_t64, parse_zipcode, write_zipcode, ImportFile,
+    parse_lbr, parse_lnx, parse_p00, parse_t64, parse_zipcode, write_lbr, write_lnx, write_p00,
+    write_t64, write_zipcode, ImportFile,
 };
 pub use directory::{Entry, FileType};
 pub use g64::to_d64 as g64_to_d64;

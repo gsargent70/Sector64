@@ -71,6 +71,12 @@ job with those failure modes designed out:
   (including files that span both sides), scratch/rename and validation all
   work, confirmed byte-for-byte against `c1541` in both directions.
 
+- **Archive creation** (`write_t64`, `write_lnx`, `write_lbr`, `write_p00`,
+  `s64pack`): builds **T64**, **LNX**, **LBR** and **P00** archives from a set
+  of files. Each writer round-trips through its own parser, and the T64/LNX
+  output is read back byte-for-byte by `c1541`'s independent `tape`/`unlynx`
+  (see Testing). `s64pack out.t64 a.prg b.prg …` creates one from the shell.
+
 - **Archive import** (`parse_t64`, `parse_lnx`, `parse_lbr` → `ImportFile`,
   `s64write import`): reads **T64** tape archives, **LNX** (Lynx) archives, and
   **LBR** libraries and reconstructs each file. T64/LNX are confirmed
@@ -282,6 +288,7 @@ against a real disk.
 | `src/bin/s64extract.rs` | CLI: extract one file to stdout |
 | `src/bin/s64val.rs` | CLI: validate the disk against its BAM |
 | `src/bin/s64write.rs` | CLI: format, add, delete, rename |
+| `src/bin/s64pack.rs` | CLI: create a T64/LNX/LBR/P00 archive |
 | `src/arc.rs`       | Commodore ARC + SDA walk, stored + crunch (LZW+RLE) decode |
 | `src/lha.rs`       | LHA / SFX archive walk + lh0/lh1 decode |
 | `src/lzhuf.rs`     | LZHUF (LHA `-lh1-`) decompressor + CRC-16 |

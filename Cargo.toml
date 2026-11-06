@@ -24,6 +24,10 @@ path = "src/bin/s64val.rs"
 name = "s64write"
 path = "src/bin/s64write.rs"
 
+[[bin]]
+name = "s64pack"
+path = "src/bin/s64pack.rs"
+
 [profile.release]
 overflow-checks = true  # keep arithmetic checks on even in release; this is a parser.
 

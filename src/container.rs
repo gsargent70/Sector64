@@ -262,6 +262,133 @@ pub fn parse_p00(bytes: &[u8]) -> Result<ImportFile> {
     })
 }
 
+/// The Lynx/LBR/P00 type character for a CBM file type.
+fn type_char(ft: FileType) -> u8 {
+    match ft {
+        FileType::Seq => b'S',
+        FileType::Usr => b'U',
+        FileType::Rel => b'R',
+        FileType::Del => b'D',
+        _ => b'P',
+    }
+}
+
+/// A fixed-width CBM name field, PETSCII-encoded and padded with `pad`.
+fn cbm_field(name: &str, width: usize, pad: u8) -> Vec<u8> {
+    let mut v: Vec<u8> = name.chars().take(width).map(petscii::encode_char).collect();
+    v.resize(width, pad);
+    v
+}
+
+/// Write a **T64** tape archive holding `files` (each a PRG: load address then
+/// data). The bytes read back identically by [`parse_t64`] and by `c1541`'s
+/// `tape` reader.
+pub fn write_t64(files: &[ImportFile]) -> Vec<u8> {
+    let n = files.len();
+    let mut hdr = b"C64S tape image file\0".to_vec();
+    hdr.resize(0x20, 0);
+    hdr.extend_from_slice(&0x0101u16.to_le_bytes()); // version
+    hdr.extend_from_slice(&(n as u16).to_le_bytes()); // max entries
+    hdr.extend_from_slice(&(n as u16).to_le_bytes()); // used entries
+    hdr.extend_from_slice(&0u16.to_le_bytes());
+    let mut tname = b"SECTOR64 TAPE".to_vec();
+    tname.resize(24, b' ');
+    hdr.extend_from_slice(&tname);
+
+    let data_off = 0x40 + 0x20 * n;
+    let mut dir = Vec::new();
+    let mut blob = Vec::new();
+    let mut off = data_off;
+    for f in files {
+        let (load, body): (u16, &[u8]) = if f.data.len() >= 2 {
+            (u16::from_le_bytes([f.data[0], f.data[1]]), &f.data[2..])
+        } else {
+            (0, &f.data)
+        };
+        let end = load.wrapping_add(body.len() as u16);
+        dir.push(1u8); // normal tape file
+        dir.push(0x82); // C64 PRG
+        dir.extend_from_slice(&load.to_le_bytes());
+        dir.extend_from_slice(&end.to_le_bytes());
+        dir.extend_from_slice(&0u16.to_le_bytes());
+        dir.extend_from_slice(&(off as u32).to_le_bytes());
+        dir.extend_from_slice(&0u32.to_le_bytes());
+        dir.extend_from_slice(&cbm_field(&f.name, 16, b' '));
+        blob.extend_from_slice(body);
+        off += body.len();
+    }
+    [hdr, dir, blob].concat()
+}
+
+/// Write a **Lynx** (`.lnx`) archive. Read back identically by [`parse_lnx`] and
+/// by `c1541`'s `unlynx`. REL files are written as PRG (their record geometry
+/// isn't carried by [`ImportFile`]).
+pub fn write_lnx(files: &[ImportFile]) -> Vec<u8> {
+    let blocks = |l: usize| l.div_ceil(254).max(1);
+    let last = |l: usize| l - (blocks(l) - 1) * 254 + 1;
+    // A tiny BASIC stub, as real Lynx archives carry.
+    let stub: &[u8] = &[0x01, 0x08, 0x09, 0x08, 0x00, 0x00, 0x8F, 0x00, 0x00, 0x00];
+    let header = |db: usize| -> Vec<u8> {
+        let mut s = stub.to_vec();
+        s.extend_from_slice(format!("\r {db}  *LYNX BY SECTOR64\r{}\r", files.len()).as_bytes());
+        for f in files {
+            s.extend_from_slice(&cbm_field(&f.name, 16, b' '));
+            let ty = type_char(f.file_type) as char;
+            let ty = if ty == 'R' { 'P' } else { ty };
+            s.extend_from_slice(
+                format!("\r{}\r{}\r{}\r", blocks(f.data.len()), ty, last(f.data.len())).as_bytes(),
+            );
+        }
+        s
+    };
+    // The header size in blocks is self-referential; iterate to a fixed point.
+    let mut db = 1;
+    loop {
+        let need = blocks(header(db).len());
+        if need == db {
+            break;
+        }
+        db = need;
+    }
+    let mut out = header(db);
+    out.resize(db * 254, 0);
+    for f in files {
+        let start = out.len();
+        out.extend_from_slice(&f.data);
+        out.resize(start + blocks(f.data.len()) * 254, 0);
+    }
+    out
+}
+
+/// Write an **LBR** library. Read back identically by [`parse_lbr`].
+pub fn write_lbr(files: &[ImportFile]) -> Vec<u8> {
+    let mut dir = format!("DWB {} \r", files.len()).into_bytes();
+    for f in files {
+        dir.extend(f.name.chars().map(petscii::encode_char));
+        dir.push(0x0D);
+        dir.push(type_char(f.file_type));
+        dir.push(0x0D);
+        dir.extend_from_slice(format!(" {} ", f.data.len()).as_bytes());
+        dir.push(0x0D);
+    }
+    let mut out = dir;
+    for f in files {
+        out.extend_from_slice(&f.data);
+    }
+    out
+}
+
+/// Write a **PC64** (`.P00`) single-file container. Read back by [`parse_p00`].
+/// The CBM type is conveyed by the file's extension, not stored here.
+pub fn write_p00(file: &ImportFile) -> Vec<u8> {
+    let mut out = b"C64File\0".to_vec();
+    out.extend_from_slice(&cbm_field(&file.name, 16, 0x00));
+    out.push(0x00); // reserved
+    out.push(0x00); // REL record length
+    out.extend_from_slice(&file.data);
+    out
+}
+
 /// Decode a **Zip-Code** archive (the four `1!`…`4!` files) into a 35-track D64
 /// image (174848 bytes).
 ///
@@ -524,6 +651,55 @@ mod tests {
         let f = write_zipcode(&d64).unwrap();
         let back = parse_zipcode([&f[0], &f[1], &f[2], &f[3]]).unwrap();
         assert_eq!(back, d64);
+    }
+
+    #[test]
+    fn writers_round_trip_through_parsers() {
+        let f = |name: &str, ft: FileType, data: Vec<u8>| ImportFile {
+            name: name.into(),
+            file_type: ft,
+            data,
+        };
+
+        // T64: PRG files (data = load address + body).
+        let t = vec![
+            f("HELLO", FileType::Prg, vec![0x01, 0x08, 1, 2, 3]),
+            f("WORLD", FileType::Prg, vec![0x00, 0xC0, 9, 9, 9, 9]),
+        ];
+        let back = parse_t64(&write_t64(&t)).unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!((back[0].name.as_str(), &back[0].data), ("HELLO", &t[0].data));
+        assert_eq!((back[1].name.as_str(), &back[1].data), ("WORLD", &t[1].data));
+
+        // LNX: mixed types, including a multi-block SEQ.
+        let big: Vec<u8> = (0..300u32).map(|x| x as u8).collect();
+        let l = vec![
+            f("PROG", FileType::Prg, vec![0x01, 0x08, 5, 6, 7]),
+            f("DATA", FileType::Seq, big.clone()),
+        ];
+        let back = parse_lnx(&write_lnx(&l)).unwrap();
+        assert_eq!(back[0].name, "PROG");
+        assert_eq!(back[0].data, l[0].data);
+        assert_eq!(back[1].name, "DATA");
+        assert_eq!(back[1].file_type, FileType::Seq);
+        assert_eq!(back[1].data, big);
+
+        // LBR: names may contain spaces.
+        let b = vec![
+            f("MY FILE", FileType::Prg, vec![1, 2, 3, 4]),
+            f("NOTES", FileType::Seq, vec![0x9; 10]),
+        ];
+        let back = parse_lbr(&write_lbr(&b)).unwrap();
+        assert_eq!(back[0].name, "MY FILE");
+        assert_eq!(back[0].data, vec![1, 2, 3, 4]);
+        assert_eq!(back[1].name, "NOTES");
+        assert_eq!(back[1].file_type, FileType::Seq);
+
+        // P00: single file.
+        let p = f("BOOT", FileType::Prg, vec![0x01, 0x08, 0xAA, 0xBB]);
+        let back = parse_p00(&write_p00(&p)).unwrap();
+        assert_eq!(back.name, "BOOT");
+        assert_eq!(back.data, p.data);
     }
 
     #[test]
