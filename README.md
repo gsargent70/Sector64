@@ -108,6 +108,17 @@ job with those failure modes designed out:
   `Error::UnsupportedArcMethod` for now — the decoders are the next layer, and
   the captured per-entry checksum is the oracle they will be verified against.
 
+- **TAP** (`parse_tap` → `TapImage`, `s64tap`): the raw datasette pulse stream.
+  A TAP records the length of every tape pulse in clock cycles, nothing more —
+  the *bit* encoding is defined by whichever loader wrote the tape, and most
+  commercial tapes use custom turbo loaders, so there is no general way to
+  recover files (emulators replay the pulses rather than decode them). This
+  parses the header (version 0/1/2, platform, video) and decodes the pulse
+  stream, handling the non-zero `×8` form and the version-1/2 24-bit overflow
+  escape. Validated against a real tape (Azimuth 3000): the decode tiles the
+  declared data exactly (588144 pulses, ~236 s). File extraction is out of
+  scope by nature of the format.
+
 - **GEOS CVT** (`parse_cvt` → `CvtInfo`, `s64cvt`): the ConVerT container that
   linearises a GEOS file (its INFO block plus a sequential or **VLIR** payload)
   for transport. `parse_cvt` reads the 254-byte signature block (GEOS name, CBM
@@ -206,6 +217,8 @@ against a real disk.
 | `src/g64.rs`       | G64 GCR bitstream decode → D64 |
 | `src/cvt.rs`       | GEOS ConVerT (CVT) container describe |
 | `src/bin/s64cvt.rs` | CLI: describe a GEOS CVT container |
+| `src/tap.rs`       | TAP datasette pulse-stream decode |
+| `src/bin/s64tap.rs` | CLI: summarise a TAP tape image |
 | `src/petscii.rs`   | minimal PETSCII→UTF-8 for display |
 | `src/error.rs`     | error type (every malformed input is a recoverable error) |
 | `src/bin/s64ls.rs` | CLI directory listing |

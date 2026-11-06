@@ -28,6 +28,7 @@ pub mod error;
 pub mod g64;
 pub mod geometry;
 pub mod lha;
+pub mod tap;
 pub mod petscii;
 pub mod disk;
 
@@ -40,5 +41,6 @@ pub use container::{
 pub use directory::{Entry, FileType};
 pub use g64::to_d64 as g64_to_d64;
 pub use lha::{parse_lha, LhaEntry};
+pub use tap::{parse_tap, TapImage};
 pub use disk::{Disk, Header, RelFile, ValidationReport};
 pub use error::{Error, Result};
