@@ -105,8 +105,11 @@ job with those failure modes designed out:
   size, file type and name. **Listing works today** and is validated against
   real archives' known contents; **extraction is implemented only for stored
   (method 0)** entries. The compressed methods (RLE, Huffman, LZ) return
-  `Error::UnsupportedArcMethod` for now — the decoders are the next layer, and
-  the captured per-entry checksum is the oracle they will be verified against.
+  **crunch** (methods 3 and 5 — the most common) is fully decoded: the C64 ARC
+  LZW variant (big-endian, bit-reversed within bytes, 9–12-bit with early-change
+  growth and `first_free = 258`) over a run-length stream (escape `0xFE`),
+  verified byte-for-byte against a real archive's original files. Huffman
+  (squeeze/squash, methods 2 and 4) still returns `Error::UnsupportedArcMethod`.
 
 - **CMD D2M** (`Disk::load` auto-detects by size): the CMD FD-2000 native image.
   A D2M holds one partition — either **CMD-native (DNP)** geometry (256 sectors
@@ -160,8 +163,9 @@ job with those failure modes designed out:
   and `-lh1-` (LZHUF) members fully extract** — the lh1 decoder (`src/lzhuf.rs`)
   is a clean-room port of the public `lzhuf.c`, and every member of both real
   `.sfx` archives decodes to the exact length *and* matching CRC-16 (the
-  archive's own integrity check). ARC crunch (so the `.sda` members) and other
-  LHA methods still return their `Unsupported…Method` error.
+  archive's own integrity check). **`.sda` crunch members also fully extract**
+  (via the ARC crunch decoder). ARC Huffman (squeeze/squash) and other LHA
+  methods still return their `Unsupported…Method` error.
 
 - **Wraptor 3** (`parse_wr3` → `Wr3Entry`, `s64wr3`): the `.wr3` archive. Each
   entry is introduced by the marker `FF "BL" FF`, its NUL-terminated name, and
@@ -171,8 +175,8 @@ job with those failure modes designed out:
   members). The Wraptor compression is a custom scheme and is not decoded, so
   the payload is exposed as-is — the decoder is the next layer.
 
-Not yet: ARC and Wraptor decompression, and GEOS/graphics formats. Those are
-the next layers.
+Not yet: ARC Huffman (squeeze/squash) and Wraptor decompression, and
+GEOS/graphics formats. Those are the next layers.
 
 ## Build and run
 
@@ -248,7 +252,7 @@ against a real disk.
 | `src/bin/s64extract.rs` | CLI: extract one file to stdout |
 | `src/bin/s64val.rs` | CLI: validate the disk against its BAM |
 | `src/bin/s64write.rs` | CLI: format, add, delete, rename |
-| `src/arc.rs`       | Commodore ARC archive + SDA walk + stored decode |
+| `src/arc.rs`       | Commodore ARC + SDA walk, stored + crunch (LZW+RLE) decode |
 | `src/lha.rs`       | LHA / SFX archive walk + lh0/lh1 decode |
 | `src/lzhuf.rs`     | LZHUF (LHA `-lh1-`) decompressor + CRC-16 |
 | `src/bin/s64arc.rs` | CLI: list / extract an ARC or SDA archive |

@@ -60,6 +60,60 @@ fn flaghunt_arc_directory() {
     );
 }
 
+/// Decode MILLEBORNE.ARC's crunch members and compare to the original PRG
+/// files (known plaintext), when both are present in the samples dir.
+#[test]
+fn milleborne_crunch_matches_originals() {
+    let Some(dir) = samples_dir() else {
+        eprintln!("skipping: no samples directory");
+        return;
+    };
+    let Ok(bytes) = std::fs::read(dir.join("MILLEBORNE.ARC")) else {
+        eprintln!("skipping: MILLEBORNE.ARC not present");
+        return;
+    };
+    let entries = parse_arc(&bytes).expect("parse");
+    // (archive entry name, original file name)
+    let map = [
+        ("MILLE BORNE/RB", "mille borne-rb.prg"),
+        ("MILLE MOD2", "mille mod2.prg"),
+    ];
+    let mut checked = 0;
+    for (name, orig) in map {
+        let Ok(plain) = std::fs::read(dir.join(orig)) else {
+            eprintln!("skipping {orig}: original not present");
+            continue;
+        };
+        let e = entries.iter().find(|e| e.name == name).expect("entry");
+        assert_eq!(e.method, ArcMethod::Lz, "{name} should be crunch");
+        let got = e.decode().unwrap_or_else(|err| panic!("decode {name}: {err}"));
+        assert_eq!(got, plain, "crunch decode mismatch for {name}");
+        checked += 1;
+    }
+    eprintln!("ok: MILLEBORNE crunch ({checked} members matched originals)");
+}
+
+/// Every crunch member of both archives at least decodes to its stated size
+/// without error (structural check for files we lack originals for).
+#[test]
+fn crunch_members_decode_to_size() {
+    let Some(dir) = samples_dir() else {
+        eprintln!("skipping: no samples directory");
+        return;
+    };
+    for file in ["MILLEBORNE.ARC", "FLAGHUNT.ARC"] {
+        let Ok(bytes) = std::fs::read(dir.join(file)) else {
+            continue;
+        };
+        for e in parse_arc(&bytes).expect("parse") {
+            if matches!(e.method, ArcMethod::Lz | ArcMethod::LzOnePass) {
+                let got = e.decode().unwrap_or_else(|err| panic!("{file}/{}: {err}", e.name));
+                assert_eq!(got.len(), e.orig_size as usize, "{file}/{} size", e.name);
+            }
+        }
+    }
+}
+
 #[test]
 fn milleborne_arc_directory() {
     check(

@@ -11,13 +11,16 @@
 //!   header field and the block arithmetic, rejecting cycles/overflow, and
 //!   stopping at the trailing padding that ends a real archive.
 //! - **Decodes stored entries** ([`ArcEntry::decode`], method 0): a byte copy.
+//! - **Decodes crunched entries** (methods 3 and 5): the C64 ARC LZW variant
+//!   (big-endian codes read bit-reversed within each byte, 9..=12-bit with an
+//!   early-change width bump and `first_free = 258`) over a run-length stream
+//!   (escape `0xFE`, `FE count value`). Verified byte-for-byte against the
+//!   original files of a real archive.
 //!
-//! What it does *not* do yet: the compressed methods (RLE, Huffman, LZ — the
-//! methods every real-world archive actually uses). [`ArcEntry::decode`]
-//! returns [`Error::UnsupportedArcMethod`] for those. The per-entry 16-bit
-//! [`ArcEntry::checksum`] is captured so that, once a decoder exists, its
-//! output can be verified against the archive's own checksum — the only
-//! independent oracle available, since no local tool dissolves ARC.
+//! What it does *not* do yet: Huffman (methods 2 "squeeze" and 4 "squash").
+//! [`ArcEntry::decode`] returns [`Error::UnsupportedArcMethod`] for those. The
+//! per-entry 16-bit [`ArcEntry::checksum`] is captured (its algorithm is not
+//! yet identified).
 //!
 //! Reference: the Commodore ARC format as documented from observed archives
 //! (header: version, method, checksum, 3-byte original size, 2-byte packed size
@@ -132,26 +135,152 @@ impl ArcEntry {
                 }
                 Ok(self.packed[..n].to_vec())
             }
+            // Crunch (2-pass) and 1-pass crunch are the same codec: LZW over a
+            // run-length-encoded stream.
+            ArcMethod::Lz | ArcMethod::LzOnePass => {
+                Ok(crunch_decode(&self.packed, self.orig_size as usize))
+            }
             m => Err(Error::UnsupportedArcMethod(m.to_byte())),
         }
     }
 
-    /// The additive 16-bit checksum of `data`, for comparison with
-    /// [`Self::checksum`]. The algorithm (a wrapping sum of every byte) is the
-    /// conventional ARC checksum but is **not yet verified** against a known
-    /// decoded file, so treat a match as corroboration, not proof.
-    pub fn verify_checksum(&self, data: &[u8]) -> bool {
-        checksum16(data) == self.checksum
-    }
 }
 
-/// A wrapping 16-bit additive checksum (the conventional ARC algorithm).
-pub fn checksum16(data: &[u8]) -> u16 {
-    let mut sum: u16 = 0;
-    for &b in data {
-        sum = sum.wrapping_add(b as u16);
+/// Decode an ARC **crunch** stream (methods 3 and 5): LZW, then un-RLE.
+///
+/// The LZW is the C64 ARC variant — big-endian codes read bit-reversed within
+/// each byte ("mix" order), 9..=12-bit codes with an early-change width bump,
+/// and `first_free = 258` (codes 256/257 reserved). Its output is a run-length
+/// stream whose escape is `0xFE`: `FE count value` expands to `value` repeated
+/// `count` times (a literal `0xFE` is `FE 01 FE`). `orig_size` bounds the
+/// result; everything is bounded so no input can panic or loop forever.
+fn crunch_decode(packed: &[u8], orig_size: usize) -> Vec<u8> {
+    // Generous cap: the RLE stream is usually smaller than the original, but a
+    // literal 0xFE triples, so allow headroom before truncating.
+    let cap = orig_size.saturating_mul(2).saturating_add(64);
+    let rle = lzw_decode(packed, cap);
+
+    let mut out = Vec::with_capacity(orig_size.min(1 << 20));
+    let mut i = 0;
+    while i < rle.len() && out.len() < orig_size {
+        let c = rle[i];
+        i += 1;
+        if c == 0xFE {
+            // Need count and value; a truncated escape ends the stream.
+            let (Some(&count), Some(&value)) = (rle.get(i), rle.get(i + 1)) else {
+                break;
+            };
+            i += 2;
+            for _ in 0..count {
+                out.push(value);
+                if out.len() >= orig_size {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
     }
-    sum
+    out.truncate(orig_size);
+    out
+}
+
+/// The C64 ARC crunch LZW decoder. Produces at most `cap` bytes.
+fn lzw_decode(data: &[u8], cap: usize) -> Vec<u8> {
+    const MAX_BITS: u32 = 12;
+    const SIZE: usize = 1 << 12;
+    const CLEAR: usize = 256;
+    const EOF: usize = 257;
+    const FIRST: usize = 258;
+
+    let mut prefix = [0u16; SIZE];
+    let mut suffix: [u8; SIZE] = [0; SIZE];
+    for (i, s) in suffix.iter_mut().enumerate().take(256) {
+        *s = i as u8;
+    }
+
+    // Big-endian code assembled from bits taken LSB-first within each byte.
+    let total_bits = data.len() * 8;
+    let mut bitpos = 0usize;
+    let mut read = |n_bits: u32| -> Option<u32> {
+        if bitpos + n_bits as usize > total_bits {
+            return None;
+        }
+        let mut v = 0u32;
+        for _ in 0..n_bits {
+            let bit = (data[bitpos >> 3] >> (bitpos & 7)) & 1;
+            v = (v << 1) | bit as u32;
+            bitpos += 1;
+        }
+        Some(v)
+    };
+
+    let mut n_bits = 9u32;
+    let mut free = FIRST;
+    let mut out = Vec::new();
+    let mut stack = Vec::new();
+
+    // Bump the code width one code early, as the ARC crunch encoder does.
+    let grow = |n_bits: &mut u32, free: usize| {
+        if free >= (1usize << *n_bits) - 1 && *n_bits < MAX_BITS {
+            *n_bits += 1;
+        }
+    };
+
+    grow(&mut n_bits, free);
+    let mut old = match read(n_bits) {
+        Some(c) => c as usize,
+        None => return out,
+    };
+    let mut fin = (old & 0xff) as u8;
+    out.push(fin);
+
+    while out.len() < cap {
+        grow(&mut n_bits, free);
+        let Some(code) = read(n_bits) else { break };
+        let mut code = code as usize;
+        if code == EOF {
+            break;
+        }
+        if code == CLEAR {
+            n_bits = 9;
+            free = FIRST;
+            let Some(c) = read(n_bits) else { break };
+            old = c as usize;
+            fin = (old & 0xff) as u8;
+            out.push(fin);
+            continue;
+        }
+        if code > free {
+            break; // invalid forward reference
+        }
+        let incode = code;
+        if code == free {
+            stack.push(fin);
+            code = old;
+        }
+        let mut guard = 0;
+        while code >= 256 {
+            guard += 1;
+            if guard > SIZE || code >= SIZE {
+                return out;
+            }
+            stack.push(suffix[code]);
+            code = prefix[code] as usize;
+        }
+        fin = suffix[code];
+        stack.push(fin);
+        while let Some(b) = stack.pop() {
+            out.push(b);
+        }
+        if free < SIZE {
+            prefix[free] = old as u16;
+            suffix[free] = fin;
+            free += 1;
+        }
+        old = incode;
+    }
+    out
 }
 
 /// Map an ARC file-type character (PETSCII `D`/`P`/`S`/`U`, either case) to a
@@ -348,16 +477,17 @@ mod tests {
     }
 
     #[test]
-    fn compressed_methods_are_unsupported_not_panics() {
-        let mut a = vec![2, 3, 0, 0, 4, 0, 0, 1, 0, b'P', 1, b'X'];
+    fn uncracked_methods_are_unsupported_not_panics() {
+        // Method 2 (squeeze) is not yet decoded; it must error, not panic.
+        let mut a = vec![2, 2, 0, 0, 4, 0, 0, 1, 0, b'P', 1, b'X'];
         a.extend_from_slice(&[0xfe, 0x21, 0x00]); // v2 record-len + date
         a.resize(BLOCK, 0);
         a.push(0x1a);
         let entries = parse_arc(&a).unwrap();
-        assert_eq!(entries[0].method, ArcMethod::Lz);
+        assert_eq!(entries[0].method, ArcMethod::Huffman);
         assert!(matches!(
             entries[0].decode(),
-            Err(Error::UnsupportedArcMethod(3))
+            Err(Error::UnsupportedArcMethod(2))
         ));
     }
 

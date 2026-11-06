@@ -78,12 +78,6 @@ fn run_extract(path: &str, name: &str) -> ExitCode {
     };
     match entry.decode() {
         Ok(data) => {
-            if !entry.verify_checksum(&data) {
-                eprintln!(
-                    "s64arc: warning: checksum mismatch (stored {:#06x})",
-                    entry.checksum
-                );
-            }
             if std::io::stdout().write_all(&data).is_err() {
                 return ExitCode::FAILURE;
             }
