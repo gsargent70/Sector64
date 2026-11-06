@@ -161,8 +161,16 @@ job with those failure modes designed out:
   LZHUF) return their respective `Unsupported…Method` error — the decoders are
   the next layer, with the stored CRC/checksum kept as the oracle.
 
-Not yet: ARC and LHA decompression (RLE/Huffman/LZ/LZHUF), and GEOS/graphics
-formats. Those are the next layers.
+- **Wraptor 3** (`parse_wr3` → `Wr3Entry`, `s64wr3`): the `.wr3` archive. Each
+  entry is introduced by the marker `FF "BL" FF`, its NUL-terminated name, and
+  its compressed data; `parse_wr3` recovers the entries by scanning for markers
+  and validating the name after each (the marker does not appear inside the
+  compressed streams). Lists real archives correctly (Loadstar #128, 43
+  members). The Wraptor compression is a custom scheme and is not decoded, so
+  the payload is exposed as-is — the decoder is the next layer.
+
+Not yet: ARC / LHA / Wraptor decompression, and GEOS/graphics formats. Those
+are the next layers.
 
 ## Build and run
 
@@ -230,6 +238,8 @@ against a real disk.
 | `src/bin/s64cvt.rs` | CLI: describe a GEOS CVT container |
 | `src/tap.rs`       | TAP datasette pulse-stream decode |
 | `src/bin/s64tap.rs` | CLI: summarise a TAP tape image |
+| `src/wr3.rs`       | Wraptor-3 archive container walk |
+| `src/bin/s64wr3.rs` | CLI: list a Wraptor-3 archive |
 | `src/petscii.rs`   | minimal PETSCII→UTF-8 for display |
 | `src/error.rs`     | error type (every malformed input is a recoverable error) |
 | `src/bin/s64ls.rs` | CLI directory listing |
