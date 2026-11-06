@@ -1,9 +1,12 @@
-//! Sector64 GUI — a native browser for Commodore disk images and archives.
+//! Sector64 GUI — a native browser and editor for Commodore disk images and
+//! archives.
 //!
-//! Open a disk image (`.d64/.d71/.d81/.g64/.d2m`) or an archive (`.arc/.sda/
-//! .lha/.lzh/.sfx/.lbr/.t64/.lnx/.p00/.wr3`); it lists the contents and
-//! extracts files to disk, reusing the `sector64` engine. The engine stays
-//! dependency-free; this front-end is a separate workspace member.
+//! Opens a disk image (`.d64/.d71/.d81/.g64/.d2m`) or an archive (`.arc/.sda/
+//! .lha/.lzh/.sfx/.lbr/.t64/.lnx/.p00/.wr3`), lists the contents, and extracts
+//! files. For the writable sector formats (`.d64/.d71/.d81`) it is also an
+//! editor: create a blank image, add host files (button or drag-and-drop),
+//! rename, delete, and save. G64/D2M/archives are read-only. The `sector64`
+//! engine stays dependency-free; this front-end is a separate workspace member.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -12,44 +15,262 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 use sector64::{
     parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64, parse_wr3, Disk,
+    FileType,
 };
 
-/// One listed item: its name, a short detail line, and either its decoded bytes
-/// or a reason it can't be extracted.
+/// One listed item: name, a short detail line, and its decoded bytes (or a
+/// reason it can't be extracted).
 struct Node {
     name: String,
     detail: String,
     data: Result<Vec<u8>, String>,
 }
 
+/// An open, editable disk and where it came from.
+struct EditDisk {
+    disk: Disk,
+    path: Option<PathBuf>,
+    dirty: bool,
+}
+
 #[derive(Default)]
 struct App {
+    // top bar
     path_input: String,
+    // new-image controls
+    new_fmt: usize, // 0=d64, 1=d71, 2=d81
+    new_name: String,
+    new_id: String,
+    // editing
+    rename_to: String,
+    add_type: usize, // 0=prg,1=seq,2=usr
+    // bottom bar
+    out_dir: String,
+    status: String,
+    // state
     title: String,
     nodes: Vec<Node>,
     selected: Option<usize>,
-    out_dir: String,
-    status: String,
+    disk: Option<EditDisk>,
+}
+
+/// Actions collected from the UI and applied after the frame (keeps egui
+/// closures free of `&mut self` conflicts).
+enum Act {
+    OpenDialog,
+    Load,
+    Select(usize),
+    PickOutDir,
+    ExtractSelected,
+    ExtractAll,
+    Create,
+    AddFile,
+    AddBytes(String, Vec<u8>),
+    Rename,
+    Delete,
+    Save,
+    SaveAs,
 }
 
 impl App {
+    fn new(initial: Option<String>) -> Self {
+        let mut app = App {
+            new_name: "blank".into(),
+            new_id: "01".into(),
+            ..Default::default()
+        };
+        if let Some(p) = initial {
+            app.open(Path::new(&p));
+        }
+        app
+    }
+
+    fn editable(&self) -> bool {
+        self.disk.is_some()
+    }
+
     fn open(&mut self, path: &Path) {
-        self.title.clear();
         self.nodes.clear();
         self.selected = None;
+        self.disk = None;
+        self.title.clear();
         match open_path(path) {
-            Ok((title, nodes)) => {
+            Ok(Opened::Disk(disk)) => {
+                self.disk = Some(EditDisk { disk, path: Some(path.to_path_buf()), dirty: false });
+                self.refresh();
+                self.after_open(path);
+            }
+            Ok(Opened::List(title, nodes)) => {
                 self.title = title;
                 self.nodes = nodes;
-                self.path_input = path.display().to_string();
-                if self.out_dir.is_empty() {
-                    if let Some(parent) = path.parent() {
-                        self.out_dir = parent.display().to_string();
-                    }
-                }
-                self.status = format!("Opened {} ({} item(s))", path.display(), self.nodes.len());
+                self.after_open(path);
             }
             Err(e) => self.status = format!("Error: {e}"),
+        }
+    }
+
+    fn after_open(&mut self, path: &Path) {
+        self.path_input = path.display().to_string();
+        if self.out_dir.is_empty() {
+            if let Some(parent) = path.parent() {
+                self.out_dir = parent.display().to_string();
+            }
+        }
+        self.status = format!("Opened {} ({} item(s))", path.display(), self.nodes.len());
+    }
+
+    /// Rebuild the listing from the editable disk.
+    fn refresh(&mut self) {
+        if let Some(ed) = &self.disk {
+            let (title, nodes) = disk_nodes(&ed.disk);
+            let dirty = if ed.dirty { "  •modified" } else { "" };
+            self.title = format!("{title}{dirty}");
+            self.nodes = nodes;
+            if let Some(i) = self.selected {
+                if i >= self.nodes.len() {
+                    self.selected = None;
+                }
+            }
+        }
+    }
+
+    fn apply(&mut self, act: Act) {
+        match act {
+            Act::OpenDialog => {
+                if let Some(p) = rfd::FileDialog::new().pick_file() {
+                    self.open(&p);
+                }
+            }
+            Act::Load => {
+                let p = PathBuf::from(self.path_input.trim());
+                if !self.path_input.trim().is_empty() {
+                    self.open(&p);
+                }
+            }
+            Act::Select(i) => self.selected = Some(i),
+            Act::PickOutDir => {
+                if let Some(d) = rfd::FileDialog::new().pick_folder() {
+                    self.out_dir = d.display().to_string();
+                }
+            }
+            Act::ExtractSelected => self.extract_selected(),
+            Act::ExtractAll => self.extract_all(),
+            Act::Create => {
+                let disk = match self.new_fmt {
+                    1 => Disk::format_d71(&self.new_name, &self.new_id),
+                    2 => Disk::format_d81(&self.new_name, &self.new_id),
+                    _ => Disk::format(&self.new_name, &self.new_id),
+                };
+                self.disk = Some(EditDisk { disk, path: None, dirty: true });
+                self.selected = None;
+                self.refresh();
+                self.status = "Created a blank image (unsaved)".into();
+            }
+            Act::AddFile => {
+                if let Some(p) = rfd::FileDialog::new().pick_file() {
+                    match std::fs::read(&p) {
+                        Ok(bytes) => {
+                            let name = cbm_name_from(&p);
+                            self.apply(Act::AddBytes(name, bytes));
+                        }
+                        Err(e) => self.status = format!("read failed: {e}"),
+                    }
+                }
+            }
+            Act::AddBytes(name, bytes) => self.add(name, &bytes),
+            Act::Rename => self.rename(),
+            Act::Delete => self.delete(),
+            Act::Save => self.save(false),
+            Act::SaveAs => self.save(true),
+        }
+    }
+
+    fn add(&mut self, name: String, bytes: &[u8]) {
+        let ft = match self.add_type {
+            1 => FileType::Seq,
+            2 => FileType::Usr,
+            _ => FileType::Prg,
+        };
+        let Some(ed) = &mut self.disk else { return };
+        match ed.disk.write_file(&name, ft, bytes) {
+            Ok(()) => {
+                ed.dirty = true;
+                self.refresh();
+                self.status = format!("Added \"{name}\" ({} bytes)", bytes.len());
+            }
+            Err(e) => self.status = format!("Add failed: {e}"),
+        }
+    }
+
+    fn rename(&mut self) {
+        let Some(i) = self.selected else {
+            self.status = "Select a file to rename".into();
+            return;
+        };
+        let old = self.nodes[i].name.clone();
+        let new = self.rename_to.trim().to_string();
+        if new.is_empty() {
+            self.status = "Enter a new name".into();
+            return;
+        }
+        let Some(ed) = &mut self.disk else { return };
+        match ed.disk.rename(&old, &new) {
+            Ok(()) => {
+                ed.dirty = true;
+                self.refresh();
+                self.status = format!("Renamed \"{old}\" → \"{new}\"");
+            }
+            Err(e) => self.status = format!("Rename failed: {e}"),
+        }
+    }
+
+    fn delete(&mut self) {
+        let Some(i) = self.selected else {
+            self.status = "Select a file to delete".into();
+            return;
+        };
+        let name = self.nodes[i].name.clone();
+        let Some(ed) = &mut self.disk else { return };
+        match ed.disk.scratch(&name) {
+            Ok(n) => {
+                ed.dirty = true;
+                self.selected = None;
+                self.refresh();
+                self.status = format!("Deleted \"{name}\" ({n} blocks freed)");
+            }
+            Err(e) => self.status = format!("Delete failed: {e}"),
+        }
+    }
+
+    fn save(&mut self, save_as: bool) {
+        let Some(ed) = &mut self.disk else {
+            self.status = "Nothing to save".into();
+            return;
+        };
+        let path = if save_as || ed.path.is_none() {
+            let dlg = rfd::FileDialog::new().add_filter("disk image", &["d64", "d71", "d81"]);
+            let dlg = if let Some(p) = &ed.path {
+                dlg.set_directory(p.parent().unwrap_or(Path::new("."))).set_file_name(
+                    p.file_name().and_then(|n| n.to_str()).unwrap_or("disk.d64"),
+                )
+            } else {
+                dlg.set_file_name("disk.d64")
+            };
+            match dlg.save_file() {
+                Some(p) => p,
+                None => return,
+            }
+        } else {
+            ed.path.clone().unwrap()
+        };
+        match std::fs::write(&path, ed.disk.as_bytes()) {
+            Ok(()) => {
+                ed.path = Some(path.clone());
+                ed.dirty = false;
+                self.status = format!("Saved {}", path.display());
+                self.refresh();
+            }
+            Err(e) => self.status = format!("Save failed: {e}"),
         }
     }
 
@@ -58,17 +279,16 @@ impl App {
             self.status = "Select a file first".into();
             return;
         };
-        let node = &self.nodes[i];
-        let data = match &node.data {
-            Ok(d) => d.clone(),
+        let (name, data) = (self.nodes[i].name.clone(), self.nodes[i].data.clone());
+        let data = match data {
+            Ok(d) => d,
             Err(e) => {
-                self.status = format!("Cannot extract \"{}\": {e}", node.name);
+                self.status = format!("Cannot extract \"{name}\": {e}");
                 return;
             }
         };
         let dir = if self.out_dir.is_empty() { ".".into() } else { self.out_dir.clone() };
-        let fname = sanitize(&node.name);
-        let dest = PathBuf::from(&dir).join(&fname);
+        let dest = PathBuf::from(&dir).join(sanitize(&name));
         match std::fs::write(&dest, &data) {
             Ok(()) => self.status = format!("Wrote {} ({} bytes)", dest.display(), data.len()),
             Err(e) => self.status = format!("Write failed: {e}"),
@@ -97,21 +317,45 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut acts: Vec<Act> = Vec::new();
+        let editable = self.editable();
+
+        // Local copies of edited strings (write back after the frame).
+        let mut path_input = std::mem::take(&mut self.path_input);
+        let mut out_dir = std::mem::take(&mut self.out_dir);
+        let mut new_name = std::mem::take(&mut self.new_name);
+        let mut new_id = std::mem::take(&mut self.new_id);
+        let mut rename_to = std::mem::take(&mut self.rename_to);
+        let mut new_fmt = self.new_fmt;
+        let mut add_type = self.add_type;
+
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("📂 Open…").clicked() {
-                    if let Some(p) = rfd::FileDialog::new().pick_file() {
-                        self.open(&p);
-                    }
+                    acts.push(Act::OpenDialog);
                 }
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.path_input)
+                    egui::TextEdit::singleline(&mut path_input)
                         .hint_text("path to a disk image or archive")
-                        .desired_width(380.0),
+                        .desired_width(360.0),
                 );
                 if ui.button("Load").clicked() {
-                    let p = PathBuf::from(self.path_input.trim());
-                    self.open(&p);
+                    acts.push(Act::Load);
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("New image:");
+                egui::ComboBox::from_id_salt("fmt")
+                    .selected_text(["D64", "D71", "D81"][new_fmt.min(2)])
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut new_fmt, 0, "D64");
+                        ui.selectable_value(&mut new_fmt, 1, "D71");
+                        ui.selectable_value(&mut new_fmt, 2, "D81");
+                    });
+                ui.add(egui::TextEdit::singleline(&mut new_name).hint_text("name").desired_width(130.0));
+                ui.add(egui::TextEdit::singleline(&mut new_id).hint_text("id").desired_width(40.0));
+                if ui.button("Create").clicked() {
+                    acts.push(Act::Create);
                 }
             });
             if !self.title.is_empty() {
@@ -121,58 +365,114 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::bottom("bottom").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Output dir:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.out_dir).desired_width(300.0),
-                );
+                ui.label("Output:");
+                ui.add(egui::TextEdit::singleline(&mut out_dir).desired_width(230.0));
                 if ui.button("…").clicked() {
-                    if let Some(d) = rfd::FileDialog::new().pick_folder() {
-                        self.out_dir = d.display().to_string();
-                    }
+                    acts.push(Act::PickOutDir);
                 }
                 if ui.button("Extract selected").clicked() {
-                    self.extract_selected();
+                    acts.push(Act::ExtractSelected);
                 }
                 if ui.button("Extract all").clicked() {
-                    self.extract_all();
+                    acts.push(Act::ExtractAll);
                 }
             });
+            if editable {
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("addtype")
+                        .selected_text(["prg", "seq", "usr"][add_type.min(2)])
+                        .width(50.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut add_type, 0, "prg");
+                            ui.selectable_value(&mut add_type, 1, "seq");
+                            ui.selectable_value(&mut add_type, 2, "usr");
+                        });
+                    if ui.button("Add file…").clicked() {
+                        acts.push(Act::AddFile);
+                    }
+                    ui.separator();
+                    ui.add(
+                        egui::TextEdit::singleline(&mut rename_to)
+                            .hint_text("new name")
+                            .desired_width(130.0),
+                    );
+                    if ui.button("Rename").clicked() {
+                        acts.push(Act::Rename);
+                    }
+                    if ui.button("Delete").clicked() {
+                        acts.push(Act::Delete);
+                    }
+                    ui.separator();
+                    if ui.button("Save").clicked() {
+                        acts.push(Act::Save);
+                    }
+                    if ui.button("Save As…").clicked() {
+                        acts.push(Act::SaveAs);
+                    }
+                });
+            }
             ui.label(&self.status);
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.nodes.is_empty() {
                 ui.centered_and_justified(|ui| {
-                    ui.label("Open a disk image or archive to browse its contents.");
+                    ui.label("Open a disk/archive, or create a new image and add files.");
                 });
                 return;
             }
             egui::ScrollArea::vertical().show(ui, |ui| {
-                egui::Grid::new("files")
-                    .striped(true)
-                    .num_columns(3)
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new("name").strong());
-                        ui.label(egui::RichText::new("details").strong());
-                        ui.label(egui::RichText::new("status").strong());
-                        ui.end_row();
-                        for i in 0..self.nodes.len() {
-                            let selected = self.selected == Some(i);
-                            let name = self.nodes[i].name.clone();
-                            if ui.selectable_label(selected, &name).clicked() {
-                                self.selected = Some(i);
-                            }
-                            ui.label(&self.nodes[i].detail);
-                            match &self.nodes[i].data {
-                                Ok(d) => ui.label(format!("{} bytes", d.len())),
-                                Err(e) => ui.label(egui::RichText::new(e).weak()),
-                            };
-                            ui.end_row();
+                egui::Grid::new("files").striped(true).num_columns(3).show(ui, |ui| {
+                    ui.label(egui::RichText::new("name").strong());
+                    ui.label(egui::RichText::new("details").strong());
+                    ui.label(egui::RichText::new("status").strong());
+                    ui.end_row();
+                    for (i, node) in self.nodes.iter().enumerate() {
+                        let sel = self.selected == Some(i);
+                        if ui.selectable_label(sel, node.name.as_str()).clicked() {
+                            acts.push(Act::Select(i));
                         }
-                    });
+                        ui.label(&node.detail);
+                        match &node.data {
+                            Ok(d) => ui.label(format!("{} bytes", d.len())),
+                            Err(e) => ui.label(egui::RichText::new(e).weak()),
+                        };
+                        ui.end_row();
+                    }
+                });
             });
         });
+
+        // Drag-and-drop a host file onto the window to add it (editable disks).
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect()
+        });
+        if editable {
+            for p in dropped {
+                if let Ok(bytes) = std::fs::read(&p) {
+                    acts.push(Act::AddBytes(cbm_name_from(&p), bytes));
+                }
+            }
+        }
+
+        // Write edited strings back, then apply actions.
+        self.path_input = path_input;
+        self.out_dir = out_dir;
+        self.new_name = new_name;
+        self.new_id = new_id;
+        self.rename_to = rename_to;
+        self.new_fmt = new_fmt;
+        self.add_type = add_type;
+        for act in acts {
+            self.apply(act);
+        }
     }
+}
+
+/// A CBM file name derived from a host path: the stem, uppercased, ≤16 chars.
+fn cbm_name_from(path: &Path) -> String {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+    stem.to_uppercase().chars().take(16).collect()
 }
 
 /// Replace characters unsafe in a host file name.
@@ -189,38 +489,50 @@ fn sanitize(name: &str) -> String {
     }
 }
 
-/// Open a path as a disk image or archive and return (title, items).
-fn open_path(path: &Path) -> Result<(String, Vec<Node>), String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+enum Opened {
+    Disk(Disk),
+    List(String, Vec<Node>),
+}
 
-    // Disk image (D64/D71/D81/G64/D2M — detected by Disk::load).
-    if let Ok(disk) = Disk::load(bytes.clone()) {
-        let header = disk.header().map_err(|e| e.to_string())?;
-        let entries = disk.directory().map_err(|e| e.to_string())?;
-        let mut nodes = Vec::new();
-        for e in &entries {
-            let (splat, lock) = e.flags();
-            let data = disk.read_entry(e).map_err(|x| x.to_string());
-            nodes.push(Node {
-                name: e.name.clone(),
-                detail: format!("{} blk  {}{}{}", e.blocks, splat, e.file_type.mnemonic(), lock),
-                data,
-            });
-        }
-        let free = disk.blocks_free().map(|f| format!("{f} free")).unwrap_or_default();
-        let title = format!(
-            "Disk  0 \"{}\" {} {}   {}",
-            header.name, header.id, header.dos_type, free
-        );
-        return Ok((title, nodes));
+/// Build the listing (title, items) from a disk.
+fn disk_nodes(disk: &Disk) -> (String, Vec<Node>) {
+    let header = disk.header();
+    let entries = disk.directory().unwrap_or_default();
+    let mut nodes = Vec::new();
+    for e in &entries {
+        let (splat, lock) = e.flags();
+        nodes.push(Node {
+            name: e.name.clone(),
+            detail: format!("{} blk  {}{}{}", e.blocks, splat, e.file_type.mnemonic(), lock),
+            data: disk.read_entry(e).map_err(|x| x.to_string()),
+        });
     }
+    let free = disk.blocks_free().map(|f| format!("{f} free")).unwrap_or_default();
+    let title = match header {
+        Ok(h) => format!("Disk  0 \"{}\" {} {}   {}", h.name, h.id, h.dos_type, free),
+        Err(e) => format!("Disk (header error: {e})"),
+    };
+    (title, nodes)
+}
 
-    // Otherwise an archive, dispatched by extension.
+/// Open a path as an editable disk or a read-only listing.
+fn open_path(path: &Path) -> Result<Opened, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
+
+    if let Ok(disk) = Disk::load(bytes.clone()) {
+        // The sector formats are editable; G64/D2M are shown read-only.
+        if matches!(ext.as_str(), "d64" | "d71" | "d81") {
+            return Ok(Opened::Disk(disk));
+        }
+        let (title, nodes) = disk_nodes(&disk);
+        return Ok(Opened::List(format!("{title}   (read-only)"), nodes));
+    }
+
     let import_nodes = |files: Vec<sector64::ImportFile>| {
         files
             .into_iter()
@@ -233,14 +545,17 @@ fn open_path(path: &Path) -> Result<(String, Vec<Node>), String> {
     };
     let is_p00 = {
         let b = ext.as_bytes();
-        b.len() == 3 && matches!(b[0], b'p' | b's' | b'u' | b'r' | b'd') && b[1].is_ascii_digit() && b[2].is_ascii_digit()
+        b.len() == 3
+            && matches!(b[0], b'p' | b's' | b'u' | b'r' | b'd')
+            && b[1].is_ascii_digit()
+            && b[2].is_ascii_digit()
     };
 
     let (kind, nodes) = match ext.as_str() {
         "arc" | "sda" => {
             let parse = if bytes.starts_with(&[0x01, 0x08]) { parse_sda } else { parse_arc };
-            let entries = parse(&bytes).map_err(|e| e.to_string())?;
-            let nodes = entries
+            let nodes = parse(&bytes)
+                .map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|e| Node {
                     detail: format!("{} bytes  {}", e.orig_size, e.method.label()),
@@ -251,8 +566,8 @@ fn open_path(path: &Path) -> Result<(String, Vec<Node>), String> {
             ("ARC/SDA archive", nodes)
         }
         "lha" | "lzh" | "sfx" => {
-            let entries = parse_lha(&bytes).map_err(|e| e.to_string())?;
-            let nodes = entries
+            let nodes = parse_lha(&bytes)
+                .map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|e| Node {
                     detail: format!("{} → {} bytes  {}", e.compressed_size, e.original_size, e.method_str()),
@@ -266,8 +581,8 @@ fn open_path(path: &Path) -> Result<(String, Vec<Node>), String> {
         "t64" => ("T64 tape archive", import_nodes(parse_t64(&bytes).map_err(|e| e.to_string())?)),
         "lnx" => ("Lynx archive", import_nodes(parse_lnx(&bytes).map_err(|e| e.to_string())?)),
         "wr3" => {
-            let entries = parse_wr3(&bytes).map_err(|e| e.to_string())?;
-            let nodes = entries
+            let nodes = parse_wr3(&bytes)
+                .map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|e| Node {
                     detail: format!("{} bytes packed", e.compressed.len()),
@@ -277,30 +592,21 @@ fn open_path(path: &Path) -> Result<(String, Vec<Node>), String> {
                 .collect();
             ("Wraptor-3 archive", nodes)
         }
-        _ if is_p00 => {
-            let f = parse_p00(&bytes).map_err(|e| e.to_string())?;
-            ("PC64 container", import_nodes(vec![f]))
-        }
+        _ if is_p00 => ("PC64 container", import_nodes(vec![parse_p00(&bytes).map_err(|e| e.to_string())?])),
         other => return Err(format!("unrecognized file type (.{other})")),
     };
-    Ok((kind.to_string(), nodes))
+    Ok(Opened::List(kind.to_string(), nodes))
 }
 
 fn main() -> eframe::Result<()> {
     let initial = std::env::args().nth(1);
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([760.0, 520.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([820.0, 560.0]),
         ..Default::default()
     };
     eframe::run_native(
         "Sector64",
         options,
-        Box::new(move |_cc| {
-            let mut app = App::default();
-            if let Some(p) = initial {
-                app.open(Path::new(&p));
-            }
-            Ok(Box::new(app))
-        }),
+        Box::new(move |_cc| Ok(Box::new(App::new(initial)))),
     )
 }
