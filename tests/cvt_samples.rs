@@ -41,6 +41,20 @@ fn check(file: &str, name: &str, structure: GeosStructure, geos_type: u8, min_re
     // Self-consistency: signature(254) + info(254) + index(254) + data == file.
     let header = if structure == GeosStructure::Vlir { 3 * 254 } else { 2 * 254 };
     assert_eq!(header + info.data.len(), bytes.len(), "{file}: block tiling");
+
+    // Record split: each present record's content length matches its index
+    // entry (sectors-1)*254 + (last-1), and the records are carved from the
+    // data in order (whole-sector advance; final record clamped).
+    assert_eq!(info.record_data.len(), info.records.len(), "{file}: record count");
+    for (slot, (&(c, s), rec)) in info.records.iter().zip(&info.record_data).enumerate() {
+        if c == 0 {
+            assert!(rec.is_empty(), "{file}: slot {slot} should be empty");
+        } else {
+            let want = (c as usize - 1) * 254 + (s as usize).saturating_sub(1);
+            // The final record may be clamped by the truncated last sector.
+            assert!(rec.len() <= want && rec.len() + 254 > want, "{file}: slot {slot} len");
+        }
+    }
     eprintln!("ok: {file} ({} records, {} data bytes)", info.records.len(), info.data.len());
 }
 

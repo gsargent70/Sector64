@@ -1,20 +1,25 @@
-//! `s64cvt` — describe a GEOS **CVT** (ConVerT) container.
+//! `s64cvt` — describe or extract a GEOS **CVT** (ConVerT) container.
 //!
-//! Usage: `s64cvt <file.cvt>`
+//! Usage:
+//!   `s64cvt <file.cvt>`            describe the GEOS file
+//!   `s64cvt <file.cvt> <outdir>`   also write each record to <name>.rNN
 //!
 //! Prints the GEOS file's name, types, structure and (for VLIR) its record
-//! index. CVT holds a single GEOS file; record data is not split out (see the
-//! `cvt` module note).
+//! index; with an output directory, writes the INFO block and each record's
+//! data as separate files.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use sector64::{geos_type_name, parse_cvt, GeosStructure};
 
 fn main() -> ExitCode {
-    let Some(path) = std::env::args().nth(1) else {
-        eprintln!("usage: s64cvt <file.cvt>");
+    let mut args = std::env::args().skip(1);
+    let Some(path) = args.next() else {
+        eprintln!("usage: s64cvt <file.cvt> [outdir]");
         return ExitCode::from(2);
     };
+    let out_dir = args.next();
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
         Err(e) => {
@@ -55,5 +60,34 @@ fn main() -> ExitCode {
         }
     }
     println!("data:      {} bytes", info.data.len());
+
+    if let Some(dir) = out_dir {
+        let base: String = info
+            .name
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || " .-_".contains(c) { c } else { '_' })
+            .collect();
+        let base = base.trim();
+        let base = if base.is_empty() { "geos" } else { base };
+        let dir = PathBuf::from(&dir);
+        let info_path = dir.join(format!("{base}.info"));
+        if let Err(e) = std::fs::write(&info_path, &info.info_block) {
+            eprintln!("s64cvt: write {}: {e}", info_path.display());
+            return ExitCode::FAILURE;
+        }
+        let mut written = 1;
+        for (i, rec) in info.record_data.iter().enumerate() {
+            if rec.is_empty() {
+                continue; // non-existent record slot
+            }
+            let rp = dir.join(format!("{base}.r{i:02}"));
+            if let Err(e) = std::fs::write(&rp, rec) {
+                eprintln!("s64cvt: write {}: {e}", rp.display());
+                return ExitCode::FAILURE;
+            }
+            written += 1;
+        }
+        println!("wrote {written} file(s) to {}", dir.display());
+    }
     ExitCode::SUCCESS
 }

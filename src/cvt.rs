@@ -8,13 +8,16 @@
 //! `"… formatted GEOS file"` signature), the **INFO block**, and — for VLIR —
 //! a **record index** block followed by the record data concatenated.
 //!
-//! This module parses and *describes* a CVT: the GEOS name, CBM and GEOS file
-//! types, the structure (sequential vs VLIR), the signature, the INFO block,
-//! and the VLIR record index. It does **not** split the concatenated record
-//! data back into individual records: the per-record padding convention varies
-//! between Convert versions and there is no local GEOS tool to validate a split
-//! against, so the raw data region is exposed as-is. (The reference `geoinfo`
-//! tool likewise stops at the index.) Every field access is bounds-checked.
+//! This module parses a CVT into the GEOS name, CBM and GEOS file types, the
+//! structure (sequential vs VLIR), the signature, the INFO block, the VLIR
+//! record index, and the data **split into records** ([`CvtInfo::record_data`]).
+//! VLIR records are stored as whole 254-byte sectors strung together; each
+//! record's content is `(sectors-1)*254 + (last_size-1)` bytes per the index,
+//! the stream advances a full `sectors*254` per record, and the final record is
+//! clamped to the data present. This split tiles both reference samples exactly
+//! (the file ends mid-last-sector). There is no local GEOS tool to validate the
+//! bytes against, so the split follows the documented record geometry rather
+//! than an oracle. Every field access is bounds-checked.
 //!
 //! Reference: the CVT format as documented by Joe Forster/STA.
 
@@ -58,8 +61,13 @@ pub struct CvtInfo {
     /// sequential file.
     pub records: Vec<(u8, u8)>,
     /// The raw data region (all record chains concatenated, for VLIR; the
-    /// sequential data otherwise). Not split into records — see the module note.
+    /// sequential data otherwise).
     pub data: Vec<u8>,
+    /// The data split into records (one entry per index slot; a non-existent
+    /// VLIR record is empty). A sequential file has a single entry. Each
+    /// record's length is `(sectors-1)*254 + (last_sector_size-1)` per the
+    /// record index; the final record is clamped to the available data.
+    pub record_data: Vec<Vec<u8>>,
 }
 
 /// A human name for a GEOS file-type byte.
@@ -135,6 +143,7 @@ pub fn parse_cvt(bytes: &[u8]) -> Result<CvtInfo> {
                     info_block,
                     records: Vec::new(),
                     data: Vec::new(),
+                    record_data: Vec::new(),
                 });
             };
             let mut records = Vec::new();
@@ -152,6 +161,7 @@ pub fn parse_cvt(bytes: &[u8]) -> Result<CvtInfo> {
         }
     };
 
+    let record_data = split_records(structure, &records, &data);
     Ok(CvtInfo {
         name,
         cbm_type,
@@ -161,7 +171,32 @@ pub fn parse_cvt(bytes: &[u8]) -> Result<CvtInfo> {
         info_block,
         records,
         data,
+        record_data,
     })
+}
+
+/// Split the concatenated data into records. VLIR records are stored as whole
+/// 254-byte sectors strung together; each record's real content is
+/// `(sectors-1)*254 + (last_size-1)` bytes, and the stream advances a full
+/// `sectors*254` per record (the final record is clamped to the data). A
+/// sequential file is one record holding all of `data`.
+fn split_records(structure: GeosStructure, records: &[(u8, u8)], data: &[u8]) -> Vec<Vec<u8>> {
+    if structure == GeosStructure::Sequential {
+        return vec![data.to_vec()];
+    }
+    let mut out = Vec::with_capacity(records.len());
+    let mut off = 0usize;
+    for &(c, s) in records {
+        if c == 0 {
+            out.push(Vec::new()); // non-existent record, keep the index slot
+            continue;
+        }
+        let content = (c as usize - 1) * BLOCK + (s as usize).saturating_sub(1);
+        let end = off.saturating_add(content).min(data.len());
+        out.push(data.get(off.min(data.len())..end).unwrap_or_default().to_vec());
+        off = off.saturating_add(c as usize * BLOCK);
+    }
+    out
 }
 
 #[cfg(test)]
