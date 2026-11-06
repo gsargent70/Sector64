@@ -192,8 +192,14 @@ cargo run -p sector64-gui -- disk.d64     # open a file on launch
 
 Open a `.d64/.d71/.d81/.g64/.d2m` disk or an `.arc/.sda/.lha/.lzh/.sfx/.lbr/
 .t64/.lnx/.p00/.wr3` archive, click a file, and **Extract selected** (or
-**Extract all**) to the chosen output directory. Members that need a
+**Extract all**) to the chosen output directory. The side pane shows a hex +
+ASCII **preview** of the selected file; for an open D64/D71/D81, **Validate
+disk** cross-checks every file chain against the BAM. Members that need a
 not-yet-implemented decoder are listed with the reason instead of bytes.
+
+For the writable sector formats (`.d64/.d71/.d81`) it is also an **editor**:
+create a blank image, add a host file (button or drag-and-drop) as prg/seq/usr,
+rename, delete, and Save / Save As. G64/D2M and archives are read-only.
 
 ## Build and run
 

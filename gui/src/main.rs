@@ -52,6 +52,9 @@ struct App {
     nodes: Vec<Node>,
     selected: Option<usize>,
     disk: Option<EditDisk>,
+    // preview/validation pane
+    hex_cache: Option<(usize, String)>,
+    validation: String,
 }
 
 /// Actions collected from the UI and applied after the frame (keeps egui
@@ -70,6 +73,7 @@ enum Act {
     Delete,
     Save,
     SaveAs,
+    Validate,
 }
 
 impl App {
@@ -94,6 +98,8 @@ impl App {
         self.selected = None;
         self.disk = None;
         self.title.clear();
+        self.hex_cache = None;
+        self.validation.clear();
         match open_path(path) {
             Ok(Opened::Disk(disk)) => {
                 self.disk = Some(EditDisk { disk, path: Some(path.to_path_buf()), dirty: false });
@@ -182,7 +188,30 @@ impl App {
             Act::Delete => self.delete(),
             Act::Save => self.save(false),
             Act::SaveAs => self.save(true),
+            Act::Validate => self.validate(),
         }
+    }
+
+    fn validate(&mut self) {
+        let Some(ed) = &self.disk else {
+            self.validation = "Open a D64/D71/D81 to validate".into();
+            return;
+        };
+        self.validation = match ed.disk.validate() {
+            Ok(r) => format!(
+                "blocks: {} used, {} free\ncross-linked: {}\nused-but-free: {}\n{}",
+                r.blocks_used,
+                r.blocks_free,
+                r.cross_linked.len(),
+                r.used_but_free.len(),
+                if r.cross_linked.is_empty() && r.used_but_free.is_empty() {
+                    "✓ consistent with the BAM"
+                } else {
+                    "⚠ inconsistencies found"
+                },
+            ),
+            Err(e) => format!("validate: {e}"),
+        };
     }
 
     fn add(&mut self, name: String, bytes: &[u8]) {
@@ -320,6 +349,25 @@ impl eframe::App for App {
         let mut acts: Vec<Act> = Vec::new();
         let editable = self.editable();
 
+        // Refresh the hex preview cache when the selection changes (done before
+        // the panels so the closures only read `self` immutably).
+        match self.selected {
+            Some(i) if i < self.nodes.len() => {
+                let stale = self.hex_cache.as_ref().map(|(ci, _)| *ci != i).unwrap_or(true);
+                if stale {
+                    let text = match &self.nodes[i].data {
+                        Ok(d) => hexdump(d, 16 * 1024),
+                        Err(e) => format!("(not extractable: {e})"),
+                    };
+                    self.hex_cache = Some((i, text));
+                }
+            }
+            _ => self.hex_cache = None,
+        }
+        let preview = self.hex_cache.as_ref().map(|(_, s)| s.clone()).unwrap_or_default();
+        let preview_name = self.selected.and_then(|i| self.nodes.get(i)).map(|n| n.name.clone());
+        let validation = self.validation.clone();
+
         // Local copies of edited strings (write back after the frame).
         let mut path_input = std::mem::take(&mut self.path_input);
         let mut out_dir = std::mem::take(&mut self.out_dir);
@@ -414,6 +462,34 @@ impl eframe::App for App {
             ui.label(&self.status);
         });
 
+        egui::SidePanel::right("preview")
+            .resizable(true)
+            .default_width(320.0)
+            .show(ctx, |ui| {
+                if editable {
+                    ui.horizontal(|ui| {
+                        if ui.button("Validate disk").clicked() {
+                            acts.push(Act::Validate);
+                        }
+                    });
+                    if !validation.is_empty() {
+                        ui.add(egui::Label::new(egui::RichText::new(&validation).monospace()).wrap());
+                    }
+                    ui.separator();
+                }
+                match &preview_name {
+                    Some(n) => ui.label(egui::RichText::new(format!("Preview: {n}")).strong()),
+                    None => ui.label(egui::RichText::new("Preview").strong()),
+                };
+                egui::ScrollArea::vertical().id_salt("preview_scroll").show(ui, |ui| {
+                    if preview.is_empty() {
+                        ui.weak("Select a file to preview its bytes.");
+                    } else {
+                        ui.add(egui::Label::new(egui::RichText::new(&preview).monospace()).wrap());
+                    }
+                });
+            });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.nodes.is_empty() {
                 ui.centered_and_justified(|ui| {
@@ -467,6 +543,34 @@ impl eframe::App for App {
             self.apply(act);
         }
     }
+}
+
+/// A classic hex + ASCII dump of up to `cap` bytes, 16 per line.
+fn hexdump(data: &[u8], cap: usize) -> String {
+    let n = data.len().min(cap);
+    let mut s = String::with_capacity(n * 4 + 64);
+    for (off, chunk) in data[..n].chunks(16).enumerate() {
+        s.push_str(&format!("{:04X}: ", off * 16));
+        for i in 0..16 {
+            if i < chunk.len() {
+                s.push_str(&format!("{:02X} ", chunk[i]));
+            } else {
+                s.push_str("   ");
+            }
+            if i == 7 {
+                s.push(' ');
+            }
+        }
+        s.push(' ');
+        for &b in chunk {
+            s.push(if (0x20..=0x7E).contains(&b) { b as char } else { '.' });
+        }
+        s.push('\n');
+    }
+    if data.len() > n {
+        s.push_str(&format!("… ({} of {} bytes shown)\n", n, data.len()));
+    }
+    s
 }
 
 /// A CBM file name derived from a host path: the stem, uppercased, ≤16 chars.
