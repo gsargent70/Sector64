@@ -124,9 +124,11 @@ job with those failure modes designed out:
   the right one, then reads it with the ordinary directory/extraction machinery
   (a new `Geometry::CmdNative`). Confirmed against `c1541` on two real disks
   (a DNP and a 1581-partition D2M): every regular file extracts byte-for-byte.
-  The CMD-native block-availability map isn't decoded, so `blocks_free` /
-  `validate` report `UnsupportedGeometry` for a DNP; and GEOS/VLIR members
-  (which aren't flat files) are not flat-extracted.
+  The DNP **BAM** is decoded too (a 32-byte-per-track bitmap at track 1 sectors
+  2–33, with the track count read from the BAM header), so `blocks_free` and
+  `validate` work: `blocks_free` matches c1541 (5610 on the sample) and
+  validation correctly flags that disk's two genuine used-but-free blocks.
+  Writing to a DNP and GEOS/VLIR flat extraction are not yet supported.
 
 - **TAP** (`parse_tap` → `TapImage`, `s64tap`): the raw datasette pulse stream.
   A TAP records the length of every tape pulse in clock cycles, nothing more —

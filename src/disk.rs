@@ -88,7 +88,12 @@ impl Disk {
             // 1560) with DOS version 'D'. Probe both to pick the geometry.
             1658880 => {
                 if data.get(258) == Some(&b'H') {
-                    Geometry::CmdNative { blocks: 6480 }
+                    // The native partition's track count is in its BAM header at
+                    // track 1 / sector 2, byte 8 ("last available track"); the
+                    // rest of the image (e.g. the D2M system partition) is not
+                    // part of the filesystem.
+                    let tracks = data.get(2 * 256 + 8).copied().unwrap_or(25).max(1) as u32;
+                    Geometry::CmdNative { blocks: tracks * 256 }
                 } else if data.get(1560 * 256 + 2) == Some(&b'D') {
                     Geometry::Cbm1581 // first 3200 blocks are a 1581 partition
                 } else {
@@ -385,10 +390,6 @@ impl Disk {
     /// Blocks free, summed from the BAM over every track except the directory
     /// track — the figure a directory footer shows.
     pub fn blocks_free(&self) -> Result<u16> {
-        if matches!(self.geom, Geometry::CmdNative { .. }) {
-            // The CMD-native block-availability map is not decoded.
-            return Err(Error::UnsupportedGeometry);
-        }
         Ok(self.total_free())
     }
 
@@ -527,11 +528,6 @@ impl Disk {
     /// fault that stops a walk (an out-of-range link or a cycle) surfaces as an
     /// `Err` rather than a report entry.
     pub fn validate(&self) -> Result<ValidationReport> {
-        if matches!(self.geom, Geometry::CmdNative { .. }) {
-            // Validation cross-checks against the BAM, which is not decoded for
-            // the CMD-native geometry.
-            return Err(Error::UnsupportedGeometry);
-        }
         let mut used: Vec<(u8, u8)> = Vec::new();
         let mut report = ValidationReport {
             blocks_free: self.total_free(),
@@ -716,8 +712,21 @@ impl Disk {
                 let base = sec_off + 0x10 + idx * 6;
                 Some((base, base + 1, 5))
             }
-            // The CMD-native BAM is not decoded; blocks_free/validate reject it.
-            Geometry::CmdNative { .. } => None,
+            // CMD-native (DNP): a 32-byte bitmap per track (bit set = free,
+            // LSB-first), with no per-track free-count byte. The map lives on
+            // track 1 — sector 2 covers tracks 1-7 from offset $20, and each
+            // later sector covers 8 tracks from offset 0.
+            Geometry::CmdNative { .. } => {
+                let t = track as usize;
+                let (sector, within) = if (1..=7).contains(&t) {
+                    (2usize, 0x20 + (t - 1) * 32)
+                } else {
+                    (3 + (t - 8) / 8, ((t - 8) % 8) * 32)
+                };
+                let base = self.geom.ts_to_offset(1, sector as u8).ok()? + within;
+                // No count byte: report the bitmap itself for both fields.
+                Some((base, base, 32))
+            }
         }
     }
 
@@ -737,9 +746,9 @@ impl Disk {
     fn bam_is_allocated(&self, track: u8, sector: u8) -> Result<bool> {
         let spt = self
             .geom
-            .sectors_per_track(track)
+            .sector_count(track)
             .ok_or(Error::InvalidTrackSector { track, sector })?;
-        if sector >= spt {
+        if (sector as u16) >= spt {
             return Err(Error::InvalidTrackSector { track, sector });
         }
         let (_, bitmap, _) = self
@@ -775,6 +784,27 @@ impl Disk {
     /// Blocks free across every track except the directory track.
     fn total_free(&self) -> u16 {
         let dir = self.dir_track();
+        // CMD-native has no per-track free-count byte: count free bits in each
+        // track's 32-byte bitmap (over its real sector count).
+        if matches!(self.geom, Geometry::CmdNative { .. }) {
+            let mut n = 0u32;
+            for track in 1..=self.track_count {
+                if track == dir {
+                    continue;
+                }
+                let (Some((_, bitmap, _)), Some(spt)) =
+                    (self.bam_cell(track), self.geom.sector_count(track))
+                else {
+                    continue;
+                };
+                for s in 0..spt as usize {
+                    if self.data.get(bitmap + s / 8).is_some_and(|b| b & (1 << (s % 8)) != 0) {
+                        n += 1;
+                    }
+                }
+            }
+            return n.min(u16::MAX as u32) as u16;
+        }
         let mut n = 0u16;
         for track in 1..=self.track_count {
             if track != dir {
