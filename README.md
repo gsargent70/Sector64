@@ -178,6 +178,23 @@ job with those failure modes designed out:
 Not yet: ARC Huffman (squeeze/squash) and Wraptor decompression, and
 GEOS/graphics formats. Those are the next layers.
 
+## GUI
+
+A native front-end (`gui/`, a separate workspace member so the engine stays
+dependency-free) built on [`egui`](https://github.com/emilk/egui). It opens a
+disk image or any supported archive, lists the contents, and extracts files —
+the core of what DirMaster does.
+
+```sh
+cargo run -p sector64-gui                 # open the window
+cargo run -p sector64-gui -- disk.d64     # open a file on launch
+```
+
+Open a `.d64/.d71/.d81/.g64/.d2m` disk or an `.arc/.sda/.lha/.lzh/.sfx/.lbr/
+.t64/.lnx/.p00/.wr3` archive, click a file, and **Extract selected** (or
+**Extract all**) to the chosen output directory. Members that need a
+not-yet-implemented decoder are listed with the reason instead of bytes.
+
 ## Build and run
 
 ```sh

@@ -26,3 +26,12 @@ path = "src/bin/s64write.rs"
 
 [profile.release]
 overflow-checks = true  # keep arithmetic checks on even in release; this is a parser.
+
+# The core library/CLIs above stay dependency-free. The GUI front-end lives in
+# a separate workspace member (`gui/`) so its dependency tree never touches the
+# engine. `default-members` keeps a bare `cargo build`/`cargo test` building
+# only the core; build the GUI explicitly with `-p sector64-gui`.
+[workspace]
+members = ["gui"]
+default-members = ["."]
+exclude = ["fuzz"]
