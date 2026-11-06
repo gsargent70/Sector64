@@ -38,7 +38,7 @@ pub enum FileType {
 }
 
 impl FileType {
-    fn from_nibble(n: u8) -> FileType {
+    pub(crate) fn from_nibble(n: u8) -> FileType {
         match n & 0x0F {
             0 => FileType::Del,
             1 => FileType::Seq,

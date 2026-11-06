@@ -22,6 +22,7 @@
 pub mod arc;
 pub mod bam;
 pub mod container;
+pub mod cvt;
 pub mod directory;
 pub mod error;
 pub mod g64;
@@ -31,6 +32,7 @@ pub mod petscii;
 pub mod disk;
 
 pub use arc::{parse_arc, parse_sda, ArcEntry, ArcMethod};
+pub use cvt::{geos_type_name, parse_cvt, CvtInfo, GeosStructure};
 pub use bam::{Bam, DosFormat};
 pub use container::{
     parse_lbr, parse_lnx, parse_p00, parse_t64, parse_zipcode, write_zipcode, ImportFile,

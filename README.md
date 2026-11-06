@@ -108,6 +108,17 @@ job with those failure modes designed out:
   `Error::UnsupportedArcMethod` for now — the decoders are the next layer, and
   the captured per-entry checksum is the oracle they will be verified against.
 
+- **GEOS CVT** (`parse_cvt` → `CvtInfo`, `s64cvt`): the ConVerT container that
+  linearises a GEOS file (its INFO block plus a sequential or **VLIR** payload)
+  for transport. `parse_cvt` reads the 254-byte signature block (GEOS name, CBM
+  and GEOS file types, structure, `"… formatted GEOS file"` signature), the
+  INFO block, and — for VLIR — the record index (sector-count / last-size
+  pairs). It **describes** a CVT; it does not split the concatenated record data
+  into individual records, because the per-record padding varies between Convert
+  versions and no local GEOS tool exists to validate a split (the reference
+  `geoinfo` stops here too). Validated against real samples (DESKTOPV1.32.CVT,
+  GEOSSYM.CVT): the header parses exactly and the 254-byte blocks tile the file.
+
 - **PC64 single-file** (`parse_p00`, `s64write import`): the `.P00`/`.S00`/
   `.U00`/`.R00`/`.D00` container — a 26-byte `C64File` header (16-byte CBM name,
   reserved and REL-record bytes) in front of the raw file. The CBM type comes
@@ -193,6 +204,8 @@ against a real disk.
 | `src/bam.rs`       | Block Availability Map: free counts + allocation bitmap |
 | `src/container.rs` | T64 / LNX / LBR / Zip-Code importers |
 | `src/g64.rs`       | G64 GCR bitstream decode → D64 |
+| `src/cvt.rs`       | GEOS ConVerT (CVT) container describe |
+| `src/bin/s64cvt.rs` | CLI: describe a GEOS CVT container |
 | `src/petscii.rs`   | minimal PETSCII→UTF-8 for display |
 | `src/error.rs`     | error type (every malformed input is a recoverable error) |
 | `src/bin/s64ls.rs` | CLI directory listing |
