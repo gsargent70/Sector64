@@ -60,15 +60,37 @@ fn ras1_sfx_directory() {
     let entries = parse_lha(&bytes).unwrap_or_else(|e| panic!("parse_lha: {e}"));
     assert!(entries.len() > 5, "expected several members, got {}", entries.len());
     assert_eq!(entries[0].name, "a");
-    // These are all LHA level-0 entries; sizes and method look sane.
+    // Mostly LHA level-0 -lh1- (LZHUF), with a stored (-lh0-) member. Decode
+    // each and verify against the archive's own length and CRC-16 — an
+    // independent oracle for the decompressor.
+    let mut lh1 = 0;
     for e in &entries {
-        assert_eq!(&e.method[..3], b"-lh", "{} has a non-lh method", e.name);
-        assert!(e.original_size >= e.compressed_size || e.method == *b"-lh0-");
+        let out = e.decode().unwrap_or_else(|err| panic!("decode {}: {err}", e.name));
+        assert_eq!(out.len(), e.original_size as usize, "length of {}", e.name);
+        assert!(e.verify_crc(&out), "CRC mismatch for {}", e.name);
+        if e.method_str() == "-lh1-" {
+            lh1 += 1;
+        }
     }
-    // The compressed members can't be decoded yet, but stored ones (if any)
-    // must, and the rest must report the method rather than panic.
+    assert!(lh1 >= 15, "expected mostly lh1 entries, got {lh1}");
+    eprintln!("ok: RAS-1.SFX ({} entries decoded + CRC-checked, {lh1} lh1)", entries.len());
+}
+
+#[test]
+fn swb_sfx_decodes() {
+    let Some(dir) = samples_dir() else {
+        eprintln!("skipping: no samples directory");
+        return;
+    };
+    let Some(bytes) = read(&dir, "SWB.SFX") else {
+        eprintln!("skipping: SWB.SFX not present");
+        return;
+    };
+    let entries = parse_lha(&bytes).unwrap_or_else(|e| panic!("parse_lha: {e}"));
     for e in &entries {
-        let _ = e.decode();
+        let out = e.decode().unwrap_or_else(|err| panic!("decode {}: {err}", e.name));
+        assert_eq!(out.len(), e.original_size as usize, "length of {}", e.name);
+        assert!(e.verify_crc(&out), "CRC mismatch for {}", e.name);
     }
-    eprintln!("ok: RAS-1.SFX ({} entries)", entries.len());
+    eprintln!("ok: SWB.SFX ({} entries decoded + CRC-checked)", entries.len());
 }

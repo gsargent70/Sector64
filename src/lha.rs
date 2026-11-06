@@ -7,12 +7,11 @@
 //! self-extractor stub by its checksum — and exposes each entry's name, CBM
 //! type, method, sizes and CRC.
 //!
-//! Decoding is implemented only for the **stored** method (`-lh0-`); the
-//! compressed methods (`-lh1-` = LZHUF and friends) return
-//! [`Error::UnsupportedLhaMethod`]. The stored [`LhaEntry::crc16`] is kept as
-//! the oracle a future decoder will be checked against. Every field access is
-//! bounds-checked and the walk always advances, so malformed input cannot panic
-//! or loop forever.
+//! Decoding is implemented for **stored** (`-lh0-`) and **`-lh1-`** (LZHUF, via
+//! [`crate::lzhuf`]); other methods return [`Error::UnsupportedLhaMethod`]. The
+//! stored [`LhaEntry::crc16`] is the oracle a decode is checked against
+//! ([`LhaEntry::verify_crc`]). Every field access is bounds-checked and the walk
+//! always advances, so malformed input cannot panic or loop forever.
 
 use crate::directory::FileType;
 use crate::error::{Error, Result};
@@ -51,12 +50,20 @@ impl LhaEntry {
     /// Only the stored method (`-lh0-`) is implemented; compressed methods
     /// return [`Error::UnsupportedLhaMethod`].
     pub fn decode(&self) -> Result<Vec<u8>> {
-        if &self.method == b"-lh0-" {
-            let n = self.original_size as usize;
-            Ok(self.packed.get(..n).unwrap_or(&self.packed).to_vec())
-        } else {
-            Err(Error::UnsupportedLhaMethod(self.method))
+        match &self.method {
+            b"-lh0-" => {
+                let n = self.original_size as usize;
+                Ok(self.packed.get(..n).unwrap_or(&self.packed).to_vec())
+            }
+            // -lh1- is LZHUF (LZSS + adaptive Huffman).
+            b"-lh1-" => Ok(crate::lzhuf::decode(&self.packed, self.original_size as usize)),
+            _ => Err(Error::UnsupportedLhaMethod(self.method)),
         }
+    }
+
+    /// Whether the stored CRC-16 matches `data` (LHA's integrity check).
+    pub fn verify_crc(&self, data: &[u8]) -> bool {
+        crate::lzhuf::crc16(data) == self.crc16
     }
 }
 
@@ -214,8 +221,8 @@ mod tests {
         let stored = vec![0x01u8, 0x08, 0xDE, 0xAD];
         let comp = vec![0u8; 50];
         let arc = build(&[
-            ("hello", b'P', b"-lh0-", &stored),
-            ("notes", b'S', b"-lh1-", &comp),
+            ("hello", b'P', b"-lh0-", &stored),   // stored
+            ("notes", b'S', b"-lh5-", &comp),     // a method we don't decode
         ]);
         let e = parse_lha(&arc).unwrap();
         assert_eq!(e.len(), 2);

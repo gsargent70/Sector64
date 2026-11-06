@@ -156,10 +156,12 @@ job with those failure modes designed out:
   loader — `parse_lha` locates the first level-0 header past the stub by its
   checksum, walks the entries (name, CBM type, method, sizes, CRC) and ends at
   the terminator or trailing padding. Both **list** real samples correctly
-  (SURVIVOR.SDA, and RAS-1.SFX's 20 members / SWB.SFX). As with a bare ARC,
-  **stored** members extract; the compressed methods (ARC crunch, LHA `-lh1-`
-  LZHUF) return their respective `Unsupported…Method` error — the decoders are
-  the next layer, with the stored CRC/checksum kept as the oracle.
+  (SURVIVOR.SDA, and RAS-1.SFX's 20 members / SWB.SFX). **LHA `-lh0-` (stored)
+  and `-lh1-` (LZHUF) members fully extract** — the lh1 decoder (`src/lzhuf.rs`)
+  is a clean-room port of the public `lzhuf.c`, and every member of both real
+  `.sfx` archives decodes to the exact length *and* matching CRC-16 (the
+  archive's own integrity check). ARC crunch (so the `.sda` members) and other
+  LHA methods still return their `Unsupported…Method` error.
 
 - **Wraptor 3** (`parse_wr3` → `Wr3Entry`, `s64wr3`): the `.wr3` archive. Each
   entry is introduced by the marker `FF "BL" FF`, its NUL-terminated name, and
@@ -169,8 +171,8 @@ job with those failure modes designed out:
   members). The Wraptor compression is a custom scheme and is not decoded, so
   the payload is exposed as-is — the decoder is the next layer.
 
-Not yet: ARC / LHA / Wraptor decompression, and GEOS/graphics formats. Those
-are the next layers.
+Not yet: ARC and Wraptor decompression, and GEOS/graphics formats. Those are
+the next layers.
 
 ## Build and run
 
@@ -247,7 +249,8 @@ against a real disk.
 | `src/bin/s64val.rs` | CLI: validate the disk against its BAM |
 | `src/bin/s64write.rs` | CLI: format, add, delete, rename |
 | `src/arc.rs`       | Commodore ARC archive + SDA walk + stored decode |
-| `src/lha.rs`       | LHA / SFX archive walk + stored decode |
+| `src/lha.rs`       | LHA / SFX archive walk + lh0/lh1 decode |
+| `src/lzhuf.rs`     | LZHUF (LHA `-lh1-`) decompressor + CRC-16 |
 | `src/bin/s64arc.rs` | CLI: list / extract an ARC or SDA archive |
 | `src/bin/s64lha.rs` | CLI: list / extract an LHA or SFX archive |
 

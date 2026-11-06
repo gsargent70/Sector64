@@ -28,6 +28,7 @@ pub mod error;
 pub mod g64;
 pub mod geometry;
 pub mod lha;
+pub mod lzhuf;
 pub mod tap;
 pub mod wr3;
 pub mod petscii;
