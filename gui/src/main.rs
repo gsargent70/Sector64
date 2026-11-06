@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use sector64::{
-    parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64, parse_wr3, Disk,
-    FileType,
+    parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64, parse_wr3,
+    write_lbr, write_lnx, write_p00, write_t64, Disk, FileType, ImportFile,
 };
 
 /// One listed item: name, a short detail line, and its decoded bytes (or a
@@ -52,6 +52,8 @@ struct App {
     nodes: Vec<Node>,
     selected: Option<usize>,
     disk: Option<EditDisk>,
+    // staging list when building a new archive
+    archive: Option<Vec<ImportFile>>,
     // preview/validation pane
     hex_cache: Option<(usize, String)>,
     validation: String,
@@ -74,6 +76,8 @@ enum Act {
     Save,
     SaveAs,
     Validate,
+    NewArchive,
+    SaveArchiveAs,
 }
 
 impl App {
@@ -89,14 +93,16 @@ impl App {
         app
     }
 
+    /// Whether add/rename/delete apply (an editable disk or a new archive).
     fn editable(&self) -> bool {
-        self.disk.is_some()
+        self.disk.is_some() || self.archive.is_some()
     }
 
     fn open(&mut self, path: &Path) {
         self.nodes.clear();
         self.selected = None;
         self.disk = None;
+        self.archive = None;
         self.title.clear();
         self.hex_cache = None;
         self.validation.clear();
@@ -125,17 +131,27 @@ impl App {
         self.status = format!("Opened {} ({} item(s))", path.display(), self.nodes.len());
     }
 
-    /// Rebuild the listing from the editable disk.
+    /// Rebuild the listing from the editable disk or the archive staging list.
     fn refresh(&mut self) {
         if let Some(ed) = &self.disk {
             let (title, nodes) = disk_nodes(&ed.disk);
             let dirty = if ed.dirty { "  •modified" } else { "" };
             self.title = format!("{title}{dirty}");
             self.nodes = nodes;
-            if let Some(i) = self.selected {
-                if i >= self.nodes.len() {
-                    self.selected = None;
-                }
+        } else if let Some(stage) = &self.archive {
+            self.title = format!("New archive — {} file(s) (unsaved)", stage.len());
+            self.nodes = stage
+                .iter()
+                .map(|f| Node {
+                    name: f.name.clone(),
+                    detail: format!("{} bytes  {}", f.data.len(), f.file_type.mnemonic()),
+                    data: Ok(f.data.clone()),
+                })
+                .collect();
+        }
+        if let Some(i) = self.selected {
+            if i >= self.nodes.len() {
+                self.selected = None;
             }
         }
     }
@@ -198,6 +214,51 @@ impl App {
             Act::Save => self.save(false),
             Act::SaveAs => self.save(true),
             Act::Validate => self.validate(),
+            Act::NewArchive => {
+                self.disk = None;
+                self.archive = Some(Vec::new());
+                self.selected = None;
+                self.hex_cache = None;
+                self.refresh();
+                self.status = "New archive — add files, then Save archive as…".into();
+            }
+            Act::SaveArchiveAs => self.save_archive(),
+        }
+    }
+
+    fn save_archive(&mut self) {
+        let Some(stage) = &self.archive else { return };
+        if stage.is_empty() {
+            self.status = "Add at least one file first".into();
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("archive", &["t64", "lnx", "lbr", "p00"])
+            .set_file_name("archive.t64")
+            .save_file()
+        else {
+            return;
+        };
+        let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
+        let bytes = match ext.as_str() {
+            "t64" => write_t64(stage),
+            "lnx" => write_lnx(stage),
+            "lbr" => write_lbr(stage),
+            "p00" => {
+                if stage.len() != 1 {
+                    self.status = "A .p00 holds exactly one file".into();
+                    return;
+                }
+                write_p00(&stage[0])
+            }
+            other => {
+                self.status = format!("unknown archive type .{other} (use t64/lnx/lbr/p00)");
+                return;
+            }
+        };
+        match std::fs::write(&path, &bytes) {
+            Ok(()) => self.status = format!("Saved {} ({} bytes)", path.display(), bytes.len()),
+            Err(e) => self.status = format!("Save failed: {e}"),
         }
     }
 
@@ -229,14 +290,19 @@ impl App {
             2 => FileType::Usr,
             _ => FileType::Prg,
         };
-        let Some(ed) = &mut self.disk else { return };
-        match ed.disk.write_file(&name, ft, bytes) {
-            Ok(()) => {
-                ed.dirty = true;
-                self.refresh();
-                self.status = format!("Added \"{name}\" ({} bytes)", bytes.len());
+        if let Some(ed) = &mut self.disk {
+            match ed.disk.write_file(&name, ft, bytes) {
+                Ok(()) => {
+                    ed.dirty = true;
+                    self.refresh();
+                    self.status = format!("Added \"{name}\" ({} bytes)", bytes.len());
+                }
+                Err(e) => self.status = format!("Add failed: {e}"),
             }
-            Err(e) => self.status = format!("Add failed: {e}"),
+        } else if let Some(stage) = &mut self.archive {
+            stage.push(ImportFile { name: name.clone(), file_type: ft, data: bytes.to_vec() });
+            self.refresh();
+            self.status = format!("Added \"{name}\" ({} bytes)", bytes.len());
         }
     }
 
@@ -251,14 +317,19 @@ impl App {
             self.status = "Enter a new name".into();
             return;
         }
-        let Some(ed) = &mut self.disk else { return };
-        match ed.disk.rename(&old, &new) {
-            Ok(()) => {
-                ed.dirty = true;
-                self.refresh();
-                self.status = format!("Renamed \"{old}\" → \"{new}\"");
+        if let Some(ed) = &mut self.disk {
+            match ed.disk.rename(&old, &new) {
+                Ok(()) => {
+                    ed.dirty = true;
+                    self.refresh();
+                    self.status = format!("Renamed \"{old}\" → \"{new}\"");
+                }
+                Err(e) => self.status = format!("Rename failed: {e}"),
             }
-            Err(e) => self.status = format!("Rename failed: {e}"),
+        } else if let Some(stage) = &mut self.archive {
+            stage[i].name = new.clone();
+            self.refresh();
+            self.status = format!("Renamed \"{old}\" → \"{new}\"");
         }
     }
 
@@ -268,15 +339,21 @@ impl App {
             return;
         };
         let name = self.nodes[i].name.clone();
-        let Some(ed) = &mut self.disk else { return };
-        match ed.disk.scratch(&name) {
-            Ok(n) => {
-                ed.dirty = true;
-                self.selected = None;
-                self.refresh();
-                self.status = format!("Deleted \"{name}\" ({n} blocks freed)");
+        if let Some(ed) = &mut self.disk {
+            match ed.disk.scratch(&name) {
+                Ok(n) => {
+                    ed.dirty = true;
+                    self.selected = None;
+                    self.refresh();
+                    self.status = format!("Deleted \"{name}\" ({n} blocks freed)");
+                }
+                Err(e) => self.status = format!("Delete failed: {e}"),
             }
-            Err(e) => self.status = format!("Delete failed: {e}"),
+        } else if let Some(stage) = &mut self.archive {
+            stage.remove(i);
+            self.selected = None;
+            self.refresh();
+            self.status = format!("Removed \"{name}\"");
         }
     }
 
@@ -357,6 +434,8 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut acts: Vec<Act> = Vec::new();
         let editable = self.editable();
+        let is_disk = self.disk.is_some();
+        let is_archive = self.archive.is_some();
 
         // Refresh the hex preview cache when the selection changes (done before
         // the panels so the closures only read `self` immutably).
@@ -414,6 +493,10 @@ impl eframe::App for App {
                 if ui.button("Create").clicked() {
                     acts.push(Act::Create);
                 }
+                ui.separator();
+                if ui.button("New archive").clicked() {
+                    acts.push(Act::NewArchive);
+                }
             });
             if !self.title.is_empty() {
                 ui.label(egui::RichText::new(&self.title).strong());
@@ -456,15 +539,20 @@ impl eframe::App for App {
                     if ui.button("Rename").clicked() {
                         acts.push(Act::Rename);
                     }
-                    if ui.button("Delete").clicked() {
+                    if ui.button(if is_archive { "Remove" } else { "Delete" }).clicked() {
                         acts.push(Act::Delete);
                     }
                     ui.separator();
-                    if ui.button("Save").clicked() {
-                        acts.push(Act::Save);
+                    if is_disk {
+                        if ui.button("Save").clicked() {
+                            acts.push(Act::Save);
+                        }
+                        if ui.button("Save As…").clicked() {
+                            acts.push(Act::SaveAs);
+                        }
                     }
-                    if ui.button("Save As…").clicked() {
-                        acts.push(Act::SaveAs);
+                    if is_archive && ui.button("Save archive as…").clicked() {
+                        acts.push(Act::SaveArchiveAs);
                     }
                 });
             }
@@ -475,7 +563,7 @@ impl eframe::App for App {
             .resizable(true)
             .default_width(320.0)
             .show(ctx, |ui| {
-                if editable {
+                if is_disk {
                     ui.horizontal(|ui| {
                         if ui.button("Validate disk").clicked() {
                             acts.push(Act::Validate);
