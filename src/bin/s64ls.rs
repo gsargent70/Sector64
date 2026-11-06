@@ -50,6 +50,12 @@ fn print_listing(disk: &Disk) -> sector64::Result<()> {
         println!("{:<5}{:<18}{}{}{}", e.blocks, quoted, splat, e.file_type.mnemonic(), lock);
     }
 
-    println!("{} blocks free.", disk.blocks_free()?);
+    match disk.blocks_free() {
+        Ok(free) => println!("{free} blocks free."),
+        Err(sector64::Error::UnsupportedGeometry) => {
+            println!("(blocks free: not available for this image)")
+        }
+        Err(e) => return Err(e),
+    }
     Ok(())
 }

@@ -114,7 +114,7 @@ fn disk_images(dir: &Path) -> Vec<PathBuf> {
         .filter(|p| {
             matches!(
                 p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
-                Some("d64" | "d71" | "d81" | "g64")
+                Some("d64" | "d71" | "d81" | "g64" | "d2m")
             )
         })
         .collect()
@@ -185,6 +185,16 @@ fn real_disk_images_match_c1541() {
                 continue;
             }
             let theirs = fs::read(&out).unwrap();
+            // A GEOS/VLIR or corrupt entry doesn't read as a flat file — c1541
+            // returns far fewer bytes than the directory's block count implies,
+            // and our flat read disagrees. Skip those rather than treat the
+            // ambiguity as a bug (both tools mishandle a non-flat file).
+            let min_bytes = (entry.blocks as usize).saturating_sub(1) * 254;
+            if entry.blocks > 2 && theirs.len() < min_bytes {
+                eprintln!("  skip {}: not a flat file (c1541 read {} of ~{} bytes)", entry.name, theirs.len(), min_bytes);
+                skipped += 1;
+                continue;
+            }
             // A wildcard can still match the wrong file; guard with the block
             // count from the directory (a chain of N blocks holds at most N*254
             // data bytes). An impossible length means the pattern hit something

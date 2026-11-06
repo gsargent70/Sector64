@@ -81,6 +81,20 @@ impl Disk {
             196608 | 197376 => Geometry::Cbm1541 { tracks: 40 },
             349696 | 351062 => Geometry::Cbm1571,
             819200 | 822400 => Geometry::Cbm1581,
+            // CMD FD-2000 image (.d2m), 6480 blocks. The container holds one
+            // partition, either a CMD-native (DNP) one — its header is a 1581-
+            // style block at track 1 / sector 1 with DOS version 'H' — or a
+            // 1581 one, whose header sits at 1581 track 40 / sector 0 (block
+            // 1560) with DOS version 'D'. Probe both to pick the geometry.
+            1658880 => {
+                if data.get(258) == Some(&b'H') {
+                    Geometry::CmdNative { blocks: 6480 }
+                } else if data.get(1560 * 256 + 2) == Some(&b'D') {
+                    Geometry::Cbm1581 // first 3200 blocks are a 1581 partition
+                } else {
+                    return Err(Error::UnknownImageSize(data.len()));
+                }
+            }
             n => return Err(Error::UnknownImageSize(n)),
         };
         let data_len = geom.total_blocks() as usize * BLOCK_SIZE;
@@ -340,14 +354,16 @@ impl Disk {
 
     /// Parse the disk header (name, id, DOS type) from the header sector.
     pub fn header(&self) -> Result<Header> {
-        let b = self.block(self.dir_track(), 0)?;
+        let b = self.block(self.dir_track(), self.geom.header_sector())?;
         match self.geom {
             Geometry::Cbm1541 { .. } | Geometry::Cbm1571 => Ok(Header {
                 name: petscii::field_to_string(&b[0x90..0xA0]),
                 id: petscii::field_to_string(&b[0xA2..0xA4]),
                 dos_type: petscii::field_to_string(&b[0xA5..0xA7]),
             }),
-            Geometry::Cbm1581 => Ok(Header {
+            // The CMD-native header (at 1/1) uses the same field layout as the
+            // 1581's (at 40/0).
+            Geometry::Cbm1581 | Geometry::CmdNative { .. } => Ok(Header {
                 name: petscii::field_to_string(&b[0x04..0x14]),
                 id: petscii::field_to_string(&b[0x16..0x18]),
                 dos_type: petscii::field_to_string(&b[0x19..0x1B]),
@@ -369,6 +385,10 @@ impl Disk {
     /// Blocks free, summed from the BAM over every track except the directory
     /// track — the figure a directory footer shows.
     pub fn blocks_free(&self) -> Result<u16> {
+        if matches!(self.geom, Geometry::CmdNative { .. }) {
+            // The CMD-native block-availability map is not decoded.
+            return Err(Error::UnsupportedGeometry);
+        }
         Ok(self.total_free())
     }
 
@@ -507,6 +527,11 @@ impl Disk {
     /// fault that stops a walk (an out-of-range link or a cycle) surfaces as an
     /// `Err` rather than a report entry.
     pub fn validate(&self) -> Result<ValidationReport> {
+        if matches!(self.geom, Geometry::CmdNative { .. }) {
+            // Validation cross-checks against the BAM, which is not decoded for
+            // the CMD-native geometry.
+            return Err(Error::UnsupportedGeometry);
+        }
         let mut used: Vec<(u8, u8)> = Vec::new();
         let mut report = ValidationReport {
             blocks_free: self.total_free(),
@@ -691,6 +716,8 @@ impl Disk {
                 let base = sec_off + 0x10 + idx * 6;
                 Some((base, base + 1, 5))
             }
+            // The CMD-native BAM is not decoded; blocks_free/validate reject it.
+            Geometry::CmdNative { .. } => None,
         }
     }
 

@@ -69,6 +69,10 @@ pub enum Geometry {
     Cbm1571,
     /// 1581 D81: 80 tracks of 40 sectors, directory on track 40.
     Cbm1581,
+    /// CMD native (DNP / D2M): 256 sectors per track, `block = (track-1)*256 +
+    /// sector`. The header is at 1/1 and the directory at 1/34. `blocks` is the
+    /// total block count (the last track may be partial).
+    CmdNative { blocks: u32 },
 }
 
 impl Geometry {
@@ -78,6 +82,9 @@ impl Geometry {
             Geometry::Cbm1541 { tracks } => tracks,
             Geometry::Cbm1571 => 70,
             Geometry::Cbm1581 => 80,
+            // 256 sectors per track; the last track may be partial. Capped at
+            // 255 tracks (the T/S link track byte is one byte).
+            Geometry::CmdNative { blocks } => blocks.div_ceil(256).min(255) as u8,
         }
     }
 
@@ -94,11 +101,36 @@ impl Geometry {
                 }
             }
             Geometry::Cbm1581 => (1..=80).contains(&track).then_some(40),
+            // A full CMD-native track has 256 sectors, which does not fit a u8
+            // count; CMD-native addressing goes through the overridden
+            // [`Self::ts_to_block`] / [`Self::sector_count`] instead.
+            Geometry::CmdNative { .. } => None,
+        }
+    }
+
+    /// Sectors on `track` as a `u16` (a full CMD-native track is 256, which does
+    /// not fit the `u8` [`Self::sectors_per_track`]).
+    pub fn sector_count(self, track: u8) -> Option<u16> {
+        match self {
+            Geometry::CmdNative { blocks } => {
+                let tracks = self.tracks();
+                if track == 0 || track > tracks {
+                    None
+                } else if track < tracks {
+                    Some(256)
+                } else {
+                    Some((blocks - (tracks as u32 - 1) * 256) as u16)
+                }
+            }
+            other => other.sectors_per_track(track).map(u16::from),
         }
     }
 
     /// Total data blocks on the disk.
     pub fn total_blocks(self) -> u32 {
+        if let Geometry::CmdNative { blocks } = self {
+            return blocks;
+        }
         (1..=self.tracks())
             .map(|t| self.sectors_per_track(t).expect("t in range") as u32)
             .sum()
@@ -106,6 +138,16 @@ impl Geometry {
 
     /// Block index (0-based, disk order) of (track, sector), bounds-checked.
     pub fn ts_to_block(self, track: u8, sector: u8) -> Result<u32> {
+        // CMD-native: uniform 256-sector tracks, block = (track-1)*256 + sector.
+        if let Geometry::CmdNative { .. } = self {
+            let spt = self
+                .sector_count(track)
+                .ok_or(Error::InvalidTrackSector { track, sector })?;
+            if (sector as u16) >= spt {
+                return Err(Error::InvalidTrackSector { track, sector });
+            }
+            return Ok((track as u32 - 1) * 256 + sector as u32);
+        }
         let spt = self
             .sectors_per_track(track)
             .ok_or(Error::InvalidTrackSector { track, sector })?;
@@ -128,6 +170,7 @@ impl Geometry {
         match self {
             Geometry::Cbm1541 { .. } | Geometry::Cbm1571 => 18,
             Geometry::Cbm1581 => 40,
+            Geometry::CmdNative { .. } => 1,
         }
     }
 
@@ -136,6 +179,15 @@ impl Geometry {
         match self {
             Geometry::Cbm1541 { .. } | Geometry::Cbm1571 => 1,
             Geometry::Cbm1581 => 3,
+            Geometry::CmdNative { .. } => 34,
+        }
+    }
+
+    /// Sector of the disk-header block within [`Self::directory_track`].
+    pub fn header_sector(self) -> u8 {
+        match self {
+            Geometry::CmdNative { .. } => 1,
+            _ => 0,
         }
     }
 }
@@ -191,6 +243,25 @@ mod tests {
         assert_eq!(g.total_blocks(), 683);
         assert_eq!(g.directory_track(), 18);
         assert_eq!(g.ts_to_offset(18, 1).unwrap(), 358 * BLOCK_SIZE);
+    }
+
+    #[test]
+    fn cmd_native_geometry() {
+        let g = Geometry::CmdNative { blocks: 6480 };
+        assert_eq!(g.tracks(), 26); // 25*256 + 80
+        assert_eq!(g.total_blocks(), 6480);
+        assert_eq!(g.directory_track(), 1);
+        assert_eq!(g.directory_first_sector(), 34);
+        assert_eq!(g.header_sector(), 1);
+        // block = (track-1)*256 + sector.
+        assert_eq!(g.ts_to_block(1, 1).unwrap(), 1);
+        assert_eq!(g.ts_to_block(2, 22).unwrap(), 278);
+        assert_eq!(g.ts_to_block(1, 255).unwrap(), 255); // full track, sector 255 ok
+        // Last (partial) track 26 has 80 sectors (0..=79).
+        assert_eq!(g.sector_count(26), Some(80));
+        assert!(g.ts_to_block(26, 79).is_ok());
+        assert!(g.ts_to_block(26, 80).is_err());
+        assert!(g.ts_to_block(27, 0).is_err());
     }
 
     #[test]

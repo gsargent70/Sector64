@@ -48,6 +48,9 @@ pub enum Error {
     UnsupportedArcMethod(u8),
     /// An LHA entry uses a compression method this crate cannot yet decode.
     UnsupportedLhaMethod([u8; 5]),
+    /// An operation isn't supported for this disk geometry (e.g. the CMD-native
+    /// block-availability map, which this crate does not decode).
+    UnsupportedGeometry,
 }
 
 impl fmt::Display for Error {
@@ -92,6 +95,9 @@ impl fmt::Display for Error {
             }
             Error::UnsupportedLhaMethod(m) => {
                 write!(f, "LHA method {} is not yet supported", String::from_utf8_lossy(m))
+            }
+            Error::UnsupportedGeometry => {
+                write!(f, "operation not supported for this disk geometry")
             }
         }
     }

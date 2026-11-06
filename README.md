@@ -108,6 +108,17 @@ job with those failure modes designed out:
   `Error::UnsupportedArcMethod` for now — the decoders are the next layer, and
   the captured per-entry checksum is the oracle they will be verified against.
 
+- **CMD D2M** (`Disk::load` auto-detects by size): the CMD FD-2000 native image.
+  A D2M holds one partition — either **CMD-native (DNP)** geometry (256 sectors
+  per track, `block = (track−1)×256 + sector`, header at 1/1, directory at 1/34)
+  or a **1581** partition — and `load` probes the two header positions to pick
+  the right one, then reads it with the ordinary directory/extraction machinery
+  (a new `Geometry::CmdNative`). Confirmed against `c1541` on two real disks
+  (a DNP and a 1581-partition D2M): every regular file extracts byte-for-byte.
+  The CMD-native block-availability map isn't decoded, so `blocks_free` /
+  `validate` report `UnsupportedGeometry` for a DNP; and GEOS/VLIR members
+  (which aren't flat files) are not flat-extracted.
+
 - **TAP** (`parse_tap` → `TapImage`, `s64tap`): the raw datasette pulse stream.
   A TAP records the length of every tape pulse in clock cycles, nothing more —
   the *bit* encoding is defined by whichever loader wrote the tape, and most
