@@ -143,7 +143,16 @@ impl App {
     fn apply(&mut self, act: Act) {
         match act {
             Act::OpenDialog => {
-                if let Some(p) = rfd::FileDialog::new().pick_file() {
+                let dlg = rfd::FileDialog::new()
+                    .add_filter(
+                        "Commodore disks & archives",
+                        &[
+                            "d64", "d71", "d81", "g64", "d2m", "arc", "sda", "lha", "lzh", "sfx",
+                            "lbr", "t64", "lnx", "wr3", "p00",
+                        ],
+                    )
+                    .add_filter("All files", &["*"]);
+                if let Some(p) = dlg.pick_file() {
                     self.open(&p);
                 }
             }
@@ -505,8 +514,15 @@ impl eframe::App for App {
                     ui.end_row();
                     for (i, node) in self.nodes.iter().enumerate() {
                         let sel = self.selected == Some(i);
-                        if ui.selectable_label(sel, node.name.as_str()).clicked() {
+                        let resp = ui
+                            .selectable_label(sel, node.name.as_str())
+                            .on_hover_text("double-click to extract");
+                        if resp.clicked() {
                             acts.push(Act::Select(i));
+                        }
+                        if resp.double_clicked() {
+                            acts.push(Act::Select(i));
+                            acts.push(Act::ExtractSelected);
                         }
                         ui.label(&node.detail);
                         match &node.data {
@@ -702,10 +718,43 @@ fn open_path(path: &Path) -> Result<Opened, String> {
     Ok(Opened::List(kind.to_string(), nodes))
 }
 
+/// A small procedurally-drawn 3.5" floppy icon (48×48 RGBA) for the window.
+fn make_icon() -> egui::IconData {
+    let (w, h) = (48usize, 48usize);
+    let mut rgba = vec![0u8; w * h * 4];
+    let mut fill = |x0: usize, y0: usize, x1: usize, y1: usize, c: [u8; 4]| {
+        for y in y0..y1.min(h) {
+            for x in x0..x1.min(w) {
+                let i = (y * w + x) * 4;
+                rgba[i..i + 4].copy_from_slice(&c);
+            }
+        }
+    };
+    let body = [0x2b, 0x4b, 0x7a, 0xff];
+    let shutter = [0xb8, 0xbe, 0xc8, 0xff];
+    let label = [0xef, 0xef, 0xe6, 0xff];
+    fill(5, 5, 43, 43, body); // disk body
+    fill(24, 7, 40, 19, shutter); // metal shutter
+    fill(30, 9, 34, 17, body); // shutter window
+    fill(10, 24, 38, 40, label); // write-on label
+    // clip the top-right corner diagonally
+    for y in 5..14 {
+        for x in 34..43 {
+            if (x - 34) + (43 - y) > 9 {
+                let i = (y * w + x) * 4;
+                rgba[i..i + 4].copy_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+    }
+    egui::IconData { rgba, width: w as u32, height: h as u32 }
+}
+
 fn main() -> eframe::Result<()> {
     let initial = std::env::args().nth(1);
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([820.0, 560.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([820.0, 560.0])
+            .with_icon(std::sync::Arc::new(make_icon())),
         ..Default::default()
     };
     eframe::run_native(

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Sector64
+GenericName=Disk Image Browser
+Comment=Browse, extract and edit Commodore disk images and archives
+Exec=sector64-gui %f
+Icon=media-floppy
+Terminal=false
+Categories=Utility;Archiving;FileTools;
+MimeType=application/x-d64;application/x-d81;application/x-t64;

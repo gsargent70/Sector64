@@ -200,6 +200,13 @@ not-yet-implemented decoder are listed with the reason instead of bytes.
 For the writable sector formats (`.d64/.d71/.d81`) it is also an **editor**:
 create a blank image, add a host file (button or drag-and-drop) as prg/seq/usr,
 rename, delete, and Save / Save As. G64/D2M and archives are read-only.
+Double-click a file to extract it; the Open dialog filters to known types.
+
+Install it as a desktop app for the current user:
+
+```sh
+packaging/install.sh    # builds release, installs the binary + a .desktop launcher
+```
 
 ## Build and run
 
