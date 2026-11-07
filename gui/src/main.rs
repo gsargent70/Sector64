@@ -13,15 +13,118 @@
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
+use egui::Color32;
 use sector64::{
     parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64,
     write_lbr, write_lnx, write_p00, write_t64, Disk, FileType, ImportFile,
 };
 
-/// One listed item: name, a short detail line, and its decoded bytes (or a
-/// reason it can't be extracted).
+/// The Commodore 64 palette this UI is themed around (Pepto values).
+mod c64 {
+    use eframe::egui::Color32;
+    /// Dark-blue screen background (colour 6).
+    pub const BG: Color32 = Color32::from_rgb(0x35, 0x28, 0x79);
+    /// A slightly darker blue for framing panels.
+    pub const BG_PANEL: Color32 = Color32::from_rgb(0x2a, 0x20, 0x60);
+    /// The darkest blue, for text-input wells.
+    pub const WELL: Color32 = Color32::from_rgb(0x1e, 0x17, 0x48);
+    /// Faint stripe on alternate rows.
+    pub const STRIPE: Color32 = Color32::from_rgb(0x3d, 0x2f, 0x87);
+    /// Light-blue accent (colour 14) — the classic border/cursor colour.
+    pub const ACCENT: Color32 = Color32::from_rgb(0x7c, 0x6f, 0xd0);
+    pub const ACCENT_DIM: Color32 = Color32::from_rgb(0x55, 0x4a, 0x9c);
+    /// Bright light-blue text, lifted from the true value for legibility.
+    pub const TEXT: Color32 = Color32::from_rgb(0xc9, 0xc2, 0xf0);
+    pub const TEXT_DIM: Color32 = Color32::from_rgb(0x8e, 0x82, 0xc8);
+    /// Near-white for emphasis (colour 1).
+    pub const BRIGHT: Color32 = Color32::from_rgb(0xf2, 0xf0, 0xff);
+    // File-type badge colours.
+    pub const PRG: Color32 = Color32::from_rgb(0x8c, 0xc0, 0x70);
+    pub const SEQ: Color32 = Color32::from_rgb(0x78, 0xc0, 0xc0);
+    pub const USR: Color32 = Color32::from_rgb(0xb0, 0x80, 0xd0);
+    pub const DEL: Color32 = Color32::from_rgb(0xa8, 0xa8, 0xa8);
+    pub const REL: Color32 = Color32::from_rgb(0xc8, 0xc0, 0x60);
+    pub const WARN: Color32 = Color32::from_rgb(0xd8, 0x80, 0x70);
+    pub const OK: Color32 = Color32::from_rgb(0x8c, 0xc0, 0x70);
+}
+
+/// Apply the retro C64 theme: monospace throughout, dark-blue panels,
+/// light-blue text, square (un-rounded) widgets, a light-blue selection.
+fn apply_c64_theme(ctx: &egui::Context) {
+    use egui::{FontFamily::Monospace, FontId, Rounding, Stroke, TextStyle};
+    let mut style = (*ctx.style()).clone();
+
+    style.text_styles = [
+        (TextStyle::Heading, FontId::new(19.0, Monospace)),
+        (TextStyle::Body, FontId::new(13.5, Monospace)),
+        (TextStyle::Monospace, FontId::new(13.0, Monospace)),
+        (TextStyle::Button, FontId::new(13.5, Monospace)),
+        (TextStyle::Small, FontId::new(11.0, Monospace)),
+    ]
+    .into();
+
+    let mut v = egui::Visuals::dark();
+    v.panel_fill = c64::BG;
+    v.window_fill = c64::BG_PANEL;
+    v.extreme_bg_color = c64::WELL;
+    v.faint_bg_color = c64::STRIPE;
+    v.override_text_color = Some(c64::TEXT);
+    v.hyperlink_color = c64::ACCENT;
+    v.selection.bg_fill = c64::ACCENT;
+    v.selection.stroke = Stroke::new(1.0, c64::BRIGHT);
+    v.window_rounding = Rounding::ZERO;
+    v.menu_rounding = Rounding::ZERO;
+
+    let square = Rounding::ZERO;
+    for w in [
+        &mut v.widgets.noninteractive,
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+        &mut v.widgets.open,
+    ] {
+        w.rounding = square;
+    }
+    v.widgets.noninteractive.bg_fill = c64::BG_PANEL;
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, c64::ACCENT_DIM);
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, c64::TEXT);
+    v.widgets.inactive.bg_fill = c64::BG_PANEL;
+    v.widgets.inactive.weak_bg_fill = c64::BG_PANEL;
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0, c64::ACCENT_DIM);
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0, c64::TEXT);
+    v.widgets.hovered.bg_fill = c64::ACCENT_DIM;
+    v.widgets.hovered.weak_bg_fill = c64::ACCENT_DIM;
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, c64::ACCENT);
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0, c64::BRIGHT);
+    v.widgets.active.bg_fill = c64::ACCENT;
+    v.widgets.active.weak_bg_fill = c64::ACCENT;
+    v.widgets.active.bg_stroke = Stroke::new(1.0, c64::BRIGHT);
+    v.widgets.active.fg_stroke = Stroke::new(1.0, c64::BG);
+
+    style.visuals = v;
+    style.spacing.button_padding = egui::vec2(8.0, 4.0);
+    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+    ctx.set_style(style);
+}
+
+/// The accent colour for a file-type mnemonic badge.
+fn badge_color(mnemonic: &str) -> Color32 {
+    match mnemonic {
+        "prg" => c64::PRG,
+        "seq" => c64::SEQ,
+        "usr" => c64::USR,
+        "del" => c64::DEL,
+        "rel" => c64::REL,
+        _ => c64::TEXT_DIM,
+    }
+}
+
+/// One listed item: name, a short type badge, a detail line, and its decoded
+/// bytes (or a reason it can't be extracted).
 struct Node {
     name: String,
+    /// Short type mnemonic for the colour badge (e.g. "prg"); empty if none.
+    badge: String,
     detail: String,
     data: Result<Vec<u8>, String>,
 }
@@ -144,7 +247,8 @@ impl App {
                 .iter()
                 .map(|f| Node {
                     name: f.name.clone(),
-                    detail: format!("{} bytes  {}", f.data.len(), f.file_type.mnemonic()),
+                    badge: f.file_type.mnemonic().to_string(),
+                    detail: format!("{} bytes", f.data.len()),
                     data: Ok(f.data.clone()),
                 })
                 .collect();
@@ -456,6 +560,12 @@ impl eframe::App for App {
         let preview_name = self.selected.and_then(|i| self.nodes.get(i)).map(|n| n.name.clone());
         let validation = self.validation.clone();
 
+        // Context flags that drive which buttons are enabled.
+        let has_sel = self.selected.is_some();
+        let sel_extractable =
+            self.selected.and_then(|i| self.nodes.get(i)).map(|n| n.data.is_ok()).unwrap_or(false);
+        let any_extractable = self.nodes.iter().any(|n| n.data.is_ok());
+
         // Local copies of edited strings (write back after the frame).
         let mut path_input = std::mem::take(&mut self.path_input);
         let mut out_dir = std::mem::take(&mut self.out_dir);
@@ -466,54 +576,84 @@ impl eframe::App for App {
         let mut add_type = self.add_type;
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
+            ui.add_space(2.0);
             ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("◆ SECTOR64").heading().color(c64::ACCENT).strong());
+                ui.separator();
                 if ui.button("📂 Open…").clicked() {
                     acts.push(Act::OpenDialog);
                 }
+                ui.menu_button("New ▾", |ui| {
+                    ui.set_min_width(200.0);
+                    ui.label(egui::RichText::new("New disk image").color(c64::TEXT_DIM));
+                    ui.horizontal(|ui| {
+                        ui.label("name");
+                        ui.add(egui::TextEdit::singleline(&mut new_name).desired_width(120.0));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("id  ");
+                        ui.add(egui::TextEdit::singleline(&mut new_id).desired_width(40.0));
+                    });
+                    ui.horizontal(|ui| {
+                        for (i, label) in ["D64", "D71", "D81"].iter().enumerate() {
+                            if ui.button(*label).clicked() {
+                                new_fmt = i;
+                                acts.push(Act::Create);
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                    ui.separator();
+                    if ui.button("Empty archive").clicked() {
+                        acts.push(Act::NewArchive);
+                        ui.close_menu();
+                    }
+                });
                 ui.add(
                     egui::TextEdit::singleline(&mut path_input)
                         .hint_text("path to a disk image or archive")
-                        .desired_width(360.0),
+                        .desired_width(f32::INFINITY),
                 );
                 if ui.button("Load").clicked() {
                     acts.push(Act::Load);
                 }
             });
-            ui.horizontal(|ui| {
-                ui.label("New image:");
-                egui::ComboBox::from_id_salt("fmt")
-                    .selected_text(["D64", "D71", "D81"][new_fmt.min(2)])
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut new_fmt, 0, "D64");
-                        ui.selectable_value(&mut new_fmt, 1, "D71");
-                        ui.selectable_value(&mut new_fmt, 2, "D81");
-                    });
-                ui.add(egui::TextEdit::singleline(&mut new_name).hint_text("name").desired_width(130.0));
-                ui.add(egui::TextEdit::singleline(&mut new_id).hint_text("id").desired_width(40.0));
-                if ui.button("Create").clicked() {
-                    acts.push(Act::Create);
-                }
-                ui.separator();
-                if ui.button("New archive").clicked() {
-                    acts.push(Act::NewArchive);
-                }
-            });
             if !self.title.is_empty() {
-                ui.label(egui::RichText::new(&self.title).strong());
+                egui::Frame::none()
+                    .fill(c64::BG_PANEL)
+                    .stroke(egui::Stroke::new(1.0, c64::ACCENT_DIM))
+                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&self.title).color(c64::BRIGHT).strong(),
+                            )
+                            .truncate(),
+                        );
+                    });
             }
+            ui.add_space(2.0);
         });
 
         egui::TopBottomPanel::bottom("bottom").show(ctx, |ui| {
+            ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.label("Output:");
-                ui.add(egui::TextEdit::singleline(&mut out_dir).desired_width(230.0));
-                if ui.button("…").clicked() {
+                ui.add(
+                    egui::TextEdit::singleline(&mut out_dir)
+                        .hint_text("folder to extract into")
+                        .desired_width(220.0),
+                );
+                if ui.button("…").on_hover_text("choose output folder").clicked() {
                     acts.push(Act::PickOutDir);
                 }
-                if ui.button("Extract selected").clicked() {
+                if ui
+                    .add_enabled(sel_extractable, egui::Button::new("⬇ Extract selected"))
+                    .clicked()
+                {
                     acts.push(Act::ExtractSelected);
                 }
-                if ui.button("Extract all").clicked() {
+                if ui.add_enabled(any_extractable, egui::Button::new("⬇ Extract all")).clicked() {
                     acts.push(Act::ExtractAll);
                 }
             });
@@ -527,36 +667,49 @@ impl eframe::App for App {
                             ui.selectable_value(&mut add_type, 1, "seq");
                             ui.selectable_value(&mut add_type, 2, "usr");
                         });
-                    if ui.button("Add file…").clicked() {
+                    if ui.button("＋ Add file…").clicked() {
                         acts.push(Act::AddFile);
                     }
                     ui.separator();
                     ui.add(
                         egui::TextEdit::singleline(&mut rename_to)
                             .hint_text("new name")
-                            .desired_width(130.0),
+                            .desired_width(120.0),
                     );
-                    if ui.button("Rename").clicked() {
+                    if ui.add_enabled(has_sel, egui::Button::new("Rename")).clicked() {
                         acts.push(Act::Rename);
                     }
-                    if ui.button(if is_archive { "Remove" } else { "Delete" }).clicked() {
+                    let del = if is_archive { "Remove" } else { "Delete" };
+                    if ui.add_enabled(has_sel, egui::Button::new(del)).clicked() {
                         acts.push(Act::Delete);
                     }
                     ui.separator();
                     if is_disk {
-                        if ui.button("Save").clicked() {
+                        if ui.button("💾 Save").clicked() {
                             acts.push(Act::Save);
                         }
                         if ui.button("Save As…").clicked() {
                             acts.push(Act::SaveAs);
                         }
                     }
-                    if is_archive && ui.button("Save archive as…").clicked() {
+                    if is_archive && ui.button("💾 Save archive as…").clicked() {
                         acts.push(Act::SaveArchiveAs);
                     }
                 });
             }
-            ui.label(&self.status);
+            ui.add_space(2.0);
+            egui::Frame::none().fill(c64::WELL).inner_margin(egui::Margin::symmetric(8.0, 3.0)).show(
+                ui,
+                |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("►").color(c64::ACCENT));
+                        let msg = if self.status.is_empty() { "ready" } else { &self.status };
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(msg).color(c64::TEXT)).truncate(),
+                        );
+                    });
+                },
+            );
         });
 
         egui::SidePanel::right("preview")
@@ -564,23 +717,36 @@ impl eframe::App for App {
             .default_width(320.0)
             .show(ctx, |ui| {
                 if is_disk {
-                    ui.horizontal(|ui| {
-                        if ui.button("Validate disk").clicked() {
-                            acts.push(Act::Validate);
-                        }
-                    });
+                    if ui.button("✔ Validate disk").clicked() {
+                        acts.push(Act::Validate);
+                    }
                     if !validation.is_empty() {
-                        ui.add(egui::Label::new(egui::RichText::new(&validation).monospace()).wrap());
+                        let warn = validation.contains('⚠');
+                        let col = if warn { c64::WARN } else { c64::OK };
+                        egui::Frame::none()
+                            .fill(c64::WELL)
+                            .stroke(egui::Stroke::new(1.0, col))
+                            .inner_margin(egui::Margin::same(6.0))
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(&validation).monospace())
+                                        .wrap(),
+                                );
+                            });
                     }
                     ui.separator();
                 }
-                match &preview_name {
-                    Some(n) => ui.label(egui::RichText::new(format!("Preview: {n}")).strong()),
-                    None => ui.label(egui::RichText::new("Preview").strong()),
+                let header = match &preview_name {
+                    Some(n) => format!("PREVIEW — {n}"),
+                    None => "PREVIEW".to_string(),
                 };
+                ui.label(egui::RichText::new(header).color(c64::ACCENT).strong());
                 egui::ScrollArea::vertical().id_salt("preview_scroll").show(ui, |ui| {
                     if preview.is_empty() {
-                        ui.weak("Select a file to preview its bytes.");
+                        ui.label(
+                            egui::RichText::new("Select a file to preview its bytes.")
+                                .color(c64::TEXT_DIM),
+                        );
                     } else {
                         ui.add(egui::Label::new(egui::RichText::new(&preview).monospace()).wrap());
                     }
@@ -590,36 +756,26 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.nodes.is_empty() {
                 ui.centered_and_justified(|ui| {
-                    ui.label("Open a disk/archive, or create a new image and add files.");
+                    ui.label(
+                        egui::RichText::new(
+                            "◆ SECTOR64\n\nOpen a disk or archive, or make a new image,\nthen drag files in to add them.",
+                        )
+                        .color(c64::TEXT_DIM),
+                    );
                 });
                 return;
             }
             egui::ScrollArea::vertical().show(ui, |ui| {
-                egui::Grid::new("files").striped(true).num_columns(3).show(ui, |ui| {
-                    ui.label(egui::RichText::new("name").strong());
-                    ui.label(egui::RichText::new("details").strong());
-                    ui.label(egui::RichText::new("status").strong());
-                    ui.end_row();
-                    for (i, node) in self.nodes.iter().enumerate() {
-                        let sel = self.selected == Some(i);
-                        let resp = ui
-                            .selectable_label(sel, node.name.as_str())
-                            .on_hover_text("double-click to extract");
-                        if resp.clicked() {
-                            acts.push(Act::Select(i));
-                        }
-                        if resp.double_clicked() {
-                            acts.push(Act::Select(i));
-                            acts.push(Act::ExtractSelected);
-                        }
-                        ui.label(&node.detail);
-                        match &node.data {
-                            Ok(d) => ui.label(format!("{} bytes", d.len())),
-                            Err(e) => ui.label(egui::RichText::new(e).weak()),
-                        };
-                        ui.end_row();
+                for (i, node) in self.nodes.iter().enumerate() {
+                    let sel = self.selected == Some(i);
+                    let (clicked, double) = file_row(ui, node, sel, i);
+                    if clicked || double {
+                        acts.push(Act::Select(i));
                     }
-                });
+                    if double {
+                        acts.push(Act::ExtractSelected);
+                    }
+                }
             });
         });
 
@@ -635,6 +791,36 @@ impl eframe::App for App {
             }
         }
 
+        // Keyboard shortcuts. Single-key actions are suppressed while a text
+        // field has focus; Ctrl combos always apply.
+        let typing = ctx.wants_keyboard_input();
+        let sel_now = self.selected;
+        let n = self.nodes.len();
+        ctx.input(|i| {
+            if i.modifiers.command && i.key_pressed(egui::Key::O) {
+                acts.push(Act::OpenDialog);
+            }
+            if i.modifiers.command && i.key_pressed(egui::Key::S) && is_disk {
+                acts.push(Act::Save);
+            }
+            if !typing {
+                if i.key_pressed(egui::Key::Enter) && sel_extractable {
+                    acts.push(Act::ExtractSelected);
+                }
+                if i.key_pressed(egui::Key::Delete) && editable && has_sel {
+                    acts.push(Act::Delete);
+                }
+                if n > 0 && i.key_pressed(egui::Key::ArrowDown) {
+                    let next = sel_now.map_or(0, |s| (s + 1).min(n - 1));
+                    acts.push(Act::Select(next));
+                }
+                if n > 0 && i.key_pressed(egui::Key::ArrowUp) {
+                    let prev = sel_now.map_or(0, |s| s.saturating_sub(1));
+                    acts.push(Act::Select(prev));
+                }
+            }
+        });
+
         // Write edited strings back, then apply actions.
         self.path_input = path_input;
         self.out_dir = out_dir;
@@ -647,6 +833,79 @@ impl eframe::App for App {
             self.apply(act);
         }
     }
+}
+
+/// Draw one file as a full-width, painted, selectable row: a colour-coded type
+/// badge, the name, its detail, and a right-aligned size (or an error). Returns
+/// `(clicked, double_clicked)`.
+fn file_row(ui: &mut egui::Ui, node: &Node, selected: bool, index: usize) -> (bool, bool) {
+    use egui::{pos2, vec2, Align2, Color32, FontId, Rect, Rounding, Sense};
+    let row_h = 22.0;
+    let (rect, resp) =
+        ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
+
+    // Row background: selection, hover, or faint stripe.
+    let painter = ui.painter();
+    if selected {
+        painter.rect_filled(rect, Rounding::ZERO, c64::ACCENT);
+    } else if resp.hovered() {
+        painter.rect_filled(rect, Rounding::ZERO, c64::ACCENT_DIM);
+    } else if index % 2 == 1 {
+        painter.rect_filled(rect, Rounding::ZERO, c64::STRIPE);
+    }
+
+    let text_col = if selected { c64::BG } else { c64::TEXT };
+    let dim_col = if selected { c64::BG_PANEL } else { c64::TEXT_DIM };
+    let mono = FontId::monospace(13.0);
+    let small = FontId::monospace(11.0);
+    let pad = 8.0;
+    let cy = rect.center().y;
+
+    // Type badge.
+    let mut name_x = rect.left() + pad;
+    if !node.badge.is_empty() {
+        let bw = 38.0;
+        let brect = Rect::from_min_size(pos2(rect.left() + pad, rect.top() + 3.0), vec2(bw, row_h - 6.0));
+        let bcol = if selected { c64::BG } else { badge_color(&node.badge) };
+        painter.rect_stroke(brect, Rounding::ZERO, egui::Stroke::new(1.0, bcol));
+        painter.text(
+            brect.center(),
+            Align2::CENTER_CENTER,
+            node.badge.to_uppercase(),
+            small.clone(),
+            bcol,
+        );
+        name_x = brect.right() + pad;
+    }
+
+    // Right-aligned size / error status.
+    let right = rect.right() - pad;
+    let (status, status_col): (String, Color32) = match &node.data {
+        Ok(d) => (format!("{} bytes", d.len()), dim_col),
+        Err(_) => ("⚠ can't extract".to_string(), if selected { c64::BG } else { c64::WARN }),
+    };
+    painter.text(pos2(right, cy), Align2::RIGHT_CENTER, &status, mono.clone(), status_col);
+
+    // Detail, right-aligned just left of the status column.
+    let detail_x = right - 150.0;
+    if !node.detail.is_empty() {
+        painter.text(pos2(detail_x, cy), Align2::RIGHT_CENTER, &node.detail, mono.clone(), dim_col);
+    }
+
+    // Name, left-aligned and truncated to its zone.
+    let name_zone = (detail_x - 110.0) - name_x;
+    let max_chars = (name_zone / 7.9).max(4.0) as usize;
+    let name = if node.name.chars().count() > max_chars {
+        let mut s: String = node.name.chars().take(max_chars.saturating_sub(1)).collect();
+        s.push('…');
+        s
+    } else {
+        node.name.clone()
+    };
+    painter.text(pos2(name_x, cy), Align2::LEFT_CENTER, &name, mono, text_col);
+
+    let resp = resp.on_hover_text("double-click to extract");
+    (resp.clicked(), resp.double_clicked())
 }
 
 /// A classic hex + ASCII dump of up to `cap` bytes, 16 per line.
@@ -709,9 +968,16 @@ fn disk_nodes(disk: &Disk) -> (String, Vec<Node>) {
     let mut nodes = Vec::new();
     for e in &entries {
         let (splat, lock) = e.flags();
+        let flags = format!("{splat}{lock}");
+        let detail = if flags.trim().is_empty() {
+            format!("{} blk", e.blocks)
+        } else {
+            format!("{} blk  {}", e.blocks, flags.trim())
+        };
         nodes.push(Node {
             name: e.name.clone(),
-            detail: format!("{} blk  {}{}{}", e.blocks, splat, e.file_type.mnemonic(), lock),
+            badge: e.file_type.mnemonic().to_string(),
+            detail,
             data: disk.read_entry(e).map_err(|x| x.to_string()),
         });
     }
@@ -747,7 +1013,8 @@ fn open_path(path: &Path) -> Result<Opened, String> {
         files
             .into_iter()
             .map(|f| Node {
-                detail: format!("{} bytes  {}", f.data.len(), f.file_type.mnemonic()),
+                badge: f.file_type.mnemonic().to_string(),
+                detail: format!("{} bytes", f.data.len()),
                 name: f.name,
                 data: Ok(f.data),
             })
@@ -768,6 +1035,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
                 .map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|e| Node {
+                    badge: e.file_type.mnemonic().to_string(),
                     detail: format!("{} bytes  {}", e.orig_size, e.method.label()),
                     data: e.decode().map_err(|x| x.to_string()),
                     name: e.name,
@@ -780,6 +1048,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
                 .map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|e| Node {
+                    badge: String::new(),
                     detail: format!("{} → {} bytes  {}", e.compressed_size, e.original_size, e.method_str()),
                     data: e.decode().map_err(|x| x.to_string()),
                     name: e.name,
@@ -796,6 +1065,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
                 .map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|f| Node {
+                    badge: String::new(),
                     detail: format!("{} bytes", f.content.len()),
                     data: Ok(f.content),
                     name: f.name,
@@ -851,6 +1121,9 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Sector64",
         options,
-        Box::new(move |_cc| Ok(Box::new(App::new(initial)))),
+        Box::new(move |cc| {
+            apply_c64_theme(&cc.egui_ctx);
+            Ok(Box::new(App::new(initial)))
+        }),
     )
 }
