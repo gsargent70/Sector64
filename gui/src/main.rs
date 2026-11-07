@@ -160,6 +160,97 @@ fn apply_c64_theme(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// 8×8 pixel-art button icons (`#` = ink, anything else = transparent),
+/// doubled to 16×16 so they render as chunky C64-style pixels beside 16px text.
+mod art {
+    pub const FOLDER: [&str; 8] = [
+        "........", ".###....", "######..", "#.....#.", "#.....#.", "#.....#.",
+        "########", "........",
+    ];
+    pub const PLUS: [&str; 8] = [
+        "........", "...##...", "...##...", "########", "########", "...##...",
+        "...##...", "........",
+    ];
+    pub const FLOPPY: [&str; 8] = [
+        "########", "#..##..#", "#..##..#", "#......#", "#.####.#", "#.#..#.#",
+        "#.####.#", "########",
+    ];
+    pub const DOWN: [&str; 8] = [
+        "...##...", "...##...", "...##...", "...##...", ".######.", "..####..",
+        "...##...", "........",
+    ];
+    pub const CHECK: [&str; 8] = [
+        "........", "......#.", ".....##.", "#...##..", "##.##...", ".###....",
+        "..#.....", "........",
+    ];
+    pub const PLAY: [&str; 8] = [
+        "........", "..#.....", "..##....", "..###...", "..####..", "..###...",
+        "..##....", "..#.....",
+    ];
+    pub const TRASH: [&str; 8] = [
+        "..####..", "########", "........", ".######.", ".#.##.#.", ".#.##.#.",
+        ".######.", "..####..",
+    ];
+    pub const PENCIL: [&str; 8] = [
+        "......##", ".....###", "....###.", "...###..", "..###...", ".###....",
+        "###.....", "#.......",
+    ];
+}
+
+/// Button-icon textures, built once from the pixel art.
+#[derive(Clone)]
+struct Icons {
+    folder: egui::TextureHandle,
+    plus: egui::TextureHandle,
+    floppy: egui::TextureHandle,
+    down: egui::TextureHandle,
+    check: egui::TextureHandle,
+    play: egui::TextureHandle,
+    trash: egui::TextureHandle,
+    pencil: egui::TextureHandle,
+}
+
+impl Icons {
+    fn load(ctx: &egui::Context) -> Self {
+        let mk = |name: &str, a: &[&str; 8]| {
+            ctx.load_texture(name, pixel_image(a, c64::BRIGHT), egui::TextureOptions::NEAREST)
+        };
+        Icons {
+            folder: mk("i_folder", &art::FOLDER),
+            plus: mk("i_plus", &art::PLUS),
+            floppy: mk("i_floppy", &art::FLOPPY),
+            down: mk("i_down", &art::DOWN),
+            check: mk("i_check", &art::CHECK),
+            play: mk("i_play", &art::PLAY),
+            trash: mk("i_trash", &art::TRASH),
+            pencil: mk("i_pencil", &art::PENCIL),
+        }
+    }
+}
+
+/// Turn an 8×8 pixel-art grid into a 16×16 `ColorImage` (each cell a 2×2 block).
+fn pixel_image(grid: &[&str; 8], ink: Color32) -> egui::ColorImage {
+    let mut pixels = vec![Color32::TRANSPARENT; 16 * 16];
+    for (y, row) in grid.iter().enumerate() {
+        for (x, ch) in row.chars().enumerate().take(8) {
+            if ch == '#' {
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        pixels[(y * 2 + dy) * 16 + (x * 2 + dx)] = ink;
+                    }
+                }
+            }
+        }
+    }
+    egui::ColorImage { size: [16, 16], pixels }
+}
+
+/// A 16×16-icon button carrying `label` text.
+fn icon_button<'a>(tex: &egui::TextureHandle, label: &'a str) -> egui::Button<'a> {
+    let img = egui::Image::new(egui::load::SizedTexture::new(tex.id(), egui::vec2(16.0, 16.0)));
+    egui::Button::image_and_text(img, label)
+}
+
 /// The accent colour for a file-type mnemonic badge.
 fn badge_color(mnemonic: &str) -> Color32 {
     match mnemonic {
@@ -213,6 +304,8 @@ struct App {
     // preview/validation pane
     hex_cache: Option<(usize, String)>,
     validation: String,
+    // button-icon textures, built lazily on the first frame
+    icons: Option<Icons>,
 }
 
 /// Actions collected from the UI and applied after the frame (keeps egui
@@ -590,6 +683,10 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut acts: Vec<Act> = Vec::new();
+        if self.icons.is_none() {
+            self.icons = Some(Icons::load(ctx));
+        }
+        let ic = self.icons.clone().unwrap();
         let editable = self.editable();
         let is_disk = self.disk.is_some();
         let is_archive = self.archive.is_some();
@@ -633,7 +730,7 @@ impl eframe::App for App {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("◆ SECTOR64").heading().color(c64::ACCENT).strong());
                 ui.separator();
-                if ui.button("📂 Open…").clicked() {
+                if ui.add(icon_button(&ic.folder, "Open…")).clicked() {
                     acts.push(Act::OpenDialog);
                 }
                 ui.menu_button("New ▾", |ui| {
@@ -667,7 +764,7 @@ impl eframe::App for App {
                         .hint_text("path to a disk image or archive")
                         .desired_width(f32::INFINITY),
                 );
-                if ui.button("Load").clicked() {
+                if ui.add(icon_button(&ic.play, "Load")).clicked() {
                     acts.push(Act::Load);
                 }
             });
@@ -697,16 +794,16 @@ impl eframe::App for App {
                         .hint_text("folder to extract into")
                         .desired_width(220.0),
                 );
-                if ui.button("…").on_hover_text("choose output folder").clicked() {
+                if ui.add(icon_button(&ic.folder, "")).on_hover_text("choose output folder").clicked() {
                     acts.push(Act::PickOutDir);
                 }
                 if ui
-                    .add_enabled(sel_extractable, egui::Button::new("⬇ Extract selected"))
+                    .add_enabled(sel_extractable, icon_button(&ic.down, "Extract selected"))
                     .clicked()
                 {
                     acts.push(Act::ExtractSelected);
                 }
-                if ui.add_enabled(any_extractable, egui::Button::new("⬇ Extract all")).clicked() {
+                if ui.add_enabled(any_extractable, icon_button(&ic.down, "Extract all")).clicked() {
                     acts.push(Act::ExtractAll);
                 }
             });
@@ -720,7 +817,7 @@ impl eframe::App for App {
                             ui.selectable_value(&mut add_type, 1, "seq");
                             ui.selectable_value(&mut add_type, 2, "usr");
                         });
-                    if ui.button("＋ Add file…").clicked() {
+                    if ui.add(icon_button(&ic.plus, "Add file…")).clicked() {
                         acts.push(Act::AddFile);
                     }
                     ui.separator();
@@ -729,23 +826,23 @@ impl eframe::App for App {
                             .hint_text("new name")
                             .desired_width(120.0),
                     );
-                    if ui.add_enabled(has_sel, egui::Button::new("Rename")).clicked() {
+                    if ui.add_enabled(has_sel, icon_button(&ic.pencil, "Rename")).clicked() {
                         acts.push(Act::Rename);
                     }
                     let del = if is_archive { "Remove" } else { "Delete" };
-                    if ui.add_enabled(has_sel, egui::Button::new(del)).clicked() {
+                    if ui.add_enabled(has_sel, icon_button(&ic.trash, del)).clicked() {
                         acts.push(Act::Delete);
                     }
                     ui.separator();
                     if is_disk {
-                        if ui.button("💾 Save").clicked() {
+                        if ui.add(icon_button(&ic.floppy, "Save")).clicked() {
                             acts.push(Act::Save);
                         }
-                        if ui.button("Save As…").clicked() {
+                        if ui.add(icon_button(&ic.floppy, "Save As…")).clicked() {
                             acts.push(Act::SaveAs);
                         }
                     }
-                    if is_archive && ui.button("💾 Save archive as…").clicked() {
+                    if is_archive && ui.add(icon_button(&ic.floppy, "Save archive as…")).clicked() {
                         acts.push(Act::SaveArchiveAs);
                     }
                 });
@@ -770,7 +867,7 @@ impl eframe::App for App {
             .default_width(320.0)
             .show(ctx, |ui| {
                 if is_disk {
-                    if ui.button("✔ Validate disk").clicked() {
+                    if ui.add(icon_button(&ic.check, "Validate disk")).clicked() {
                         acts.push(Act::Validate);
                     }
                     if !validation.is_empty() {
