@@ -1,13 +1,14 @@
-//! Wraptor-3 container checks against a real archive.
-//!
-//! The Wraptor compression is not decoded, so this validates the container
-//! walk: the entry count and that the names parse. The sample is not committed;
-//! point `SECTOR64_SAMPLES` at a directory holding it (or use
-//! `~/Downloads/Sector64 Test Files`). Skips cleanly when absent.
+//! Wraptor-3 checks against a real archive: the container walk (entry count and
+//! names) and, when the plaintext members are available, byte-for-byte
+//! decompression. The sample is not committed; point `SECTOR64_SAMPLES` at a
+//! directory holding the `.wr3` (or use `~/Downloads/Sector64 Test Files`).
+//! Point `WR3_PLAINTEXT` at a directory of the extracted members (named
+//! `<member>.seq`/`.del`/`.prg`, lower-cased) to enable the exact check. Skips
+//! cleanly when absent.
 
 use std::path::PathBuf;
 
-use sector64::parse_wr3;
+use sector64::{decompress_wr3, parse_wr3};
 
 fn samples_dir() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("SECTOR64_SAMPLES") {
@@ -42,5 +43,34 @@ fn loadstar_wr3() {
     // The compressed payloads plus their markers/names tile the whole file.
     let total: usize = entries.iter().map(|e| e.compressed.len()).sum();
     assert!(total > 0 && total < bytes.len());
-    eprintln!("ok: {name} ({} entries)", entries.len());
+
+    // Decompression: all members decode without panicking and yield content.
+    let files = decompress_wr3(&bytes).unwrap_or_else(|e| panic!("decompress_wr3: {e}"));
+    assert_eq!(files.len(), 43, "decoded member count");
+    assert!(files.iter().all(|f| !f.content.is_empty()), "a member decoded empty");
+
+    // When the extracted plaintext members are available, require a
+    // byte-for-byte match for every one present.
+    if let Some(pt) = plaintext_dir() {
+        let mut checked = 0;
+        for f in &files {
+            let lower = f.name.to_ascii_lowercase();
+            for suffix in [".seq", ".del", ".prg", ""] {
+                let p = pt.join(format!("{lower}{suffix}"));
+                if let Ok(plain) = std::fs::read(&p) {
+                    assert_eq!(f.content, plain, "member {:?} differs from {p:?}", f.name);
+                    checked += 1;
+                    break;
+                }
+            }
+        }
+        assert!(checked > 0, "WR3_PLAINTEXT set but no members matched");
+        eprintln!("ok: {name} — {checked} members decode byte-for-byte");
+    }
+    eprintln!("ok: {name} ({} entries, {} decoded)", entries.len(), files.len());
+}
+
+fn plaintext_dir() -> Option<PathBuf> {
+    let p = PathBuf::from(std::env::var("WR3_PLAINTEXT").ok()?);
+    p.is_dir().then_some(p)
 }
