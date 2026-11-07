@@ -806,6 +806,8 @@ impl eframe::App for App {
                     });
                 });
 
+                ui.separator();
+
                 ui.menu_button("Extract", |ui| {
                     ui.set_min_width(170.0);
                     if ui
@@ -824,20 +826,6 @@ impl eframe::App for App {
                     }
                 });
             });
-            if !self.title.is_empty() {
-                egui::Frame::none()
-                    .fill(c64::BG_PANEL)
-                    .stroke(egui::Stroke::new(1.0, c64::ACCENT_DIM))
-                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(&self.title).color(c64::BRIGHT).strong(),
-                            )
-                            .truncate(),
-                        );
-                    });
-            }
             ui.add_space(2.0);
         });
 
@@ -926,6 +914,23 @@ impl eframe::App for App {
                     );
                 });
                 return;
+            }
+            // Disk/archive header, shown as a fixed title row above the files
+            // (like a 1541 directory's header line).
+            if !self.title.is_empty() {
+                egui::Frame::none()
+                    .fill(c64::BG_PANEL)
+                    .stroke(egui::Stroke::new(1.0, c64::ACCENT_DIM))
+                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&self.title).color(c64::BRIGHT).strong(),
+                            )
+                            .truncate(),
+                        );
+                    });
+                ui.add_space(2.0);
             }
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (i, node) in self.nodes.iter().enumerate() {
