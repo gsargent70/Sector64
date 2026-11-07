@@ -938,10 +938,22 @@ impl eframe::App for App {
                     });
                 ui.add_space(2.0);
             }
+            // Auto-pad columns to the widest row so they line up.
+            let cols = Cols {
+                detail_chars: self.nodes.iter().map(|n| n.detail.chars().count()).max().unwrap_or(0),
+                size_digits: self
+                    .nodes
+                    .iter()
+                    .filter_map(|n| n.data.as_ref().ok())
+                    .map(|d| d.len().to_string().len())
+                    .max()
+                    .unwrap_or(1)
+                    .max(1),
+            };
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (i, node) in self.nodes.iter().enumerate() {
                     let sel = self.selected == Some(i);
-                    let (clicked, double) = file_row(ui, node, sel, i);
+                    let (clicked, double) = file_row(ui, node, sel, i, cols);
                     if clicked || double {
                         acts.push(Act::Select(i));
                     }
@@ -1010,8 +1022,22 @@ impl eframe::App for App {
 /// Draw one file as a full-width, painted, selectable row: a colour-coded type
 /// badge, the name, its detail, and a right-aligned size (or an error). Returns
 /// `(clicked, double_clicked)`.
-fn file_row(ui: &mut egui::Ui, node: &Node, selected: bool, index: usize) -> (bool, bool) {
-    use egui::{pos2, vec2, Align2, Color32, FontId, Rect, Rounding, Sense};
+/// Fixed column widths (in characters) for the listing, computed once per
+/// frame from the widest row so the columns line up.
+#[derive(Clone, Copy)]
+struct Cols {
+    detail_chars: usize,
+    size_digits: usize,
+}
+
+fn file_row(
+    ui: &mut egui::Ui,
+    node: &Node,
+    selected: bool,
+    index: usize,
+    cols: Cols,
+) -> (bool, bool) {
+    use egui::{pos2, vec2, Align2, FontId, Rect, Rounding, Sense};
     let row_h = 24.0;
     let mono = FontId::monospace(16.0);
     // Monospace advance width, measured so layout is correct for either the C64
@@ -1047,24 +1073,33 @@ fn file_row(ui: &mut egui::Ui, node: &Node, selected: bool, index: usize) -> (bo
         name_x = brect.right() + pad;
     }
 
-    // Right-aligned size / error status.
-    let right = rect.right() - pad;
-    let (status, status_col): (String, Color32) = match &node.data {
-        Ok(d) => (format!("{} bytes", d.len()), dim_col),
-        Err(_) => ("⚠ can't extract".to_string(), if selected { c64::BG } else { c64::WARN }),
-    };
-    painter.text(pos2(right, cy), Align2::RIGHT_CENTER, &status, mono.clone(), status_col);
-    let status_w = cw * status.chars().count() as f32;
+    // Fixed, left-justified columns. The size column holds a
+    // right-padded number so the digits (and the "bytes"/"blk" units) line up;
+    // the detail column is left-aligned at a fixed x computed from the widest
+    // row, so every row's columns align regardless of content.
+    let right_edge = rect.right() - pad;
+    let size_field_w = (cols.size_digits + 6) as f32 * cw; // "NNNNN bytes"
+    let status_x = right_edge - size_field_w;
+    let detail_field_w = cols.detail_chars as f32 * cw;
+    let detail_x = status_x - 2.0 * cw - detail_field_w;
 
-    // Detail, right-aligned in the gap just left of the status column.
-    let detail_x = right - status_w - 2.0 * cw;
-    if !node.detail.is_empty() {
-        painter.text(pos2(detail_x, cy), Align2::RIGHT_CENTER, &node.detail, mono.clone(), dim_col);
+    match &node.data {
+        Ok(d) => {
+            let status = format!("{:>w$} bytes", d.len(), w = cols.size_digits);
+            painter.text(pos2(status_x, cy), Align2::LEFT_CENTER, status, mono.clone(), dim_col);
+        }
+        Err(_) => {
+            let col = if selected { c64::BG } else { c64::WARN };
+            painter.text(pos2(right_edge, cy), Align2::RIGHT_CENTER, "⚠ can't extract", mono.clone(), col);
+        }
     }
-    let detail_w = cw * node.detail.chars().count() as f32;
+
+    if !node.detail.is_empty() {
+        painter.text(pos2(detail_x, cy), Align2::LEFT_CENTER, &node.detail, mono.clone(), dim_col);
+    }
 
     // Name, left-aligned and truncated to the remaining zone.
-    let name_end = detail_x - detail_w - 2.0 * cw;
+    let name_end = detail_x - cw;
     let max_chars = ((name_end - name_x) / cw).max(3.0) as usize;
     let name = if node.name.chars().count() > max_chars {
         let mut s: String = node.name.chars().take(max_chars.saturating_sub(1)).collect();
@@ -1136,14 +1171,16 @@ enum Opened {
 fn disk_nodes(disk: &Disk) -> (String, Vec<Node>) {
     let header = disk.header();
     let entries = disk.directory().unwrap_or_default();
+    // Width of the widest block count, so the numbers right-align in the column.
+    let bw = entries.iter().map(|e| e.blocks).max().unwrap_or(0).to_string().len();
     let mut nodes = Vec::new();
     for e in &entries {
         let (splat, lock) = e.flags();
         let flags = format!("{splat}{lock}");
         let detail = if flags.trim().is_empty() {
-            format!("{} blk", e.blocks)
+            format!("{:>bw$} blk", e.blocks)
         } else {
-            format!("{} blk  {}", e.blocks, flags.trim())
+            format!("{:>bw$} blk  {}", e.blocks, flags.trim())
         };
         nodes.push(Node {
             name: e.name.clone(),
