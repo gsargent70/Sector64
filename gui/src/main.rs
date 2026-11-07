@@ -289,6 +289,10 @@ struct App {
     // editing
     rename_to: String,
     add_type: usize, // 0=prg,1=seq,2=usr
+    // inline rename: index of the row whose name is being edited, and whether
+    // the edit field should grab focus this frame
+    renaming: Option<usize>,
+    rename_focus: bool,
     // bottom bar
     out_dir: String,
     status: String,
@@ -352,6 +356,7 @@ impl App {
         self.title.clear();
         self.hex_cache = None;
         self.validation.clear();
+        self.renaming = None;
         match open_path(path) {
             Ok(Opened::Disk(disk)) => {
                 self.disk = Some(EditDisk { disk, path: Some(path.to_path_buf()), dirty: false });
@@ -400,6 +405,8 @@ impl App {
                 self.selected = None;
             }
         }
+        // The list was rebuilt; any in-place rename is finished.
+        self.renaming = None;
     }
 
     fn apply(&mut self, act: Act) {
@@ -701,6 +708,7 @@ impl eframe::App for App {
         let validation = self.validation.clone();
 
         // Context flags that drive which buttons are enabled.
+        let sel_now = self.selected;
         let has_sel = self.selected.is_some();
         let sel_extractable =
             self.selected.and_then(|i| self.nodes.get(i)).map(|n| n.data.is_ok()).unwrap_or(false);
@@ -713,6 +721,8 @@ impl eframe::App for App {
         let mut rename_to = std::mem::take(&mut self.rename_to);
         let mut new_fmt = self.new_fmt;
         let mut add_type = self.add_type;
+        let mut renaming = self.renaming.filter(|&i| i < self.nodes.len());
+        let mut rename_focus = self.rename_focus;
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(2.0);
@@ -788,16 +798,15 @@ impl eframe::App for App {
                     }
                     ui.separator();
                     ui.add_enabled_ui(has_sel, |ui| {
-                        // Rename ▸ (needs a target name)
-                        egui::menu::menu_custom_button(ui, icon_button(&ic.pencil, "Rename ▸"), |ui| {
-                            ui.set_min_width(200.0);
-                            ui.label(egui::RichText::new("new name").color(c64::TEXT_DIM));
-                            ui.add(egui::TextEdit::singleline(&mut rename_to).desired_width(180.0));
-                            if ui.add(icon_button(&ic.pencil, "Rename")).clicked() {
-                                acts.push(Act::Rename);
-                                ui.close_menu();
+                        // Rename the selected row in place.
+                        if ui.add(icon_button(&ic.pencil, "Rename")).clicked() {
+                            if let Some(s) = sel_now {
+                                renaming = Some(s);
+                                rename_to = self.nodes[s].name.clone();
+                                rename_focus = true;
                             }
-                        });
+                            ui.close_menu();
+                        }
                         let del = if is_archive { "Remove" } else { "Delete" };
                         if ui.add(icon_button(&ic.trash, del)).clicked() {
                             acts.push(Act::Delete);
@@ -954,7 +963,22 @@ impl eframe::App for App {
                 for (i, node) in self.nodes.iter().enumerate() {
                     let sel = self.selected == Some(i);
                     let extractable = node.data.is_ok();
-                    let resp = file_row(ui, node, sel, i, cols);
+                    let editing = renaming == Some(i);
+                    let edit = if editing { Some(&mut rename_to) } else { None };
+                    let (resp, result) = file_row(ui, node, sel, i, cols, edit, editing && rename_focus);
+                    if editing {
+                        rename_focus = false;
+                        match result {
+                            RenameEdit::Commit => {
+                                acts.push(Act::Select(i));
+                                acts.push(Act::Rename);
+                                renaming = None;
+                            }
+                            RenameEdit::Cancel => renaming = None,
+                            RenameEdit::None => {}
+                        }
+                        continue; // a row being renamed takes no other interaction
+                    }
                     if resp.clicked() {
                         acts.push(Act::Select(i));
                     }
@@ -972,22 +996,12 @@ impl eframe::App for App {
                         }
                         if editable {
                             ui.separator();
-                            egui::menu::menu_custom_button(
-                                ui,
-                                icon_button(&ic.pencil, "Rename ▸"),
-                                |ui| {
-                                    ui.set_min_width(200.0);
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut rename_to)
-                                            .hint_text("new name")
-                                            .desired_width(180.0),
-                                    );
-                                    if ui.add(icon_button(&ic.pencil, "Rename")).clicked() {
-                                        acts.push(Act::Rename);
-                                        ui.close_menu();
-                                    }
-                                },
-                            );
+                            if ui.add(icon_button(&ic.pencil, "Rename")).clicked() {
+                                renaming = Some(i);
+                                rename_to = node.name.clone();
+                                rename_focus = true;
+                                ui.close_menu();
+                            }
                             let del = if is_archive { "Remove" } else { "Delete" };
                             if ui.add(icon_button(&ic.trash, del)).clicked() {
                                 acts.push(Act::Delete);
@@ -1014,7 +1028,6 @@ impl eframe::App for App {
         // Keyboard shortcuts. Single-key actions are suppressed while a text
         // field has focus; Ctrl combos always apply.
         let typing = ctx.wants_keyboard_input();
-        let sel_now = self.selected;
         let n = self.nodes.len();
         ctx.input(|i| {
             if i.modifiers.command && i.key_pressed(egui::Key::O) {
@@ -1048,15 +1061,14 @@ impl eframe::App for App {
         self.rename_to = rename_to;
         self.new_fmt = new_fmt;
         self.add_type = add_type;
+        self.renaming = renaming;
+        self.rename_focus = rename_focus;
         for act in acts {
             self.apply(act);
         }
     }
 }
 
-/// Draw one file as a full-width, painted, selectable row: a colour-coded type
-/// badge, the name, its detail, and a right-aligned size (or an error). Returns
-/// `(clicked, double_clicked)`.
 /// Fixed column widths (in characters) for the listing, computed once per
 /// frame from the widest row so the columns line up.
 #[derive(Clone, Copy)]
@@ -1065,13 +1077,28 @@ struct Cols {
     size_digits: usize,
 }
 
+/// Outcome of an in-place name edit on a row.
+enum RenameEdit {
+    /// Not editing this row.
+    None,
+    /// Enter pressed — apply the new name.
+    Commit,
+    /// Focus lost or Escape — discard.
+    Cancel,
+}
+
+/// Draw one file as a full-width, painted, selectable row: a colour-coded type
+/// badge, the name, its detail, and a right-aligned size (or an error). When
+/// `edit` is `Some`, the name is shown as an editable field instead.
 fn file_row(
     ui: &mut egui::Ui,
     node: &Node,
     selected: bool,
     index: usize,
     cols: Cols,
-) -> egui::Response {
+    edit: Option<&mut String>,
+    focus: bool,
+) -> (egui::Response, RenameEdit) {
     use egui::{pos2, vec2, Align2, FontId, Rect, Rounding, Sense};
     let row_h = 24.0;
     let mono = FontId::monospace(16.0);
@@ -1081,8 +1108,8 @@ fn file_row(
 
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
 
-    // Row background: selection, hover, or faint stripe.
-    let painter = ui.painter();
+    // Cloned painter so the `ui` is free for an inline TextEdit widget later.
+    let painter = ui.painter().clone();
     if selected {
         painter.rect_filled(rect, Rounding::ZERO, c64::ACCENT);
     } else if resp.hovered() {
@@ -1133,8 +1160,34 @@ fn file_row(
         painter.text(pos2(detail_x, cy), Align2::LEFT_CENTER, &node.detail, mono.clone(), dim_col);
     }
 
-    // Name, left-aligned and truncated to the remaining zone.
+    // Name zone (left-aligned), or an inline editable field when renaming.
     let name_end = detail_x - cw;
+    if let Some(buf) = edit {
+        let name_rect = Rect::from_min_max(
+            pos2(name_x, rect.top() + 2.0),
+            pos2(name_end.max(name_x + 4.0 * cw), rect.bottom() - 2.0),
+        );
+        let te = ui.put(
+            name_rect,
+            egui::TextEdit::singleline(buf)
+                .font(FontId::monospace(16.0))
+                .margin(egui::vec2(2.0, 0.0)),
+        );
+        if focus {
+            te.request_focus();
+        }
+        let result = if te.lost_focus() {
+            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                RenameEdit::Commit
+            } else {
+                RenameEdit::Cancel
+            }
+        } else {
+            RenameEdit::None
+        };
+        return (resp, result);
+    }
+
     let max_chars = ((name_end - name_x) / cw).max(3.0) as usize;
     let name = if node.name.chars().count() > max_chars {
         let mut s: String = node.name.chars().take(max_chars.saturating_sub(1)).collect();
@@ -1145,7 +1198,7 @@ fn file_row(
     };
     painter.text(pos2(name_x, cy), Align2::LEFT_CENTER, &name, mono, text_col);
 
-    resp.on_hover_text("double-click to extract · right-click for actions")
+    (resp.on_hover_text("double-click to extract · right-click for actions"), RenameEdit::None)
 }
 
 /// A classic hex + ASCII dump of up to `cap` bytes, 16 per line.
