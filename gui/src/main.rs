@@ -195,6 +195,10 @@ mod art {
         "......##", ".....###", "....###.", "...###..", "..###...", ".###....",
         "###.....", "#.......",
     ];
+    pub const DOC: [&str; 8] = [
+        "######..", "#....#..", "#.##.#..", "#....#..", "#.##.#..", "#....#..",
+        "#.##.#..", "######..",
+    ];
 }
 
 /// Button-icon textures, built once from the pixel art.
@@ -208,6 +212,7 @@ struct Icons {
     play: egui::TextureHandle,
     trash: egui::TextureHandle,
     pencil: egui::TextureHandle,
+    doc: egui::TextureHandle,
 }
 
 impl Icons {
@@ -224,6 +229,7 @@ impl Icons {
             play: mk("i_play", &art::PLAY),
             trash: mk("i_trash", &art::TRASH),
             pencil: mk("i_pencil", &art::PENCIL),
+            doc: mk("i_doc", &art::DOC),
         }
     }
 }
@@ -733,7 +739,7 @@ impl eframe::App for App {
                 if ui.add(icon_button(&ic.folder, "Open…")).clicked() {
                     acts.push(Act::OpenDialog);
                 }
-                ui.menu_button("New ▾", |ui| {
+                egui::menu::menu_custom_button(ui, icon_button(&ic.doc, "New ▾"), |ui| {
                     ui.set_min_width(200.0);
                     ui.label(egui::RichText::new("New disk image").color(c64::TEXT_DIM));
                     ui.horizontal(|ui| {
