@@ -48,6 +48,58 @@ mod c64 {
     pub const OK: Color32 = Color32::from_rgb(0x8c, 0xc0, 0x70);
 }
 
+/// Install the "C64 Pro Mono" PETSCII font as the UI typeface when it is
+/// present on the system. The font is loaded from the user's installed copy at
+/// runtime (not bundled), so when it is absent the app keeps the built-in
+/// monospace. Returns true if the PETSCII font was installed.
+fn load_c64_font(ctx: &egui::Context) -> bool {
+    let Some(bytes) = find_c64_font() else {
+        return false;
+    };
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert("c64".to_owned(), egui::FontData::from_owned(bytes));
+    for family in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
+        fonts.families.entry(family).or_default().insert(0, "c64".to_owned());
+    }
+    ctx.set_fonts(fonts);
+    true
+}
+
+/// Locate the "C64 Pro Mono" TrueType file, via fontconfig first and then a few
+/// common font directories. Only a path that actually names a C64 font is used
+/// (fontconfig falls back to a default otherwise).
+fn find_c64_font() -> Option<Vec<u8>> {
+    if let Ok(out) = std::process::Command::new("fc-match")
+        .args(["--format=%{file}", "C64 Pro Mono"])
+        .output()
+    {
+        if out.status.success() {
+            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if p.to_lowercase().contains("c64") {
+                if let Ok(b) = std::fs::read(&p) {
+                    return Some(b);
+                }
+            }
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let dirs = [
+        format!("{home}/.local/share/fonts"),
+        format!("{home}/.fonts"),
+        "/usr/share/fonts".into(),
+        "/usr/local/share/fonts".into(),
+    ];
+    let names = ["C64_Pro_Mono-STYLE.ttf", "C64 Pro Mono.ttf", "C64_Pro_Mono.ttf"];
+    for dir in dirs {
+        for name in names {
+            if let Ok(b) = std::fs::read(format!("{dir}/{name}")) {
+                return Some(b);
+            }
+        }
+    }
+    None
+}
+
 /// Apply the retro C64 theme: monospace throughout, dark-blue panels,
 /// light-blue text, square (un-rounded) widgets, a light-blue selection.
 fn apply_c64_theme(ctx: &egui::Context) {
@@ -1122,6 +1174,7 @@ fn main() -> eframe::Result<()> {
         "Sector64",
         options,
         Box::new(move |cc| {
+            load_c64_font(&cc.egui_ctx);
             apply_c64_theme(&cc.egui_ctx);
             Ok(Box::new(App::new(initial)))
         }),
