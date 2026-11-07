@@ -183,16 +183,20 @@ job with those failure modes designed out:
   decoders above). Other LHA methods still return their `Unsupported…Method`
   error.
 
-- **Wraptor 3** (`parse_wr3` → `Wr3Entry`, `s64wr3`): the `.wr3` archive. Each
-  entry is introduced by the marker `FF "BL" FF`, its NUL-terminated name, and
-  its compressed data; `parse_wr3` recovers the entries by scanning for markers
+- **Wraptor 3** (`parse_wr3` → `Wr3Entry`, `decompress_wr3` → `Wr3File`,
+  `s64wr3`): the `.wr3` archive. Each entry is introduced by the marker
+  `FF "BL" FF`, its NUL-terminated name, a one-byte file-type field, and its
+  compressed bitstream; `parse_wr3` recovers the entries by scanning for markers
   and validating the name after each (the marker does not appear inside the
-  compressed streams). Lists real archives correctly (Loadstar #128, 43
-  members). The Wraptor compression is a custom scheme and is not decoded, so
-  the payload is exposed as-is — the decoder is the next layer.
+  compressed streams). **Decompression is implemented**: a custom LZ bitstream
+  (MSB-first, 4 KiB sliding window, growing index width) recovered by reverse-
+  engineering the original 6502 `Wraptor-3.0` decoder. Members share one window,
+  so `decompress_wr3` decodes the whole archive together; each decoded stream
+  carries a nine-byte per-file header before its content. Validated byte-for-byte
+  against all seventeen supplied plaintext members of Loadstar #128 (all 43
+  decode). `s64wr3 extract <archive> [out-dir]` writes the files out.
 
-Not yet: Wraptor decompression, and GEOS/graphics formats. Those are the next
-layers.
+Not yet: GEOS/graphics formats. Those are the next layers.
 
 ## GUI
 
@@ -293,8 +297,8 @@ against a real disk.
 | `src/bin/s64cvt.rs` | CLI: describe a GEOS CVT container |
 | `src/tap.rs`       | TAP datasette pulse-stream decode |
 | `src/bin/s64tap.rs` | CLI: summarise a TAP tape image |
-| `src/wr3.rs`       | Wraptor-3 archive container walk |
-| `src/bin/s64wr3.rs` | CLI: list a Wraptor-3 archive |
+| `src/wr3.rs`       | Wraptor-3 archive container walk + LZ decompressor |
+| `src/bin/s64wr3.rs` | CLI: list / extract a Wraptor-3 archive |
 | `src/petscii.rs`   | minimal PETSCII→UTF-8 for display |
 | `src/error.rs`     | error type (every malformed input is a recoverable error) |
 | `src/bin/s64ls.rs` | CLI directory listing |

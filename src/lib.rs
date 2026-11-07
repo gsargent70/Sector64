@@ -45,6 +45,6 @@ pub use directory::{Entry, FileType};
 pub use g64::to_d64 as g64_to_d64;
 pub use lha::{parse_lha, LhaEntry};
 pub use tap::{parse_tap, TapImage};
-pub use wr3::{parse_wr3, Wr3Entry};
+pub use wr3::{decompress_wr3, parse_wr3, Wr3Entry, Wr3File};
 pub use disk::{Disk, Header, RelFile, ValidationReport};
 pub use error::{Error, Result};
