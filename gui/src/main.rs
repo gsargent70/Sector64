@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use sector64::{
-    parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64, parse_wr3,
+    parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64,
     write_lbr, write_lnx, write_p00, write_t64, Disk, FileType, ImportFile,
 };
 
@@ -791,13 +791,14 @@ fn open_path(path: &Path) -> Result<Opened, String> {
         "t64" => ("T64 tape archive", import_nodes(parse_t64(&bytes).map_err(|e| e.to_string())?)),
         "lnx" => ("Lynx archive", import_nodes(parse_lnx(&bytes).map_err(|e| e.to_string())?)),
         "wr3" => {
-            let nodes = parse_wr3(&bytes)
+            // Members share one sliding window, so decode the whole archive.
+            let nodes = sector64::decompress_wr3(&bytes)
                 .map_err(|e| e.to_string())?
                 .into_iter()
-                .map(|e| Node {
-                    detail: format!("{} bytes packed", e.compressed.len()),
-                    data: Err("Wraptor compression not decoded".to_string()),
-                    name: e.name,
+                .map(|f| Node {
+                    detail: format!("{} bytes", f.content.len()),
+                    data: Ok(f.content),
+                    name: f.name,
                 })
                 .collect();
             ("Wraptor-3 archive", nodes)
