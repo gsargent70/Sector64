@@ -953,13 +953,48 @@ impl eframe::App for App {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (i, node) in self.nodes.iter().enumerate() {
                     let sel = self.selected == Some(i);
-                    let (clicked, double) = file_row(ui, node, sel, i, cols);
-                    if clicked || double {
+                    let extractable = node.data.is_ok();
+                    let resp = file_row(ui, node, sel, i, cols);
+                    if resp.clicked() {
                         acts.push(Act::Select(i));
                     }
-                    if double {
+                    if resp.double_clicked() {
+                        acts.push(Act::Select(i));
                         acts.push(Act::ExtractSelected);
                     }
+                    // Right-click actions for this file.
+                    resp.context_menu(|ui| {
+                        acts.push(Act::Select(i)); // the menu acts on this row
+                        ui.set_min_width(150.0);
+                        if ui.add_enabled(extractable, icon_button(&ic.down, "Extract")).clicked() {
+                            acts.push(Act::ExtractSelected);
+                            ui.close_menu();
+                        }
+                        if editable {
+                            ui.separator();
+                            egui::menu::menu_custom_button(
+                                ui,
+                                icon_button(&ic.pencil, "Rename ▸"),
+                                |ui| {
+                                    ui.set_min_width(200.0);
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut rename_to)
+                                            .hint_text("new name")
+                                            .desired_width(180.0),
+                                    );
+                                    if ui.add(icon_button(&ic.pencil, "Rename")).clicked() {
+                                        acts.push(Act::Rename);
+                                        ui.close_menu();
+                                    }
+                                },
+                            );
+                            let del = if is_archive { "Remove" } else { "Delete" };
+                            if ui.add(icon_button(&ic.trash, del)).clicked() {
+                                acts.push(Act::Delete);
+                                ui.close_menu();
+                            }
+                        }
+                    });
                 }
             });
         });
@@ -1036,7 +1071,7 @@ fn file_row(
     selected: bool,
     index: usize,
     cols: Cols,
-) -> (bool, bool) {
+) -> egui::Response {
     use egui::{pos2, vec2, Align2, FontId, Rect, Rounding, Sense};
     let row_h = 24.0;
     let mono = FontId::monospace(16.0);
@@ -1110,8 +1145,7 @@ fn file_row(
     };
     painter.text(pos2(name_x, cy), Align2::LEFT_CENTER, &name, mono, text_col);
 
-    let resp = resp.on_hover_text("double-click to extract");
-    (resp.clicked(), resp.double_clicked())
+    resp.on_hover_text("double-click to extract · right-click for actions")
 }
 
 /// A classic hex + ASCII dump of up to `cap` bytes, 16 per line.
