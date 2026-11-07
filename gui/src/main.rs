@@ -106,12 +106,13 @@ fn apply_c64_theme(ctx: &egui::Context) {
     use egui::{FontFamily::Monospace, FontId, Rounding, Stroke, TextStyle};
     let mut style = (*ctx.style()).clone();
 
+    // Sizes are multiples of 8 so the C64 Pro pixel grid renders crisp (2×/3×).
     style.text_styles = [
-        (TextStyle::Heading, FontId::new(19.0, Monospace)),
-        (TextStyle::Body, FontId::new(13.5, Monospace)),
-        (TextStyle::Monospace, FontId::new(13.0, Monospace)),
-        (TextStyle::Button, FontId::new(13.5, Monospace)),
-        (TextStyle::Small, FontId::new(11.0, Monospace)),
+        (TextStyle::Heading, FontId::new(24.0, Monospace)),
+        (TextStyle::Body, FontId::new(16.0, Monospace)),
+        (TextStyle::Monospace, FontId::new(16.0, Monospace)),
+        (TextStyle::Button, FontId::new(16.0, Monospace)),
+        (TextStyle::Small, FontId::new(16.0, Monospace)),
     ]
     .into();
 
@@ -892,9 +893,13 @@ impl eframe::App for App {
 /// `(clicked, double_clicked)`.
 fn file_row(ui: &mut egui::Ui, node: &Node, selected: bool, index: usize) -> (bool, bool) {
     use egui::{pos2, vec2, Align2, Color32, FontId, Rect, Rounding, Sense};
-    let row_h = 22.0;
-    let (rect, resp) =
-        ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
+    let row_h = 24.0;
+    let mono = FontId::monospace(16.0);
+    // Monospace advance width, measured so layout is correct for either the C64
+    // font or the fallback.
+    let cw = ui.fonts(|f| f.glyph_width(&mono, '0')).max(6.0);
+
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
 
     // Row background: selection, hover, or faint stripe.
     let painter = ui.painter();
@@ -908,25 +913,18 @@ fn file_row(ui: &mut egui::Ui, node: &Node, selected: bool, index: usize) -> (bo
 
     let text_col = if selected { c64::BG } else { c64::TEXT };
     let dim_col = if selected { c64::BG_PANEL } else { c64::TEXT_DIM };
-    let mono = FontId::monospace(13.0);
-    let small = FontId::monospace(11.0);
     let pad = 8.0;
     let cy = rect.center().y;
 
-    // Type badge.
+    // Type badge: a boxed, colour-coded mnemonic sized to its text.
     let mut name_x = rect.left() + pad;
     if !node.badge.is_empty() {
-        let bw = 38.0;
-        let brect = Rect::from_min_size(pos2(rect.left() + pad, rect.top() + 3.0), vec2(bw, row_h - 6.0));
+        let bw = cw * node.badge.chars().count() as f32 + 8.0;
+        let brect =
+            Rect::from_min_size(pos2(rect.left() + pad, rect.top() + 3.0), vec2(bw, row_h - 6.0));
         let bcol = if selected { c64::BG } else { badge_color(&node.badge) };
         painter.rect_stroke(brect, Rounding::ZERO, egui::Stroke::new(1.0, bcol));
-        painter.text(
-            brect.center(),
-            Align2::CENTER_CENTER,
-            node.badge.to_uppercase(),
-            small.clone(),
-            bcol,
-        );
+        painter.text(brect.center(), Align2::CENTER_CENTER, node.badge.to_uppercase(), mono.clone(), bcol);
         name_x = brect.right() + pad;
     }
 
@@ -937,16 +935,18 @@ fn file_row(ui: &mut egui::Ui, node: &Node, selected: bool, index: usize) -> (bo
         Err(_) => ("⚠ can't extract".to_string(), if selected { c64::BG } else { c64::WARN }),
     };
     painter.text(pos2(right, cy), Align2::RIGHT_CENTER, &status, mono.clone(), status_col);
+    let status_w = cw * status.chars().count() as f32;
 
-    // Detail, right-aligned just left of the status column.
-    let detail_x = right - 150.0;
+    // Detail, right-aligned in the gap just left of the status column.
+    let detail_x = right - status_w - 2.0 * cw;
     if !node.detail.is_empty() {
         painter.text(pos2(detail_x, cy), Align2::RIGHT_CENTER, &node.detail, mono.clone(), dim_col);
     }
+    let detail_w = cw * node.detail.chars().count() as f32;
 
-    // Name, left-aligned and truncated to its zone.
-    let name_zone = (detail_x - 110.0) - name_x;
-    let max_chars = (name_zone / 7.9).max(4.0) as usize;
+    // Name, left-aligned and truncated to the remaining zone.
+    let name_end = detail_x - detail_w - 2.0 * cw;
+    let max_chars = ((name_end - name_x) / cw).max(3.0) as usize;
     let name = if node.name.chars().count() > max_chars {
         let mut s: String = node.name.chars().take(max_chars.saturating_sub(1)).collect();
         s.push('…');
@@ -1166,7 +1166,7 @@ fn main() -> eframe::Result<()> {
     let initial = std::env::args().nth(1);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([820.0, 560.0])
+            .with_inner_size([960.0, 640.0])
             .with_icon(std::sync::Arc::new(make_icon())),
         ..Default::default()
     };
