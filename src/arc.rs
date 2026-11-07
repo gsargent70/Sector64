@@ -16,11 +16,16 @@
 //!   early-change width bump and `first_free = 258`) over a run-length stream
 //!   (escape `0xFE`, `FE count value`). Verified byte-for-byte against the
 //!   original files of a real archive.
+//! - **Decodes packed, squeezed, and squashed entries** (methods 1, 2, 4): the
+//!   0xFE run-length stream (pack); a static Huffman code stored as a 256-entry
+//!   table of 5-bit lengths plus bit-reversed codes, read least-significant bit
+//!   first (squeeze); and that Huffman over the run-length stream (squash). The
+//!   Huffman grammar was recovered by reverse-engineering the ARC 2.50 decoder
+//!   and validated byte-for-byte against a real squashed entry.
 //!
-//! What it does *not* do yet: Huffman (methods 2 "squeeze" and 4 "squash").
-//! [`ArcEntry::decode`] returns [`Error::UnsupportedArcMethod`] for those. The
-//! per-entry 16-bit [`ArcEntry::checksum`] is captured (its algorithm is not
-//! yet identified).
+//! Every method 0–5 now decodes; only an unknown method byte returns
+//! [`Error::UnsupportedArcMethod`]. The per-entry 16-bit [`ArcEntry::checksum`]
+//! is captured (its algorithm is not yet identified).
 //!
 //! Reference: the Commodore ARC format as documented from observed archives
 //! (header: version, method, checksum, 3-byte original size, 2-byte packed size
@@ -140,33 +145,28 @@ impl ArcEntry {
             ArcMethod::Lz | ArcMethod::LzOnePass => {
                 Ok(crunch_decode(&self.packed, self.orig_size as usize))
             }
+            // Pack is the bare 0xFE run-length stream.
+            ArcMethod::Rle => Ok(un_rle_fe(&self.packed, self.orig_size as usize)),
+            // Squeeze is static Huffman; squash is the same Huffman over the
+            // 0xFE run-length stream that crunch uses.
+            ArcMethod::Huffman => Ok(squeeze_decode(&self.packed, self.orig_size as usize, false)),
+            ArcMethod::HuffmanRle => Ok(squeeze_decode(&self.packed, self.orig_size as usize, true)),
             m => Err(Error::UnsupportedArcMethod(m.to_byte())),
         }
     }
 
 }
 
-/// Decode an ARC **crunch** stream (methods 3 and 5): LZW, then un-RLE.
-///
-/// The LZW is the C64 ARC variant — big-endian codes read bit-reversed within
-/// each byte ("mix" order), 9..=12-bit codes with an early-change width bump,
-/// and `first_free = 258` (codes 256/257 reserved). Its output is a run-length
-/// stream whose escape is `0xFE`: `FE count value` expands to `value` repeated
-/// `count` times (a literal `0xFE` is `FE 01 FE`). `orig_size` bounds the
-/// result; everything is bounded so no input can panic or loop forever.
-fn crunch_decode(packed: &[u8], orig_size: usize) -> Vec<u8> {
-    // Generous cap: the RLE stream is usually smaller than the original, but a
-    // literal 0xFE triples, so allow headroom before truncating.
-    let cap = orig_size.saturating_mul(2).saturating_add(64);
-    let rle = lzw_decode(packed, cap);
-
+/// Expand the ARC run-length stream (escape `0xFE`, `FE count value` → `value`
+/// repeated `count` times) into at most `orig_size` bytes. Shared by crunch and
+/// squash. A truncated trailing escape ends the stream.
+fn un_rle_fe(rle: &[u8], orig_size: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(orig_size.min(1 << 20));
     let mut i = 0;
     while i < rle.len() && out.len() < orig_size {
         let c = rle[i];
         i += 1;
         if c == 0xFE {
-            // Need count and value; a truncated escape ends the stream.
             let (Some(&count), Some(&value)) = (rle.get(i), rle.get(i + 1)) else {
                 break;
             };
@@ -183,6 +183,133 @@ fn crunch_decode(packed: &[u8], orig_size: usize) -> Vec<u8> {
     }
     out.truncate(orig_size);
     out
+}
+
+/// A least-significant-bit-first bit reader over a byte slice. Reads past the
+/// end yield zero bits rather than panicking.
+struct SqueezeBits<'a> {
+    data: &'a [u8],
+    pos: usize,
+    cur: u8,
+    nbits: u8,
+}
+
+impl<'a> SqueezeBits<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        SqueezeBits { data, pos: 0, cur: 0, nbits: 0 }
+    }
+    /// One bit, least-significant first within each byte.
+    fn bit(&mut self) -> u32 {
+        if self.nbits == 0 {
+            self.cur = self.data.get(self.pos).copied().unwrap_or(0);
+            self.pos += 1;
+            self.nbits = 8;
+        }
+        let b = (self.cur & 1) as u32;
+        self.cur >>= 1;
+        self.nbits -= 1;
+        b
+    }
+}
+
+/// The widest Huffman code the ARC decoder accepts.
+const SQ_MAX_LEN: usize = 24;
+
+/// Decode an ARC **squeeze** (method 2, Huffman only) or **squash** (method 4,
+/// Huffman over the 0xFE run-length stream) entry.
+///
+/// The packed data opens with a stored Huffman table — 256 symbols, each a
+/// 5-bit code length (LSB-first) and, when the length is non-zero, that many
+/// code bits — followed by the bit-coded data. The table is read, codes are
+/// matched by accumulating bits (least-significant first, up to 24 bits), and
+/// for squash the decoded bytes are run-length-expanded. Recovered by reverse-
+/// engineering the ARC 2.50 decoder and validated byte-for-byte against a real
+/// squashed entry. Everything is bounded; no input can panic or loop forever.
+fn squeeze_decode(packed: &[u8], orig_size: usize, rle: bool) -> Vec<u8> {
+    let mut br = SqueezeBits::new(packed);
+
+    // Read the 256-entry code table, grouping entries by length so a decode
+    // only scans the (small) bucket for the current bit count.
+    let mut by_len: Vec<Vec<(u32, u8)>> = vec![Vec::new(); SQ_MAX_LEN + 1];
+    let mut any = false;
+    for sym in 0u16..256 {
+        // 5-bit length, least-significant bit first.
+        let mut length = 0u32;
+        for i in 0..5 {
+            length |= br.bit() << i;
+        }
+        let length = length as usize;
+        if length == 0 || length > SQ_MAX_LEN {
+            if length > SQ_MAX_LEN {
+                return Vec::new(); // malformed table
+            }
+            continue;
+        }
+        // `length` code bits, first bit most-significant; then bit-reversed so
+        // the first transmitted bit is the least-significant, matching how the
+        // decoder accumulates.
+        let mut msb = 0u32;
+        for _ in 0..length {
+            msb = (msb << 1) | br.bit();
+        }
+        let mut code = 0u32;
+        for i in 0..length {
+            code |= ((msb >> (length - 1 - i)) & 1) << i;
+        }
+        by_len[length].push((code, sym as u8));
+        any = true;
+    }
+    if !any {
+        return Vec::new();
+    }
+
+    // Decode symbols. For squash the Huffman output is the run-length stream, so
+    // allow headroom before the run-length expansion truncates to `orig_size`.
+    let sym_cap = if rle { orig_size.saturating_mul(2).saturating_add(64) } else { orig_size };
+    let mut symbols: Vec<u8> = Vec::with_capacity(sym_cap.min(1 << 20));
+    let total_bits = packed.len().saturating_mul(8);
+    while symbols.len() < sym_cap {
+        let mut acc = 0u32;
+        let mut matched = None;
+        for (nb, bucket) in by_len.iter().enumerate().skip(1) {
+            acc |= br.bit() << (nb - 1);
+            if let Some(&(_, sym)) = bucket.iter().find(|&&(code, _)| code == acc) {
+                matched = Some(sym);
+                break;
+            }
+        }
+        match matched {
+            Some(sym) => symbols.push(sym),
+            None => break, // bad code / ran out of input
+        }
+        // Stop once the input is exhausted to avoid spinning on zero bits.
+        if br.pos.saturating_sub(1).saturating_mul(8) >= total_bits && br.nbits == 0 {
+            break;
+        }
+    }
+
+    if rle {
+        un_rle_fe(&symbols, orig_size)
+    } else {
+        symbols.truncate(orig_size);
+        symbols
+    }
+}
+
+/// Decode an ARC **crunch** stream (methods 3 and 5): LZW, then un-RLE.
+///
+/// The LZW is the C64 ARC variant — big-endian codes read bit-reversed within
+/// each byte ("mix" order), 9..=12-bit codes with an early-change width bump,
+/// and `first_free = 258` (codes 256/257 reserved). Its output is a run-length
+/// stream whose escape is `0xFE`: `FE count value` expands to `value` repeated
+/// `count` times (a literal `0xFE` is `FE 01 FE`). `orig_size` bounds the
+/// result; everything is bounded so no input can panic or loop forever.
+fn crunch_decode(packed: &[u8], orig_size: usize) -> Vec<u8> {
+    // Generous cap: the RLE stream is usually smaller than the original, but a
+    // literal 0xFE triples, so allow headroom before truncating.
+    let cap = orig_size.saturating_mul(2).saturating_add(64);
+    let rle = lzw_decode(packed, cap);
+    un_rle_fe(&rle, orig_size)
 }
 
 /// The C64 ARC crunch LZW decoder. Produces at most `cap` bytes.
@@ -477,18 +604,30 @@ mod tests {
     }
 
     #[test]
-    fn uncracked_methods_are_unsupported_not_panics() {
-        // Method 2 (squeeze) is not yet decoded; it must error, not panic.
-        let mut a = vec![2, 2, 0, 0, 4, 0, 0, 1, 0, b'P', 1, b'X'];
+    fn unknown_method_is_unsupported_not_panic() {
+        // An unknown method byte (7) must error, not panic.
+        let mut a = vec![2, 7, 0, 0, 4, 0, 0, 1, 0, b'P', 1, b'X'];
         a.extend_from_slice(&[0xfe, 0x21, 0x00]); // v2 record-len + date
         a.resize(BLOCK, 0);
         a.push(0x1a);
         let entries = parse_arc(&a).unwrap();
-        assert_eq!(entries[0].method, ArcMethod::Huffman);
+        assert_eq!(entries[0].method, ArcMethod::Other(7));
         assert!(matches!(
             entries[0].decode(),
-            Err(Error::UnsupportedArcMethod(2))
+            Err(Error::UnsupportedArcMethod(7))
         ));
+    }
+
+    #[test]
+    fn pack_rle_round_trips() {
+        // Method 1 (pack) is the bare 0xFE run-length stream.
+        let mut a = vec![1, 1, 0, 0, 6, 0, 0, 1, 0, b'S', 1, b'X'];
+        a.extend_from_slice(&[0xfe, 0x04, 0xAA, b'Z', b'Z']); // AAAA ZZ
+        a.resize(BLOCK, 0);
+        a.push(0x1a);
+        let e = parse_arc(&a).unwrap();
+        assert_eq!(e[0].method, ArcMethod::Rle);
+        assert_eq!(e[0].decode().unwrap(), vec![0xAA, 0xAA, 0xAA, 0xAA, b'Z', b'Z']);
     }
 
     #[test]
