@@ -179,10 +179,6 @@ mod art {
         "...##...", "...##...", "...##...", "...##...", ".######.", "..####..",
         "...##...", "........",
     ];
-    pub const CHECK: [&str; 8] = [
-        "........", "......#.", ".....##.", "#...##..", "##.##...", ".###....",
-        "..#.....", "........",
-    ];
     pub const TRASH: [&str; 8] = [
         "..####..", "########", "........", ".######.", ".#.##.#.", ".#.##.#.",
         ".######.", "..####..",
@@ -204,7 +200,6 @@ struct Icons {
     plus: egui::TextureHandle,
     floppy: egui::TextureHandle,
     down: egui::TextureHandle,
-    check: egui::TextureHandle,
     trash: egui::TextureHandle,
     pencil: egui::TextureHandle,
     doc: egui::TextureHandle,
@@ -220,7 +215,6 @@ impl Icons {
             plus: mk("i_plus", &art::PLUS),
             floppy: mk("i_floppy", &art::FLOPPY),
             down: mk("i_down", &art::DOWN),
-            check: mk("i_check", &art::CHECK),
             trash: mk("i_trash", &art::TRASH),
             pencil: mk("i_pencil", &art::PENCIL),
             doc: mk("i_doc", &art::DOC),
@@ -839,7 +833,7 @@ impl eframe::App for App {
 
                 if is_disk {
                     ui.separator();
-                    if ui.add(icon_button(&ic.check, "Validate disk")).clicked() {
+                    if ui.button("Validate disk").clicked() {
                         acts.push(Act::Validate);
                     }
                 }
@@ -1003,28 +997,33 @@ impl eframe::App for App {
         if self.show_validation {
             let text = self.validation.clone();
             let warn = text.contains('⚠');
-            let mut dismiss = false;
-            egui::Window::new(egui::RichText::new("DISK VALIDATION").color(c64::ACCENT).strong())
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    let col = if warn { c64::WARN } else { c64::OK };
-                    let body = ui.vertical(|ui| {
-                        ui.add_space(2.0);
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(&text).monospace().color(col))
-                                .wrap_mode(egui::TextWrapMode::Extend),
-                        );
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new("click to dismiss").color(c64::TEXT_DIM));
-                    });
-                    if body.response.interact(egui::Sense::click()).clicked() {
-                        dismiss = true;
-                    }
+            let win = egui::Window::new(
+                egui::RichText::new("DISK VALIDATION").color(c64::ACCENT).strong(),
+            )
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                let col = if warn { c64::WARN } else { c64::OK };
+                ui.add_space(2.0);
+                ui.add(
+                    egui::Label::new(egui::RichText::new(&text).monospace().color(col))
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                );
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("click to dismiss").color(c64::TEXT_DIM));
+            });
+            // Dismiss on a mouse click anywhere inside the popover.
+            if let Some(inner) = win {
+                let clicked_inside = ctx.input(|i| {
+                    i.pointer.primary_clicked()
+                        && i.pointer
+                            .interact_pos()
+                            .is_some_and(|p| inner.response.rect.contains(p))
                 });
-            if dismiss {
-                self.show_validation = false;
+                if clicked_inside {
+                    self.show_validation = false;
+                }
             }
         }
 
