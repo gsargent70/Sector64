@@ -73,24 +73,26 @@ fn milleborne_crunch_matches_originals() {
         return;
     };
     let entries = parse_arc(&bytes).expect("parse");
-    // (archive entry name, original file name)
+    // (archive entry name, original file name, expected method)
     let map = [
-        ("MILLE BORNE/RB", "mille borne-rb.prg"),
-        ("MILLE MOD2", "mille mod2.prg"),
+        ("MILLE BORNE/RB", "mille borne-rb.prg", ArcMethod::Lz),
+        ("MILLE MOD2", "mille mod2.prg", ArcMethod::Lz),
+        // Squash = Huffman over the run-length stream (the cracked method).
+        ("MILLE MOD1", "mille mod1.prg", ArcMethod::HuffmanRle),
     ];
     let mut checked = 0;
-    for (name, orig) in map {
+    for (name, orig, method) in map {
         let Ok(plain) = std::fs::read(dir.join(orig)) else {
             eprintln!("skipping {orig}: original not present");
             continue;
         };
         let e = entries.iter().find(|e| e.name == name).expect("entry");
-        assert_eq!(e.method, ArcMethod::Lz, "{name} should be crunch");
+        assert_eq!(e.method, method, "{name} method");
         let got = e.decode().unwrap_or_else(|err| panic!("decode {name}: {err}"));
-        assert_eq!(got, plain, "crunch decode mismatch for {name}");
+        assert_eq!(got, plain, "decode mismatch for {name}");
         checked += 1;
     }
-    eprintln!("ok: MILLEBORNE crunch ({checked} members matched originals)");
+    eprintln!("ok: MILLEBORNE ({checked} members matched originals)");
 }
 
 /// Every crunch member of both archives at least decodes to its stated size
@@ -106,12 +108,59 @@ fn crunch_members_decode_to_size() {
             continue;
         };
         for e in parse_arc(&bytes).expect("parse") {
-            if matches!(e.method, ArcMethod::Lz | ArcMethod::LzOnePass) {
+            if matches!(
+                e.method,
+                ArcMethod::Rle
+                    | ArcMethod::Huffman
+                    | ArcMethod::HuffmanRle
+                    | ArcMethod::Lz
+                    | ArcMethod::LzOnePass
+            ) {
                 let got = e.decode().unwrap_or_else(|err| panic!("{file}/{}: {err}", e.name));
                 assert_eq!(got.len(), e.orig_size as usize, "{file}/{} size", e.name);
             }
         }
     }
+}
+
+/// Decode FLAGHUNT.ARC's squeeze (method 2, Huffman-only) members and compare
+/// to their originals, when a plaintext directory is provided via
+/// `ARC_PLAINTEXT` (the files live outside the samples dir). Skips otherwise.
+#[test]
+fn flaghunt_squeeze_matches_originals() {
+    let Some(dir) = samples_dir() else {
+        eprintln!("skipping: no samples directory");
+        return;
+    };
+    let Ok(pt) = std::env::var("ARC_PLAINTEXT") else {
+        eprintln!("skipping: ARC_PLAINTEXT not set");
+        return;
+    };
+    let pt = PathBuf::from(pt);
+    let Ok(bytes) = std::fs::read(dir.join("FLAGHUNT.ARC")) else {
+        eprintln!("skipping: FLAGHUNT.ARC not present");
+        return;
+    };
+    let entries = parse_arc(&bytes).expect("parse");
+    let map = [
+        ("DOC PRINTER", "doc printer.prg", ArcMethod::Huffman),
+        ("MODEM FLAGHUNT", "modem flaghunt.prg", ArcMethod::Huffman),
+        ("T.FLAGHUNT DOCS", "t.flaghunt docs.prg", ArcMethod::Lz),
+    ];
+    let mut checked = 0;
+    for (name, orig, method) in map {
+        let Ok(plain) = std::fs::read(pt.join(orig)) else {
+            eprintln!("skipping {orig}: not present");
+            continue;
+        };
+        let e = entries.iter().find(|e| e.name == name).expect("entry");
+        assert_eq!(e.method, method, "{name} method");
+        let got = e.decode().unwrap_or_else(|err| panic!("decode {name}: {err}"));
+        assert_eq!(got, plain, "decode mismatch for {name}");
+        checked += 1;
+    }
+    assert!(checked > 0, "ARC_PLAINTEXT set but nothing matched");
+    eprintln!("ok: FLAGHUNT squeeze ({checked} members matched originals)");
 }
 
 #[test]

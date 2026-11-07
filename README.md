@@ -108,14 +108,17 @@ job with those failure modes designed out:
   ARC) into its entries, validating every header field and the 254-byte block
   arithmetic, rejecting cycles/overflow, and stopping at the trailing padding.
   Each entry exposes its version, compression method, 16-bit checksum, original
-  size, file type and name. **Listing works today** and is validated against
-  real archives' known contents; **extraction is implemented only for stored
-  (method 0)** entries. The compressed methods (RLE, Huffman, LZ) return
-  **crunch** (methods 3 and 5 — the most common) is fully decoded: the C64 ARC
-  LZW variant (big-endian, bit-reversed within bytes, 9–12-bit with early-change
-  growth and `first_free = 258`) over a run-length stream (escape `0xFE`),
-  verified byte-for-byte against a real archive's original files. Huffman
-  (squeeze/squash, methods 2 and 4) still returns `Error::UnsupportedArcMethod`.
+  size, file type and name. **Listing** is validated against real archives'
+  known contents, and **every method 0–5 now extracts** byte-for-byte:
+  **store** (0); **pack** (1, the `0xFE` run-length stream); **squeeze** (2) and
+  **squash** (4), a static Huffman stored as a 256-entry table of 5-bit lengths
+  plus codes, read least-significant bit first, with squash adding the run-length
+  layer; and **crunch** (3 and 5, the most common), the C64 ARC LZW variant
+  (big-endian, bit-reversed within bytes, 9–12-bit with early-change growth and
+  `first_free = 258`) over the run-length stream. The LZW and Huffman grammars
+  were recovered by reverse-engineering the ARC 2.50 decoder and are verified
+  byte-for-byte against real archives' original files. Only an unknown method
+  byte returns `Error::UnsupportedArcMethod`.
 
 - **CMD D2M** (`Disk::load` auto-detects by size): the CMD FD-2000 native image.
   A D2M holds one partition — either **CMD-native (DNP)** geometry (256 sectors
@@ -176,9 +179,9 @@ job with those failure modes designed out:
   and `-lh1-` (LZHUF) members fully extract** — the lh1 decoder (`src/lzhuf.rs`)
   is a clean-room port of the public `lzhuf.c`, and every member of both real
   `.sfx` archives decodes to the exact length *and* matching CRC-16 (the
-  archive's own integrity check). **`.sda` crunch members also fully extract**
-  (via the ARC crunch decoder). ARC Huffman (squeeze/squash) and other LHA
-  methods still return their `Unsupported…Method` error.
+  archive's own integrity check). **`.sda` members fully extract** (via the ARC
+  decoders above). Other LHA methods still return their `Unsupported…Method`
+  error.
 
 - **Wraptor 3** (`parse_wr3` → `Wr3Entry`, `decompress_wr3` → `Wr3File`,
   `s64wr3`): the `.wr3` archive. Each entry is introduced by the marker
@@ -193,8 +196,7 @@ job with those failure modes designed out:
   against all seventeen supplied plaintext members of Loadstar #128 (all 43
   decode). `s64wr3 extract <archive> [out-dir]` writes the files out.
 
-Not yet: ARC Huffman (squeeze/squash) decompression, and GEOS/graphics formats.
-Those are the next layers.
+Not yet: GEOS/graphics formats. Those are the next layers.
 
 ## GUI
 
