@@ -363,7 +363,7 @@ impl App {
             return;
         };
         let path = if save_as || ed.path.is_none() {
-            let dlg = rfd::FileDialog::new().add_filter("disk image", &["d64", "d71", "d81"]);
+            let dlg = rfd::FileDialog::new().add_filter("disk image", &["d64", "d71", "d81", "d2m"]);
             let dlg = if let Some(p) = &ed.path {
                 dlg.set_directory(p.parent().unwrap_or(Path::new("."))).set_file_name(
                     p.file_name().and_then(|n| n.to_str()).unwrap_or("disk.d64"),
@@ -733,8 +733,10 @@ fn open_path(path: &Path) -> Result<Opened, String> {
         .unwrap_or_default();
 
     if let Ok(disk) = Disk::load(bytes.clone()) {
-        // The sector formats are editable; G64/D2M are shown read-only.
-        if matches!(ext.as_str(), "d64" | "d71" | "d81") {
+        // The sector formats are editable, as is a CMD-native (DNP) D2M (its
+        // header byte at 1/1 is 'H'); G64 and 1581-partition D2Ms are read-only.
+        let dnp_d2m = ext == "d2m" && bytes.get(258) == Some(&b'H');
+        if matches!(ext.as_str(), "d64" | "d71" | "d81") || dnp_d2m {
             return Ok(Opened::Disk(disk));
         }
         let (title, nodes) = disk_nodes(&disk);

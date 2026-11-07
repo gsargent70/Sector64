@@ -128,7 +128,9 @@ job with those failure modes designed out:
   2–33, with the track count read from the BAM header), so `blocks_free` and
   `validate` work: `blocks_free` matches c1541 (5610 on the sample) and
   validation correctly flags that disk's two genuine used-but-free blocks.
-  Writing to a DNP and GEOS/VLIR flat extraction are not yet supported.
+  **Writing a DNP works too** — `write_file`/`scratch`/`rename` update the
+  bitmap (no free-count byte exists), confirmed by `c1541` reading back a file
+  this crate added to a real D2M.
 
 - **TAP** (`parse_tap` → `TapImage`, `s64tap`): the raw datasette pulse stream.
   A TAP records the length of every tape pulse in clock cycles, nothing more —
@@ -208,9 +210,10 @@ ASCII **preview** of the selected file; for an open D64/D71/D81, **Validate
 disk** cross-checks every file chain against the BAM. Members that need a
 not-yet-implemented decoder are listed with the reason instead of bytes.
 
-For the writable sector formats (`.d64/.d71/.d81`) it is also an **editor**:
-create a blank image, add a host file (button or drag-and-drop) as prg/seq/usr,
-rename, delete, and Save / Save As. G64/D2M and archives are read-only.
+For the writable formats (`.d64/.d71/.d81` and CMD-native `.d2m`) it is also an
+**editor**: create a blank image, add a host file (button or drag-and-drop) as
+prg/seq/usr, rename, delete, and Save / Save As. G64, 1581-partition D2Ms, and
+archives are read-only.
 Double-click a file to extract it; the Open dialog filters to known types.
 **New archive** starts an empty staging list — add host files, then **Save
 archive as…** a `.t64/.lnx/.lbr/.p00`.

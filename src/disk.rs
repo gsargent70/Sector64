@@ -764,15 +764,21 @@ impl Disk {
         let Some((count, bitmap, _)) = self.bam_cell(track) else {
             return;
         };
+        // CMD-native has no per-track free-count byte — only the bitmap.
+        let has_count = !matches!(self.geom, Geometry::CmdNative { .. });
         let byte_idx = bitmap + (sector / 8) as usize;
         let bit = 1u8 << (sector % 8);
         let currently_free = self.data[byte_idx] & bit != 0;
         if allocated && currently_free {
             self.data[byte_idx] &= !bit;
-            self.data[count] = self.data[count].saturating_sub(1);
+            if has_count {
+                self.data[count] = self.data[count].saturating_sub(1);
+            }
         } else if !allocated && !currently_free {
             self.data[byte_idx] |= bit;
-            self.data[count] = self.data[count].saturating_add(1);
+            if has_count {
+                self.data[count] = self.data[count].saturating_add(1);
+            }
         }
     }
 
@@ -828,8 +834,9 @@ impl Disk {
             if track == dir {
                 continue;
             }
-            let spt = self.geom.sectors_per_track(track).unwrap();
-            for sector in 0..spt {
+            let spt = self.geom.sector_count(track).unwrap_or(0);
+            for s in 0..spt {
+                let sector = s as u8;
                 if self.bam_is_free(track, sector) {
                     self.bam_set(track, sector, true);
                     return Ok((track, sector));
@@ -842,8 +849,9 @@ impl Disk {
     /// Allocate a free sector on the directory track for a new directory block.
     fn allocate_dir_block(&mut self) -> Result<(u8, u8)> {
         let dir = self.dir_track();
-        let spt = self.geom.sectors_per_track(dir).unwrap();
-        for sector in 0..spt {
+        let spt = self.geom.sector_count(dir).unwrap_or(0);
+        for s in 0..spt {
+            let sector = s as u8;
             if self.bam_is_free(dir, sector) {
                 self.bam_set(dir, sector, true);
                 return Ok((dir, sector));
