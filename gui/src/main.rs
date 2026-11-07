@@ -306,6 +306,8 @@ struct App {
     // preview/validation pane
     hex_cache: Option<(usize, String)>,
     validation: String,
+    // whether the validation-result popover is showing
+    show_validation: bool,
     // button-icon textures, built lazily on the first frame
     icons: Option<Icons>,
 }
@@ -529,6 +531,7 @@ impl App {
             ),
             Err(e) => format!("validate: {e}"),
         };
+        self.show_validation = true;
     }
 
     fn add(&mut self, name: String, bytes: &[u8]) {
@@ -705,7 +708,6 @@ impl eframe::App for App {
         }
         let preview = self.hex_cache.as_ref().map(|(_, s)| s.clone()).unwrap_or_default();
         let preview_name = self.selected.and_then(|i| self.nodes.get(i)).map(|n| n.name.clone());
-        let validation = self.validation.clone();
 
         // Context flags that drive which buttons are enabled.
         let sel_now = self.selected;
@@ -834,6 +836,13 @@ impl eframe::App for App {
                         ui.close_menu();
                     }
                 });
+
+                if is_disk {
+                    ui.separator();
+                    if ui.add(icon_button(&ic.check, "Validate disk")).clicked() {
+                        acts.push(Act::Validate);
+                    }
+                }
             });
             ui.add_space(2.0);
         });
@@ -871,31 +880,7 @@ impl eframe::App for App {
             );
         });
 
-        // Disk validation sits in a full-width strip below the file list and
-        // preview, so those two columns are the same height.
-        if is_disk {
-            egui::TopBottomPanel::bottom("validate").resizable(false).show(ctx, |ui| {
-                ui.add_space(2.0);
-                if ui.add(icon_button(&ic.check, "Validate disk")).clicked() {
-                    acts.push(Act::Validate);
-                }
-                if !validation.is_empty() {
-                    let warn = validation.contains('⚠');
-                    let col = if warn { c64::WARN } else { c64::OK };
-                    egui::Frame::none()
-                        .fill(c64::WELL)
-                        .stroke(egui::Stroke::new(1.0, col))
-                        .inner_margin(egui::Margin::same(6.0))
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::Label::new(egui::RichText::new(&validation).monospace())
-                                    .wrap(),
-                            );
-                        });
-                }
-                ui.add_space(2.0);
-            });
-        }
+        // Validation results appear in a dismiss-on-click popover (built below).
 
         egui::SidePanel::right("preview")
             .resizable(true)
@@ -1012,6 +997,36 @@ impl eframe::App for App {
                 }
             });
         });
+
+        // Validation result popover — a centred window that dismisses when
+        // clicked anywhere on it.
+        if self.show_validation {
+            let text = self.validation.clone();
+            let warn = text.contains('⚠');
+            let mut dismiss = false;
+            egui::Window::new(egui::RichText::new("DISK VALIDATION").color(c64::ACCENT).strong())
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    let col = if warn { c64::WARN } else { c64::OK };
+                    let body = ui.vertical(|ui| {
+                        ui.add_space(2.0);
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(&text).monospace().color(col))
+                                .wrap_mode(egui::TextWrapMode::Extend),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new("click to dismiss").color(c64::TEXT_DIM));
+                    });
+                    if body.response.interact(egui::Sense::click()).clicked() {
+                        dismiss = true;
+                    }
+                });
+            if dismiss {
+                self.show_validation = false;
+            }
+        }
 
         // Drag-and-drop a host file onto the window to add it (editable disks).
         let dropped: Vec<PathBuf> = ctx.input(|i| {
