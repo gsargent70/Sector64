@@ -183,10 +183,6 @@ mod art {
         "........", "......#.", ".....##.", "#...##..", "##.##...", ".###....",
         "..#.....", "........",
     ];
-    pub const PLAY: [&str; 8] = [
-        "........", "..#.....", "..##....", "..###...", "..####..", "..###...",
-        "..##....", "..#.....",
-    ];
     pub const TRASH: [&str; 8] = [
         "..####..", "########", "........", ".######.", ".#.##.#.", ".#.##.#.",
         ".######.", "..####..",
@@ -209,7 +205,6 @@ struct Icons {
     floppy: egui::TextureHandle,
     down: egui::TextureHandle,
     check: egui::TextureHandle,
-    play: egui::TextureHandle,
     trash: egui::TextureHandle,
     pencil: egui::TextureHandle,
     doc: egui::TextureHandle,
@@ -226,7 +221,6 @@ impl Icons {
             floppy: mk("i_floppy", &art::FLOPPY),
             down: mk("i_down", &art::DOWN),
             check: mk("i_check", &art::CHECK),
-            play: mk("i_play", &art::PLAY),
             trash: mk("i_trash", &art::TRASH),
             pencil: mk("i_pencil", &art::PENCIL),
             doc: mk("i_doc", &art::DOC),
@@ -288,8 +282,6 @@ struct EditDisk {
 
 #[derive(Default)]
 struct App {
-    // top bar
-    path_input: String,
     // new-image controls
     new_fmt: usize, // 0=d64, 1=d71, 2=d81
     new_name: String,
@@ -318,7 +310,6 @@ struct App {
 /// closures free of `&mut self` conflicts).
 enum Act {
     OpenDialog,
-    Load,
     Select(usize),
     PickOutDir,
     ExtractSelected,
@@ -377,7 +368,6 @@ impl App {
     }
 
     fn after_open(&mut self, path: &Path) {
-        self.path_input = path.display().to_string();
         if self.out_dir.is_empty() {
             if let Some(parent) = path.parent() {
                 self.out_dir = parent.display().to_string();
@@ -425,12 +415,6 @@ impl App {
                     )
                     .add_filter("All files", &["*"]);
                 if let Some(p) = dlg.pick_file() {
-                    self.open(&p);
-                }
-            }
-            Act::Load => {
-                let p = PathBuf::from(self.path_input.trim());
-                if !self.path_input.trim().is_empty() {
                     self.open(&p);
                 }
             }
@@ -723,7 +707,6 @@ impl eframe::App for App {
         let any_extractable = self.nodes.iter().any(|n| n.data.is_ok());
 
         // Local copies of edited strings (write back after the frame).
-        let mut path_input = std::mem::take(&mut self.path_input);
         let mut out_dir = std::mem::take(&mut self.out_dir);
         let mut new_name = std::mem::take(&mut self.new_name);
         let mut new_id = std::mem::take(&mut self.new_id);
@@ -733,46 +716,113 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(2.0);
-            ui.horizontal(|ui| {
+            egui::menu::bar(ui, |ui| {
                 ui.label(egui::RichText::new("◆ SECTOR64").heading().color(c64::ACCENT).strong());
                 ui.separator();
-                if ui.add(icon_button(&ic.folder, "Open…")).clicked() {
-                    acts.push(Act::OpenDialog);
-                }
-                egui::menu::menu_custom_button(ui, icon_button(&ic.doc, "New ▾"), |ui| {
-                    ui.set_min_width(200.0);
-                    ui.label(egui::RichText::new("New disk image").color(c64::TEXT_DIM));
-                    ui.horizontal(|ui| {
-                        ui.label("name");
-                        ui.add(egui::TextEdit::singleline(&mut new_name).desired_width(120.0));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("id  ");
-                        ui.add(egui::TextEdit::singleline(&mut new_id).desired_width(40.0));
-                    });
-                    ui.horizontal(|ui| {
-                        for (i, label) in ["D64", "D71", "D81"].iter().enumerate() {
-                            if ui.button(*label).clicked() {
-                                new_fmt = i;
-                                acts.push(Act::Create);
-                                ui.close_menu();
+
+                ui.menu_button("File", |ui| {
+                    ui.set_min_width(180.0);
+                    // New ▸ (disk formats + empty archive)
+                    egui::menu::menu_custom_button(ui, icon_button(&ic.doc, "New ▸"), |ui| {
+                        ui.set_min_width(200.0);
+                        ui.label(egui::RichText::new("New disk image").color(c64::TEXT_DIM));
+                        ui.horizontal(|ui| {
+                            ui.label("name");
+                            ui.add(egui::TextEdit::singleline(&mut new_name).desired_width(120.0));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("id  ");
+                            ui.add(egui::TextEdit::singleline(&mut new_id).desired_width(40.0));
+                        });
+                        ui.horizontal(|ui| {
+                            for (i, label) in ["D64", "D71", "D81"].iter().enumerate() {
+                                if ui.button(*label).clicked() {
+                                    new_fmt = i;
+                                    acts.push(Act::Create);
+                                    ui.close_menu();
+                                }
                             }
+                        });
+                        ui.separator();
+                        if ui.button("Empty archive").clicked() {
+                            acts.push(Act::NewArchive);
+                            ui.close_menu();
                         }
                     });
+                    if ui.add(icon_button(&ic.folder, "Open…")).clicked() {
+                        acts.push(Act::OpenDialog);
+                        ui.close_menu();
+                    }
+                    // Add file ▸ (type + pick) — only when a disk/archive is open.
+                    ui.add_enabled_ui(editable, |ui| {
+                        egui::menu::menu_custom_button(ui, icon_button(&ic.plus, "Add file ▸"), |ui| {
+                            ui.set_min_width(160.0);
+                            ui.label(egui::RichText::new("as type").color(c64::TEXT_DIM));
+                            ui.horizontal(|ui| {
+                                for (i, t) in ["prg", "seq", "usr"].iter().enumerate() {
+                                    if ui.selectable_label(add_type == i, *t).clicked() {
+                                        add_type = i;
+                                    }
+                                }
+                            });
+                            if ui.add(icon_button(&ic.plus, "Add file…")).clicked() {
+                                acts.push(Act::AddFile);
+                                ui.close_menu();
+                            }
+                        });
+                    });
                     ui.separator();
-                    if ui.button("Empty archive").clicked() {
-                        acts.push(Act::NewArchive);
+                    ui.add_enabled_ui(is_disk, |ui| {
+                        if ui.add(icon_button(&ic.floppy, "Save")).clicked() {
+                            acts.push(Act::Save);
+                            ui.close_menu();
+                        }
+                        if ui.add(icon_button(&ic.floppy, "Save As…")).clicked() {
+                            acts.push(Act::SaveAs);
+                            ui.close_menu();
+                        }
+                    });
+                    if is_archive && ui.add(icon_button(&ic.floppy, "Save archive as…")).clicked() {
+                        acts.push(Act::SaveArchiveAs);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    ui.add_enabled_ui(has_sel, |ui| {
+                        // Rename ▸ (needs a target name)
+                        egui::menu::menu_custom_button(ui, icon_button(&ic.pencil, "Rename ▸"), |ui| {
+                            ui.set_min_width(200.0);
+                            ui.label(egui::RichText::new("new name").color(c64::TEXT_DIM));
+                            ui.add(egui::TextEdit::singleline(&mut rename_to).desired_width(180.0));
+                            if ui.add(icon_button(&ic.pencil, "Rename")).clicked() {
+                                acts.push(Act::Rename);
+                                ui.close_menu();
+                            }
+                        });
+                        let del = if is_archive { "Remove" } else { "Delete" };
+                        if ui.add(icon_button(&ic.trash, del)).clicked() {
+                            acts.push(Act::Delete);
+                            ui.close_menu();
+                        }
+                    });
+                });
+
+                ui.menu_button("Extract", |ui| {
+                    ui.set_min_width(170.0);
+                    if ui
+                        .add_enabled(sel_extractable, icon_button(&ic.down, "Extract Selected"))
+                        .clicked()
+                    {
+                        acts.push(Act::ExtractSelected);
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(any_extractable, icon_button(&ic.down, "Extract All"))
+                        .clicked()
+                    {
+                        acts.push(Act::ExtractAll);
                         ui.close_menu();
                     }
                 });
-                ui.add(
-                    egui::TextEdit::singleline(&mut path_input)
-                        .hint_text("path to a disk image or archive")
-                        .desired_width(f32::INFINITY),
-                );
-                if ui.add(icon_button(&ic.play, "Load")).clicked() {
-                    acts.push(Act::Load);
-                }
             });
             if !self.title.is_empty() {
                 egui::Frame::none()
@@ -793,66 +843,22 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::bottom("bottom").show(ctx, |ui| {
             ui.add_space(2.0);
+            // Output folder — the path spans the full width so it never clips.
             ui.horizontal(|ui| {
                 ui.label("Output:");
+                if ui
+                    .add(icon_button(&ic.folder, ""))
+                    .on_hover_text("choose output folder")
+                    .clicked()
+                {
+                    acts.push(Act::PickOutDir);
+                }
                 ui.add(
                     egui::TextEdit::singleline(&mut out_dir)
                         .hint_text("folder to extract into")
-                        .desired_width(220.0),
+                        .desired_width(f32::INFINITY),
                 );
-                if ui.add(icon_button(&ic.folder, "")).on_hover_text("choose output folder").clicked() {
-                    acts.push(Act::PickOutDir);
-                }
-                if ui
-                    .add_enabled(sel_extractable, icon_button(&ic.down, "Extract selected"))
-                    .clicked()
-                {
-                    acts.push(Act::ExtractSelected);
-                }
-                if ui.add_enabled(any_extractable, icon_button(&ic.down, "Extract all")).clicked() {
-                    acts.push(Act::ExtractAll);
-                }
             });
-            if editable {
-                ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("addtype")
-                        .selected_text(["prg", "seq", "usr"][add_type.min(2)])
-                        .width(50.0)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut add_type, 0, "prg");
-                            ui.selectable_value(&mut add_type, 1, "seq");
-                            ui.selectable_value(&mut add_type, 2, "usr");
-                        });
-                    if ui.add(icon_button(&ic.plus, "Add file…")).clicked() {
-                        acts.push(Act::AddFile);
-                    }
-                    ui.separator();
-                    ui.add(
-                        egui::TextEdit::singleline(&mut rename_to)
-                            .hint_text("new name")
-                            .desired_width(120.0),
-                    );
-                    if ui.add_enabled(has_sel, icon_button(&ic.pencil, "Rename")).clicked() {
-                        acts.push(Act::Rename);
-                    }
-                    let del = if is_archive { "Remove" } else { "Delete" };
-                    if ui.add_enabled(has_sel, icon_button(&ic.trash, del)).clicked() {
-                        acts.push(Act::Delete);
-                    }
-                    ui.separator();
-                    if is_disk {
-                        if ui.add(icon_button(&ic.floppy, "Save")).clicked() {
-                            acts.push(Act::Save);
-                        }
-                        if ui.add(icon_button(&ic.floppy, "Save As…")).clicked() {
-                            acts.push(Act::SaveAs);
-                        }
-                    }
-                    if is_archive && ui.add(icon_button(&ic.floppy, "Save archive as…")).clicked() {
-                        acts.push(Act::SaveArchiveAs);
-                    }
-                });
-            }
             ui.add_space(2.0);
             egui::Frame::none().fill(c64::WELL).inner_margin(egui::Margin::symmetric(8.0, 3.0)).show(
                 ui,
@@ -978,7 +984,6 @@ impl eframe::App for App {
         });
 
         // Write edited strings back, then apply actions.
-        self.path_input = path_input;
         self.out_dir = out_dir;
         self.new_name = new_name;
         self.new_id = new_id;
