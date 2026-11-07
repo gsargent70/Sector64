@@ -862,30 +862,36 @@ impl eframe::App for App {
             );
         });
 
+        // Disk validation sits in a full-width strip below the file list and
+        // preview, so those two columns are the same height.
+        if is_disk {
+            egui::TopBottomPanel::bottom("validate").resizable(false).show(ctx, |ui| {
+                ui.add_space(2.0);
+                if ui.add(icon_button(&ic.check, "Validate disk")).clicked() {
+                    acts.push(Act::Validate);
+                }
+                if !validation.is_empty() {
+                    let warn = validation.contains('⚠');
+                    let col = if warn { c64::WARN } else { c64::OK };
+                    egui::Frame::none()
+                        .fill(c64::WELL)
+                        .stroke(egui::Stroke::new(1.0, col))
+                        .inner_margin(egui::Margin::same(6.0))
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(&validation).monospace())
+                                    .wrap(),
+                            );
+                        });
+                }
+                ui.add_space(2.0);
+            });
+        }
+
         egui::SidePanel::right("preview")
             .resizable(true)
             .default_width(320.0)
             .show(ctx, |ui| {
-                if is_disk {
-                    if ui.add(icon_button(&ic.check, "Validate disk")).clicked() {
-                        acts.push(Act::Validate);
-                    }
-                    if !validation.is_empty() {
-                        let warn = validation.contains('⚠');
-                        let col = if warn { c64::WARN } else { c64::OK };
-                        egui::Frame::none()
-                            .fill(c64::WELL)
-                            .stroke(egui::Stroke::new(1.0, col))
-                            .inner_margin(egui::Margin::same(6.0))
-                            .show(ui, |ui| {
-                                ui.add(
-                                    egui::Label::new(egui::RichText::new(&validation).monospace())
-                                        .wrap(),
-                                );
-                            });
-                    }
-                    ui.separator();
-                }
                 let header = match &preview_name {
                     Some(n) => format!("PREVIEW — {n}"),
                     None => "PREVIEW".to_string(),
