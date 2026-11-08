@@ -274,6 +274,14 @@ struct EditDisk {
     dirty: bool,
 }
 
+/// Which column the listing is sorted by.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SortKey {
+    Type,
+    Name,
+    Size,
+}
+
 /// A pending action blocked by unsaved changes.
 enum Confirm {
     /// Open this file once the user discards changes.
@@ -306,6 +314,8 @@ struct App {
     selected: Option<usize>,
     /// Extra rows marked for a multi-file extract (Ctrl/Shift-click).
     marked: std::collections::BTreeSet<usize>,
+    /// Column sort: `(key, ascending)`; `None` is directory order.
+    sort: Option<(SortKey, bool)>,
     /// A pending confirmation (unsaved changes before open/quit).
     confirm: Option<Confirm>,
     disk: Option<EditDisk>,
@@ -331,6 +341,7 @@ enum Act {
     MarkRange(usize),
     PickOutDir,
     CopiedPath,
+    Sort(SortKey),
     ExtractSelected,
     ExtractAll,
     Create,
@@ -366,6 +377,37 @@ impl App {
     /// Whether the open disk has unsaved edits.
     fn is_dirty(&self) -> bool {
         self.disk.as_ref().is_some_and(|e| e.dirty)
+    }
+
+    /// Node indices in display order (directory order unless a sort is set).
+    fn sorted_order(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..self.nodes.len()).collect();
+        if let Some((key, asc)) = self.sort {
+            let size = |n: &Node| n.data.as_ref().map(|d| d.len()).unwrap_or(0);
+            order.sort_by(|&a, &b| {
+                let (na, nb) = (&self.nodes[a], &self.nodes[b]);
+                let o = match key {
+                    SortKey::Type => na.badge.cmp(&nb.badge).then_with(|| na.name.cmp(&nb.name)),
+                    SortKey::Name => na.name.to_uppercase().cmp(&nb.name.to_uppercase()),
+                    SortKey::Size => size(na).cmp(&size(nb)),
+                };
+                if asc {
+                    o
+                } else {
+                    o.reverse()
+                }
+            });
+        }
+        order
+    }
+
+    /// Cycle the sort on a column: off → ascending → descending → off.
+    fn cycle_sort(&mut self, key: SortKey) {
+        self.sort = match self.sort {
+            Some((k, true)) if k == key => Some((key, false)),
+            Some((k, false)) if k == key => None,
+            _ => Some((key, true)),
+        };
     }
 
     fn open(&mut self, path: &Path) {
@@ -464,9 +506,16 @@ impl App {
                 self.selected = Some(i);
             }
             Act::MarkRange(i) => {
+                // Range in display order, so Shift-click follows what's shown.
+                let order = self.sorted_order();
                 let anchor = self.selected.unwrap_or(i);
-                let (lo, hi) = (anchor.min(i), anchor.max(i));
-                self.marked.extend(lo..=hi);
+                let pa = order.iter().position(|&x| x == anchor);
+                let pi = order.iter().position(|&x| x == i);
+                if let (Some(pa), Some(pi)) = (pa, pi) {
+                    for &node in &order[pa.min(pi)..=pa.max(pi)] {
+                        self.marked.insert(node);
+                    }
+                }
                 self.selected = Some(i);
             }
             Act::PickOutDir => {
@@ -475,6 +524,7 @@ impl App {
                 }
             }
             Act::CopiedPath => self.status = "Copied path to clipboard".into(),
+            Act::Sort(key) => self.cycle_sort(key),
             Act::ExtractSelected => self.extract_selected(),
             Act::ExtractAll => self.extract_all(),
             Act::Create => {
@@ -1042,16 +1092,20 @@ impl eframe::App for App {
                     .max(1),
             };
             // Column header (reserves the scrollbar width so it lines up with
-            // the rows below).
+            // the rows below), clickable to sort.
             let bar = ui.spacing().scroll.bar_width + 2.0;
-            header_row(ui, cols, if is_disk { "BLK" } else { "" }, bar);
+            if let Some(key) = header_row(ui, cols, is_disk, bar, self.sort) {
+                acts.push(Act::Sort(key));
+            }
+            let order = self.sorted_order();
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for (i, node) in self.nodes.iter().enumerate() {
+                for (pos, &i) in order.iter().enumerate() {
+                    let node = &self.nodes[i];
                     let sel = self.selected == Some(i) || self.marked.contains(&i);
                     let extractable = node.data.is_ok();
                     let editing = renaming == Some(i);
                     let edit = if editing { Some(&mut rename_to) } else { None };
-                    let (resp, result) = file_row(ui, node, sel, i, cols, edit, editing && rename_focus);
+                    let (resp, result) = file_row(ui, node, sel, pos, cols, edit, editing && rename_focus);
                     if editing {
                         rename_focus = false;
                         match result {
@@ -1213,6 +1267,7 @@ impl eframe::App for App {
         let typing = ctx.wants_keyboard_input();
         let n = self.nodes.len();
         let sel_name = sel_now.and_then(|s| self.nodes.get(s)).map(|x| x.name.clone());
+        let order = self.sorted_order();
         ctx.input(|i| {
             if i.modifiers.command && i.key_pressed(egui::Key::O) {
                 acts.push(Act::OpenDialog);
@@ -1233,13 +1288,15 @@ impl eframe::App for App {
                     rename_to = sel_name.clone().unwrap_or_default();
                     rename_focus = true;
                 }
+                // Arrow keys move through the current display order.
+                let cur_pos = sel_now.and_then(|s| order.iter().position(|&x| x == s));
                 if n > 0 && i.key_pressed(egui::Key::ArrowDown) {
-                    let next = sel_now.map_or(0, |s| (s + 1).min(n - 1));
-                    acts.push(Act::Select(next));
+                    let p = cur_pos.map_or(0, |p| (p + 1).min(n - 1));
+                    acts.push(Act::Select(order[p]));
                 }
                 if n > 0 && i.key_pressed(egui::Key::ArrowUp) {
-                    let prev = sel_now.map_or(0, |s| s.saturating_sub(1));
-                    acts.push(Act::Select(prev));
+                    let p = cur_pos.map_or(0, |p| p.saturating_sub(1));
+                    acts.push(Act::Select(order[p]));
                 }
             }
         });
@@ -1277,14 +1334,22 @@ enum RenameEdit {
     Cancel,
 }
 
-/// Column header row, using the same column math as [`file_row`] so the labels
-/// sit over their columns. `scrollbar` reserves the list's scrollbar width.
-fn header_row(ui: &mut egui::Ui, cols: Cols, detail_label: &str, scrollbar: f32) {
+/// Clickable column header, using the same column math as [`file_row`] so the
+/// labels sit over their columns. Returns the column whose header was clicked.
+/// `scrollbar` reserves the list's scrollbar width.
+fn header_row(
+    ui: &mut egui::Ui,
+    cols: Cols,
+    is_disk: bool,
+    scrollbar: f32,
+    sort: Option<(SortKey, bool)>,
+) -> Option<SortKey> {
     use egui::{pos2, vec2, Align2, FontId, Sense, Stroke};
     let mono = FontId::monospace(16.0);
     let cw = ui.fonts(|f| f.glyph_width(&mono, '0')).max(6.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
-    let painter = ui.painter();
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
+    let resp = resp.on_hover_text("click a column to sort (again to reverse / clear)");
+    let painter = ui.painter().clone();
     let pad = 8.0;
     let cy = rect.center().y;
     let right_edge = rect.right() - pad - scrollbar;
@@ -1292,13 +1357,41 @@ fn header_row(ui: &mut egui::Ui, cols: Cols, detail_label: &str, scrollbar: f32)
     let status_x = right_edge - size_field_w;
     let detail_field_w = cols.detail_chars as f32 * cw;
     let detail_x = status_x - 2.0 * cw - detail_field_w;
-    let col = c64::TEXT_DIM;
-    painter.text(pos2(rect.left() + pad, cy), Align2::LEFT_CENTER, "NAME", mono.clone(), col);
-    if !detail_label.is_empty() {
-        painter.text(pos2(detail_x, cy), Align2::LEFT_CENTER, detail_label, mono.clone(), col);
+    let type_x = rect.left() + pad;
+    let name_x = type_x + cw * 6.0;
+
+    let label = |key: SortKey, text: &str| -> (String, egui::Color32) {
+        match sort {
+            Some((k, asc)) if k == key => {
+                (format!("{text}{}", if asc { " ▲" } else { " ▼" }), c64::ACCENT)
+            }
+            _ => (text.to_string(), c64::TEXT_DIM),
+        }
+    };
+    let draw = |painter: &egui::Painter, x: f32, key: SortKey, text: &str| {
+        let (s, c) = label(key, text);
+        painter.text(pos2(x, cy), Align2::LEFT_CENTER, s, mono.clone(), c);
+    };
+    draw(&painter, type_x, SortKey::Type, "TYPE");
+    draw(&painter, name_x, SortKey::Name, "NAME");
+    if is_disk {
+        painter.text(pos2(detail_x, cy), Align2::LEFT_CENTER, "BLK", mono.clone(), c64::TEXT_DIM);
     }
-    painter.text(pos2(status_x, cy), Align2::LEFT_CENTER, "SIZE", mono, col);
+    draw(&painter, status_x, SortKey::Size, "SIZE");
     painter.hline(rect.x_range(), rect.bottom() - 1.0, Stroke::new(1.0, c64::ACCENT_DIM));
+
+    if resp.clicked() {
+        if let Some(p) = resp.interact_pointer_pos() {
+            return Some(if p.x >= status_x - cw {
+                SortKey::Size
+            } else if p.x < name_x {
+                SortKey::Type
+            } else {
+                SortKey::Name
+            });
+        }
+    }
+    None
 }
 
 /// Draw one file as a full-width, painted, selectable row: a colour-coded type
