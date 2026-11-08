@@ -1081,7 +1081,11 @@ impl eframe::App for App {
                     }
                     // Right-click actions for this file.
                     resp.context_menu(|ui| {
-                        acts.push(Act::Select(i)); // the menu acts on this row
+                        // Target this row, but don't disturb an existing
+                        // multi-selection that already includes it.
+                        if !sel {
+                            acts.push(Act::Select(i));
+                        }
                         ui.set_min_width(150.0);
                         if ui.add_enabled(extractable, icon_button(&ic.down, "Extract")).clicked() {
                             acts.push(Act::ExtractSelected);
@@ -1097,6 +1101,7 @@ impl eframe::App for App {
                             }
                             let del = if is_archive { "Remove" } else { "Delete" };
                             if ui.add(icon_button(&ic.trash, del)).clicked() {
+                                acts.push(Act::Select(i)); // delete this row specifically
                                 acts.push(Act::Delete);
                                 ui.close_menu();
                             }
