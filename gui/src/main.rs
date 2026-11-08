@@ -849,11 +849,12 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::bottom("bottom").show(ctx, |ui| {
             ui.add_space(2.0);
-            // Open: the path of the currently-open file (read-only), laid out
-            // to line up with the Output line below.
+            // "Open:" and "Output:" are equal-width buttons ("Open:  " padded to
+            // match "Output:"), so the two path fields line up on the left.
             ui.horizontal(|ui| {
-                ui.label("Open:  ");
-                ui.add_space(32.0); // align the field with the Output field (past its icon)
+                if ui.button("Open:  ").on_hover_text("open a disk or archive").clicked() {
+                    acts.push(Act::OpenDialog);
+                }
                 let mut opened = self.opened_path.clone().unwrap_or_default();
                 ui.add(
                     egui::TextEdit::singleline(&mut opened)
@@ -863,14 +864,8 @@ impl eframe::App for App {
                 );
             });
             ui.add_space(2.0);
-            // Output folder — the path spans the full width so it never clips.
             ui.horizontal(|ui| {
-                ui.label("Output:");
-                if ui
-                    .add(icon_button(&ic.folder, ""))
-                    .on_hover_text("choose output folder")
-                    .clicked()
-                {
+                if ui.button("Output:").on_hover_text("choose output folder").clicked() {
                     acts.push(Act::PickOutDir);
                 }
                 ui.add(
