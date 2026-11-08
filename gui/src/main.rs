@@ -339,6 +339,8 @@ struct App {
     marked: std::collections::BTreeSet<usize>,
     /// Column sort: `(key, ascending)`; `None` is directory order.
     sort: Option<(SortKey, bool)>,
+    /// Case-insensitive name filter; empty shows everything.
+    filter: String,
     /// A pending confirmation (unsaved changes before open/quit).
     confirm: Option<Confirm>,
     disk: Option<EditDisk>,
@@ -402,9 +404,13 @@ impl App {
         self.disk.as_ref().is_some_and(|e| e.dirty)
     }
 
-    /// Node indices in display order (directory order unless a sort is set).
-    fn sorted_order(&self) -> Vec<usize> {
-        let mut order: Vec<usize> = (0..self.nodes.len()).collect();
+    /// Node indices in display order: filtered by `filter` (case-insensitive
+    /// name match), then sorted (directory order unless a sort is set).
+    fn sorted_order(&self, filter: &str) -> Vec<usize> {
+        let f = filter.trim().to_lowercase();
+        let mut order: Vec<usize> = (0..self.nodes.len())
+            .filter(|&i| f.is_empty() || self.nodes[i].name.to_lowercase().contains(&f))
+            .collect();
         if let Some((key, asc)) = self.sort {
             let size = |n: &Node| n.data.as_ref().map(|d| d.len()).unwrap_or(0);
             order.sort_by(|&a, &b| {
@@ -438,6 +444,7 @@ impl App {
         self.nodes.clear();
         self.selected = None;
         self.marked.clear();
+        self.filter.clear();
         self.disk = None;
         self.archive = None;
         self.title.clear();
@@ -536,7 +543,7 @@ impl App {
             }
             Act::MarkRange(i) => {
                 // Range in display order, so Shift-click follows what's shown.
-                let order = self.sorted_order();
+                let order = self.sorted_order(&self.filter.clone());
                 let anchor = self.selected.unwrap_or(i);
                 let pa = order.iter().position(|&x| x == anchor);
                 let pi = order.iter().position(|&x| x == i);
@@ -923,6 +930,7 @@ impl eframe::App for App {
         let mut add_type = self.add_type;
         let mut renaming = self.renaming.filter(|&i| i < self.nodes.len());
         let mut rename_focus = self.rename_focus;
+        let mut filter = std::mem::take(&mut self.filter);
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(2.0);
@@ -1178,6 +1186,26 @@ impl eframe::App for App {
                     });
                 ui.add_space(2.0);
             }
+            // Filter box: live, case-insensitive name filter.
+            let order = self.sorted_order(&filter);
+            ui.horizontal(|ui| {
+                ui.label("Filter:");
+                if !filter.trim().is_empty() {
+                    ui.label(
+                        egui::RichText::new(format!("({}/{})", order.len(), self.nodes.len()))
+                            .color(c64::TEXT_DIM),
+                    );
+                    if ui.button("X").on_hover_text("clear filter").clicked() {
+                        filter.clear();
+                    }
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut filter)
+                        .hint_text("type to filter by name")
+                        .desired_width(f32::INFINITY),
+                );
+            });
+            ui.add_space(2.0);
             // Auto-pad columns to the widest row so they line up.
             let cols = Cols {
                 detail_chars: self.nodes.iter().map(|n| n.detail.chars().count()).max().unwrap_or(0),
@@ -1196,7 +1224,6 @@ impl eframe::App for App {
             if let Some(key) = header_row(ui, cols, is_disk, bar, self.sort) {
                 acts.push(Act::Sort(key));
             }
-            let order = self.sorted_order();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (pos, &i) in order.iter().enumerate() {
                     let node = &self.nodes[i];
@@ -1378,7 +1405,7 @@ impl eframe::App for App {
         let sel_name = sel_now
             .and_then(|s| self.nodes.get(s))
             .map(|x| x.name.clone());
-        let order = self.sorted_order();
+        let order = self.sorted_order(&filter);
         ctx.input(|i| {
             if i.modifiers.command && i.key_pressed(egui::Key::O) {
                 acts.push(Act::OpenDialog);
@@ -1413,6 +1440,7 @@ impl eframe::App for App {
         });
 
         // Write edited strings back, then apply actions.
+        self.filter = filter;
         self.out_dir = out_dir;
         self.new_name = new_name;
         self.new_id = new_id;
