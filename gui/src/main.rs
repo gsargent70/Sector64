@@ -290,6 +290,8 @@ struct App {
     // bottom bar
     out_dir: String,
     status: String,
+    /// Path of the currently-open file (shown on the "Open:" line).
+    opened_path: Option<String>,
     // state
     title: String,
     nodes: Vec<Node>,
@@ -374,7 +376,8 @@ impl App {
                 self.out_dir = parent.display().to_string();
             }
         }
-        self.status = format!("Opened {} ({} item(s))", path.display(), self.nodes.len());
+        self.opened_path = Some(path.display().to_string());
+        self.status = format!("{} item(s) loaded", self.nodes.len());
     }
 
     /// Rebuild the listing from the editable disk or the archive staging list.
@@ -438,6 +441,7 @@ impl App {
                 self.disk = Some(EditDisk { disk, path: None, dirty: true });
                 self.selected = None;
                 self.refresh();
+                self.opened_path = None;
                 self.status = "Created a blank image (unsaved)".into();
             }
             Act::AddFile => {
@@ -463,6 +467,7 @@ impl App {
                 self.selected = None;
                 self.hex_cache = None;
                 self.refresh();
+                self.opened_path = None;
                 self.status = "New archive — add files, then Save archive as…".into();
             }
             Act::SaveArchiveAs => self.save_archive(),
@@ -626,6 +631,7 @@ impl App {
             Ok(()) => {
                 ed.path = Some(path.clone());
                 ed.dirty = false;
+                self.opened_path = Some(path.display().to_string());
                 self.status = format!("Saved {}", path.display());
                 self.refresh();
             }
@@ -842,6 +848,20 @@ impl eframe::App for App {
         });
 
         egui::TopBottomPanel::bottom("bottom").show(ctx, |ui| {
+            ui.add_space(2.0);
+            // Open: the path of the currently-open file (read-only), laid out
+            // to line up with the Output line below.
+            ui.horizontal(|ui| {
+                ui.label("Open:  ");
+                ui.add_space(32.0); // align the field with the Output field (past its icon)
+                let mut opened = self.opened_path.clone().unwrap_or_default();
+                ui.add(
+                    egui::TextEdit::singleline(&mut opened)
+                        .interactive(false)
+                        .hint_text("no file open")
+                        .desired_width(f32::INFINITY),
+                );
+            });
             ui.add_space(2.0);
             // Output folder — the path spans the full width so it never clips.
             ui.horizontal(|ui| {
