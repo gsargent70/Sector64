@@ -274,6 +274,14 @@ struct EditDisk {
     dirty: bool,
 }
 
+/// A pending action blocked by unsaved changes.
+enum Confirm {
+    /// Open this file once the user discards changes.
+    OpenFile(PathBuf),
+    /// Quit once the user discards changes.
+    Quit,
+}
+
 #[derive(Default)]
 struct App {
     // new-image controls
@@ -296,6 +304,10 @@ struct App {
     title: String,
     nodes: Vec<Node>,
     selected: Option<usize>,
+    /// Extra rows marked for a multi-file extract (Ctrl/Shift-click).
+    marked: std::collections::BTreeSet<usize>,
+    /// A pending confirmation (unsaved changes before open/quit).
+    confirm: Option<Confirm>,
     disk: Option<EditDisk>,
     // staging list when building a new archive
     archive: Option<Vec<ImportFile>>,
@@ -313,7 +325,12 @@ struct App {
 enum Act {
     OpenDialog,
     Select(usize),
+    /// Ctrl-click: toggle this row in the multi-select set.
+    ToggleMark(usize),
+    /// Shift-click: mark the range from the active row to this one.
+    MarkRange(usize),
     PickOutDir,
+    CopiedPath,
     ExtractSelected,
     ExtractAll,
     Create,
@@ -346,9 +363,15 @@ impl App {
         self.disk.is_some() || self.archive.is_some()
     }
 
+    /// Whether the open disk has unsaved edits.
+    fn is_dirty(&self) -> bool {
+        self.disk.as_ref().is_some_and(|e| e.dirty)
+    }
+
     fn open(&mut self, path: &Path) {
         self.nodes.clear();
         self.selected = None;
+        self.marked.clear();
         self.disk = None;
         self.archive = None;
         self.title.clear();
@@ -404,8 +427,10 @@ impl App {
                 self.selected = None;
             }
         }
-        // The list was rebuilt; any in-place rename is finished.
+        // The list was rebuilt; any in-place rename is finished and marks are
+        // dropped (indices may have shifted).
         self.renaming = None;
+        self.marked.clear();
     }
 
     fn apply(&mut self, act: Act) {
@@ -421,15 +446,35 @@ impl App {
                     )
                     .add_filter("All files", &["*"]);
                 if let Some(p) = dlg.pick_file() {
-                    self.open(&p);
+                    if self.is_dirty() {
+                        self.confirm = Some(Confirm::OpenFile(p));
+                    } else {
+                        self.open(&p);
+                    }
                 }
             }
-            Act::Select(i) => self.selected = Some(i),
+            Act::Select(i) => {
+                self.selected = Some(i);
+                self.marked.clear();
+            }
+            Act::ToggleMark(i) => {
+                if !self.marked.insert(i) {
+                    self.marked.remove(&i);
+                }
+                self.selected = Some(i);
+            }
+            Act::MarkRange(i) => {
+                let anchor = self.selected.unwrap_or(i);
+                let (lo, hi) = (anchor.min(i), anchor.max(i));
+                self.marked.extend(lo..=hi);
+                self.selected = Some(i);
+            }
             Act::PickOutDir => {
                 if let Some(d) = rfd::FileDialog::new().pick_folder() {
                     self.out_dir = d.display().to_string();
                 }
             }
+            Act::CopiedPath => self.status = "Copied path to clipboard".into(),
             Act::ExtractSelected => self.extract_selected(),
             Act::ExtractAll => self.extract_all(),
             Act::Create => {
@@ -640,24 +685,52 @@ impl App {
     }
 
     fn extract_selected(&mut self) {
-        let Some(i) = self.selected else {
+        // The target rows: the multi-select set if any, else the active row.
+        let mut targets: Vec<usize> = if self.marked.is_empty() {
+            self.selected.into_iter().collect()
+        } else {
+            self.marked.iter().copied().collect()
+        };
+        targets.retain(|&i| i < self.nodes.len());
+        if targets.is_empty() {
             self.status = "Select a file first".into();
             return;
-        };
-        let (name, data) = (self.nodes[i].name.clone(), self.nodes[i].data.clone());
-        let data = match data {
-            Ok(d) => d,
-            Err(e) => {
-                self.status = format!("Cannot extract \"{name}\": {e}");
-                return;
-            }
-        };
-        let dir = if self.out_dir.is_empty() { ".".into() } else { self.out_dir.clone() };
-        let dest = PathBuf::from(&dir).join(sanitize(&name));
-        match std::fs::write(&dest, &data) {
-            Ok(()) => self.status = format!("Wrote {} ({} bytes)", dest.display(), data.len()),
-            Err(e) => self.status = format!("Write failed: {e}"),
         }
+        if targets.len() == 1 {
+            let i = targets[0];
+            let (name, data) = (self.nodes[i].name.clone(), self.nodes[i].data.clone());
+            let data = match data {
+                Ok(d) => d,
+                Err(e) => {
+                    self.status = format!("Cannot extract \"{name}\": {e}");
+                    return;
+                }
+            };
+            let dir = if self.out_dir.is_empty() { ".".into() } else { self.out_dir.clone() };
+            let dest = PathBuf::from(&dir).join(sanitize(&name));
+            match std::fs::write(&dest, &data) {
+                Ok(()) => self.status = format!("Wrote {} ({} bytes)", dest.display(), data.len()),
+                Err(e) => self.status = format!("Write failed: {e}"),
+            }
+            return;
+        }
+        // Several files.
+        let dir = if self.out_dir.is_empty() { ".".into() } else { self.out_dir.clone() };
+        let (mut ok, mut skipped) = (0, 0);
+        for i in targets {
+            match &self.nodes[i].data {
+                Ok(d) => {
+                    let dest = PathBuf::from(&dir).join(sanitize(&self.nodes[i].name));
+                    if std::fs::write(&dest, d).is_ok() {
+                        ok += 1;
+                    } else {
+                        skipped += 1;
+                    }
+                }
+                Err(_) => skipped += 1,
+            }
+        }
+        self.status = format!("Extracted {ok} file(s) to {dir}, {skipped} skipped");
     }
 
     fn extract_all(&mut self) {
@@ -687,6 +760,14 @@ impl eframe::App for App {
             self.icons = Some(Icons::load(ctx));
         }
         let ic = self.icons.clone().unwrap();
+
+        // Guard the window close against unsaved disk edits.
+        if ctx.input(|i| i.viewport().close_requested()) && self.is_dirty() {
+            if self.confirm.is_none() {
+                self.confirm = Some(Confirm::Quit);
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
         let editable = self.editable();
         let is_disk = self.disk.is_some();
         let is_archive = self.archive.is_some();
@@ -856,12 +937,19 @@ impl eframe::App for App {
                     acts.push(Act::OpenDialog);
                 }
                 let mut opened = self.opened_path.clone().unwrap_or_default();
-                ui.add(
+                let r = ui.add(
                     egui::TextEdit::singleline(&mut opened)
                         .interactive(false)
                         .hint_text("no file open")
                         .desired_width(f32::INFINITY),
                 );
+                if !opened.is_empty() {
+                    let r = r.on_hover_text("click to copy path").interact(egui::Sense::click());
+                    if r.clicked() {
+                        ui.ctx().copy_text(opened.clone());
+                        acts.push(Act::CopiedPath);
+                    }
+                }
             });
             ui.add_space(2.0);
             ui.horizontal(|ui| {
@@ -953,9 +1041,13 @@ impl eframe::App for App {
                     .unwrap_or(1)
                     .max(1),
             };
+            // Column header (reserves the scrollbar width so it lines up with
+            // the rows below).
+            let bar = ui.spacing().scroll.bar_width + 2.0;
+            header_row(ui, cols, if is_disk { "BLK" } else { "" }, bar);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (i, node) in self.nodes.iter().enumerate() {
-                    let sel = self.selected == Some(i);
+                    let sel = self.selected == Some(i) || self.marked.contains(&i);
                     let extractable = node.data.is_ok();
                     let editing = renaming == Some(i);
                     let edit = if editing { Some(&mut rename_to) } else { None };
@@ -974,7 +1066,14 @@ impl eframe::App for App {
                         continue; // a row being renamed takes no other interaction
                     }
                     if resp.clicked() {
-                        acts.push(Act::Select(i));
+                        let mods = ui.input(|i| i.modifiers);
+                        if mods.command {
+                            acts.push(Act::ToggleMark(i));
+                        } else if mods.shift {
+                            acts.push(Act::MarkRange(i));
+                        } else {
+                            acts.push(Act::Select(i));
+                        }
                     }
                     if resp.double_clicked() {
                         acts.push(Act::Select(i));
@@ -1042,6 +1141,56 @@ impl eframe::App for App {
             }
         }
 
+        // Unsaved-changes confirmation (before opening another file or quitting).
+        if self.confirm.is_some() {
+            let mut action: Option<u8> = None; // 0 discard, 1 cancel, 2 save
+            egui::Window::new(egui::RichText::new("UNSAVED CHANGES").color(c64::WARN).strong())
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.label("The open disk has unsaved changes.");
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if is_disk && ui.button("💾 Save first").clicked() {
+                            action = Some(2);
+                        }
+                        if ui.button("Discard").clicked() {
+                            action = Some(0);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            action = Some(1);
+                        }
+                    });
+                });
+            match action {
+                Some(0) => match self.confirm.take() {
+                    Some(Confirm::OpenFile(p)) => self.open(&p),
+                    Some(Confirm::Quit) => {
+                        if let Some(ed) = &mut self.disk {
+                            ed.dirty = false;
+                        }
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    None => {}
+                },
+                Some(1) => self.confirm = None,
+                Some(2) => {
+                    self.save(false);
+                    if !self.is_dirty() {
+                        match self.confirm.take() {
+                            Some(Confirm::OpenFile(p)) => self.open(&p),
+                            Some(Confirm::Quit) => {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close)
+                            }
+                            None => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // Drag-and-drop a host file onto the window to add it (editable disks).
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect()
@@ -1058,6 +1207,7 @@ impl eframe::App for App {
         // field has focus; Ctrl combos always apply.
         let typing = ctx.wants_keyboard_input();
         let n = self.nodes.len();
+        let sel_name = sel_now.and_then(|s| self.nodes.get(s)).map(|x| x.name.clone());
         ctx.input(|i| {
             if i.modifiers.command && i.key_pressed(egui::Key::O) {
                 acts.push(Act::OpenDialog);
@@ -1071,6 +1221,12 @@ impl eframe::App for App {
                 }
                 if i.key_pressed(egui::Key::Delete) && editable && has_sel {
                     acts.push(Act::Delete);
+                }
+                // F2: rename the selected row in place.
+                if i.key_pressed(egui::Key::F2) && editable && has_sel {
+                    renaming = sel_now;
+                    rename_to = sel_name.clone().unwrap_or_default();
+                    rename_focus = true;
                 }
                 if n > 0 && i.key_pressed(egui::Key::ArrowDown) {
                     let next = sel_now.map_or(0, |s| (s + 1).min(n - 1));
@@ -1114,6 +1270,30 @@ enum RenameEdit {
     Commit,
     /// Focus lost or Escape — discard.
     Cancel,
+}
+
+/// Column header row, using the same column math as [`file_row`] so the labels
+/// sit over their columns. `scrollbar` reserves the list's scrollbar width.
+fn header_row(ui: &mut egui::Ui, cols: Cols, detail_label: &str, scrollbar: f32) {
+    use egui::{pos2, vec2, Align2, FontId, Sense, Stroke};
+    let mono = FontId::monospace(16.0);
+    let cw = ui.fonts(|f| f.glyph_width(&mono, '0')).max(6.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
+    let painter = ui.painter();
+    let pad = 8.0;
+    let cy = rect.center().y;
+    let right_edge = rect.right() - pad - scrollbar;
+    let size_field_w = (cols.size_digits + 6) as f32 * cw;
+    let status_x = right_edge - size_field_w;
+    let detail_field_w = cols.detail_chars as f32 * cw;
+    let detail_x = status_x - 2.0 * cw - detail_field_w;
+    let col = c64::TEXT_DIM;
+    painter.text(pos2(rect.left() + pad, cy), Align2::LEFT_CENTER, "NAME", mono.clone(), col);
+    if !detail_label.is_empty() {
+        painter.text(pos2(detail_x, cy), Align2::LEFT_CENTER, detail_label, mono.clone(), col);
+    }
+    painter.text(pos2(status_x, cy), Align2::LEFT_CENTER, "SIZE", mono, col);
+    painter.hline(rect.x_range(), rect.bottom() - 1.0, Stroke::new(1.0, c64::ACCENT_DIM));
 }
 
 /// Draw one file as a full-width, painted, selectable row: a colour-coded type
