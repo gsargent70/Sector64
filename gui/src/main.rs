@@ -1201,6 +1201,9 @@ impl eframe::App for App {
                 }
                 ui.add(
                     egui::TextEdit::singleline(&mut filter)
+                        // Stable id so focus survives the count/clear widgets
+                        // appearing before the field once it has text.
+                        .id(egui::Id::new("filter_box"))
                         .hint_text("type to filter by name")
                         .desired_width(f32::INFINITY),
                 );
