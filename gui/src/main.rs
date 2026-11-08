@@ -487,7 +487,7 @@ impl App {
                 .map(|f| Node {
                     name: f.name.clone(),
                     badge: f.file_type.mnemonic().to_string(),
-                    detail: format!("{} bytes", f.data.len()),
+                    detail: format!("{} BYTES", f.data.len()),
                     blocks: 0,
                     data: Ok(f.data.clone()),
                 })
@@ -1587,7 +1587,7 @@ fn file_row(
 
     match &node.data {
         Ok(d) => {
-            let status = format!("{:>w$} bytes", d.len(), w = cols.size_digits);
+            let status = format!("{:>w$} BYTES", d.len(), w = cols.size_digits);
             painter.text(
                 pos2(status_x, cy),
                 Align2::LEFT_CENTER,
@@ -1746,9 +1746,9 @@ fn disk_nodes(disk: &Disk) -> (String, Vec<Node>) {
         let (splat, lock) = e.flags();
         let flags = format!("{splat}{lock}");
         let detail = if flags.trim().is_empty() {
-            format!("{:>bw$} blk", e.blocks)
+            format!("{:>bw$} BLK", e.blocks)
         } else {
-            format!("{:>bw$} blk  {}", e.blocks, flags.trim())
+            format!("{:>bw$} BLK  {}", e.blocks, flags.trim())
         };
         nodes.push(Node {
             name: e.name.clone(),
@@ -1794,7 +1794,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
             .into_iter()
             .map(|f| Node {
                 badge: f.file_type.mnemonic().to_string(),
-                detail: format!("{} bytes", f.data.len()),
+                detail: format!("{} BYTES", f.data.len()),
                 name: f.name,
                 blocks: 0,
                 data: Ok(f.data),
@@ -1821,7 +1821,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
                 .into_iter()
                 .map(|e| Node {
                     badge: e.file_type.mnemonic().to_string(),
-                    detail: format!("{} bytes  {}", e.orig_size, e.method.label()),
+                    detail: format!("{} BYTES  {}", e.orig_size, e.method.label()),
                     blocks: 0,
                     data: e.decode().map_err(|x| x.to_string()),
                     name: e.name,
@@ -1836,7 +1836,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
                 .map(|e| Node {
                     badge: String::new(),
                     detail: format!(
-                        "{} → {} bytes  {}",
+                        "{} → {} BYTES  {}",
                         e.compressed_size,
                         e.original_size,
                         e.method_str()
@@ -1867,7 +1867,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
                 .into_iter()
                 .map(|f| Node {
                     badge: String::new(),
-                    detail: format!("{} bytes", f.content.len()),
+                    detail: format!("{} BYTES", f.content.len()),
                     blocks: 0,
                     data: Ok(f.content),
                     name: f.name,
