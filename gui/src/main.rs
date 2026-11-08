@@ -1050,9 +1050,10 @@ impl eframe::App for App {
 
                 if is_disk {
                     ui.separator();
-                    if ui.button("Validate disk").clicked() {
+                    if ui.button("Validate Disk").clicked() {
                         acts.push(Act::Validate);
                     }
+                    ui.separator();
                 }
             });
             ui.add_space(2.0);
