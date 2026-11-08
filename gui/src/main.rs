@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 use egui::Color32;
 use sector64::{
-    parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64,
-    write_lbr, write_lnx, write_p00, write_t64, Disk, FileType, ImportFile,
+    parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64, write_lbr,
+    write_lnx, write_p00, write_t64, Disk, FileType, ImportFile,
 };
 
 /// The Commodore 64 palette this UI is themed around (Pepto values).
@@ -57,9 +57,15 @@ fn load_c64_font(ctx: &egui::Context) -> bool {
         return false;
     };
     let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert("c64".to_owned(), egui::FontData::from_owned(bytes));
+    fonts
+        .font_data
+        .insert("c64".to_owned(), egui::FontData::from_owned(bytes));
     for family in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
-        fonts.families.entry(family).or_default().insert(0, "c64".to_owned());
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .insert(0, "c64".to_owned());
     }
     ctx.set_fonts(fonts);
     true
@@ -89,7 +95,11 @@ fn find_c64_font() -> Option<Vec<u8>> {
         "/usr/share/fonts".into(),
         "/usr/local/share/fonts".into(),
     ];
-    let names = ["C64_Pro_Mono-STYLE.ttf", "C64 Pro Mono.ttf", "C64_Pro_Mono.ttf"];
+    let names = [
+        "C64_Pro_Mono-STYLE.ttf",
+        "C64 Pro Mono.ttf",
+        "C64_Pro_Mono.ttf",
+    ];
     for dir in dirs {
         for name in names {
             if let Ok(b) = std::fs::read(format!("{dir}/{name}")) {
@@ -164,32 +174,32 @@ fn apply_c64_theme(ctx: &egui::Context) {
 /// doubled to 16×16 so they render as chunky C64-style pixels beside 16px text.
 mod art {
     pub const FOLDER: [&str; 8] = [
-        "........", ".###....", "######..", "#.....#.", "#.....#.", "#.....#.",
-        "########", "........",
+        "........", ".###....", "######..", "#.....#.", "#.....#.", "#.....#.", "########",
+        "........",
     ];
     pub const PLUS: [&str; 8] = [
-        "........", "...##...", "...##...", "########", "########", "...##...",
-        "...##...", "........",
+        "........", "...##...", "...##...", "########", "########", "...##...", "...##...",
+        "........",
     ];
     pub const FLOPPY: [&str; 8] = [
-        "########", "#..##..#", "#..##..#", "#......#", "#.####.#", "#.#..#.#",
-        "#.####.#", "########",
+        "########", "#..##..#", "#..##..#", "#......#", "#.####.#", "#.#..#.#", "#.####.#",
+        "########",
     ];
     pub const DOWN: [&str; 8] = [
-        "...##...", "...##...", "...##...", "...##...", ".######.", "..####..",
-        "...##...", "........",
+        "...##...", "...##...", "...##...", "...##...", ".######.", "..####..", "...##...",
+        "........",
     ];
     pub const TRASH: [&str; 8] = [
-        "..####..", "########", "........", ".######.", ".#.##.#.", ".#.##.#.",
-        ".######.", "..####..",
+        "..####..", "########", "........", ".######.", ".#.##.#.", ".#.##.#.", ".######.",
+        "..####..",
     ];
     pub const PENCIL: [&str; 8] = [
-        "......##", ".....###", "....###.", "...###..", "..###...", ".###....",
-        "###.....", "#.......",
+        "......##", ".....###", "....###.", "...###..", "..###...", ".###....", "###.....",
+        "#.......",
     ];
     pub const DOC: [&str; 8] = [
-        "######..", "#....#..", "#.##.#..", "#....#..", "#.##.#..", "#....#..",
-        "#.##.#..", "######..",
+        "######..", "#....#..", "#.##.#..", "#....#..", "#.##.#..", "#....#..", "#.##.#..",
+        "######..",
     ];
 }
 
@@ -208,7 +218,11 @@ struct Icons {
 impl Icons {
     fn load(ctx: &egui::Context) -> Self {
         let mk = |name: &str, a: &[&str; 8]| {
-            ctx.load_texture(name, pixel_image(a, c64::BRIGHT), egui::TextureOptions::NEAREST)
+            ctx.load_texture(
+                name,
+                pixel_image(a, c64::BRIGHT),
+                egui::TextureOptions::NEAREST,
+            )
         };
         Icons {
             folder: mk("i_folder", &art::FOLDER),
@@ -236,12 +250,18 @@ fn pixel_image(grid: &[&str; 8], ink: Color32) -> egui::ColorImage {
             }
         }
     }
-    egui::ColorImage { size: [16, 16], pixels }
+    egui::ColorImage {
+        size: [16, 16],
+        pixels,
+    }
 }
 
 /// A 16×16-icon button carrying `label` text.
 fn icon_button<'a>(tex: &egui::TextureHandle, label: &'a str) -> egui::Button<'a> {
-    let img = egui::Image::new(egui::load::SizedTexture::new(tex.id(), egui::vec2(16.0, 16.0)));
+    let img = egui::Image::new(egui::load::SizedTexture::new(
+        tex.id(),
+        egui::vec2(16.0, 16.0),
+    ));
     egui::Button::image_and_text(img, label)
 }
 
@@ -264,6 +284,8 @@ struct Node {
     /// Short type mnemonic for the colour badge (e.g. "prg"); empty if none.
     badge: String,
     detail: String,
+    /// Block count for sorting (disk entries); 0 when not applicable.
+    blocks: u32,
     data: Result<Vec<u8>, String>,
 }
 
@@ -279,6 +301,7 @@ struct EditDisk {
 enum SortKey {
     Type,
     Name,
+    Blocks,
     Size,
 }
 
@@ -389,6 +412,7 @@ impl App {
                 let o = match key {
                     SortKey::Type => na.badge.cmp(&nb.badge).then_with(|| na.name.cmp(&nb.name)),
                     SortKey::Name => na.name.to_uppercase().cmp(&nb.name.to_uppercase()),
+                    SortKey::Blocks => na.blocks.cmp(&nb.blocks),
                     SortKey::Size => size(na).cmp(&size(nb)),
                 };
                 if asc {
@@ -422,7 +446,11 @@ impl App {
         self.renaming = None;
         match open_path(path) {
             Ok(Opened::Disk(disk)) => {
-                self.disk = Some(EditDisk { disk, path: Some(path.to_path_buf()), dirty: false });
+                self.disk = Some(EditDisk {
+                    disk,
+                    path: Some(path.to_path_buf()),
+                    dirty: false,
+                });
                 self.refresh();
                 self.after_open(path);
             }
@@ -460,6 +488,7 @@ impl App {
                     name: f.name.clone(),
                     badge: f.file_type.mnemonic().to_string(),
                     detail: format!("{} bytes", f.data.len()),
+                    blocks: 0,
                     data: Ok(f.data.clone()),
                 })
                 .collect();
@@ -533,7 +562,11 @@ impl App {
                     2 => Disk::format_d81(&self.new_name, &self.new_id),
                     _ => Disk::format(&self.new_name, &self.new_id),
                 };
-                self.disk = Some(EditDisk { disk, path: None, dirty: true });
+                self.disk = Some(EditDisk {
+                    disk,
+                    path: None,
+                    dirty: true,
+                });
                 self.selected = None;
                 self.refresh();
                 self.opened_path = None;
@@ -582,7 +615,11 @@ impl App {
         else {
             return;
         };
-        let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_default();
         let bytes = match ext.as_str() {
             "t64" => write_t64(stage),
             "lnx" => write_lnx(stage),
@@ -644,7 +681,11 @@ impl App {
                 Err(e) => self.status = format!("Add failed: {e}"),
             }
         } else if let Some(stage) = &mut self.archive {
-            stage.push(ImportFile { name: name.clone(), file_type: ft, data: bytes.to_vec() });
+            stage.push(ImportFile {
+                name: name.clone(),
+                file_type: ft,
+                data: bytes.to_vec(),
+            });
             self.refresh();
             self.status = format!("Added \"{name}\" ({} bytes)", bytes.len());
         }
@@ -707,11 +748,11 @@ impl App {
             return;
         };
         let path = if save_as || ed.path.is_none() {
-            let dlg = rfd::FileDialog::new().add_filter("disk image", &["d64", "d71", "d81", "d2m"]);
+            let dlg =
+                rfd::FileDialog::new().add_filter("disk image", &["d64", "d71", "d81", "d2m"]);
             let dlg = if let Some(p) = &ed.path {
-                dlg.set_directory(p.parent().unwrap_or(Path::new("."))).set_file_name(
-                    p.file_name().and_then(|n| n.to_str()).unwrap_or("disk.d64"),
-                )
+                dlg.set_directory(p.parent().unwrap_or(Path::new(".")))
+                    .set_file_name(p.file_name().and_then(|n| n.to_str()).unwrap_or("disk.d64"))
             } else {
                 dlg.set_file_name("disk.d64")
             };
@@ -756,7 +797,11 @@ impl App {
                     return;
                 }
             };
-            let dir = if self.out_dir.is_empty() { ".".into() } else { self.out_dir.clone() };
+            let dir = if self.out_dir.is_empty() {
+                ".".into()
+            } else {
+                self.out_dir.clone()
+            };
             let dest = PathBuf::from(&dir).join(sanitize(&name));
             match std::fs::write(&dest, &data) {
                 Ok(()) => self.status = format!("Wrote {} ({} bytes)", dest.display(), data.len()),
@@ -765,7 +810,11 @@ impl App {
             return;
         }
         // Several files.
-        let dir = if self.out_dir.is_empty() { ".".into() } else { self.out_dir.clone() };
+        let dir = if self.out_dir.is_empty() {
+            ".".into()
+        } else {
+            self.out_dir.clone()
+        };
         let (mut ok, mut skipped) = (0, 0);
         for i in targets {
             match &self.nodes[i].data {
@@ -784,7 +833,11 @@ impl App {
     }
 
     fn extract_all(&mut self) {
-        let dir = if self.out_dir.is_empty() { ".".into() } else { self.out_dir.clone() };
+        let dir = if self.out_dir.is_empty() {
+            ".".into()
+        } else {
+            self.out_dir.clone()
+        };
         let (mut ok, mut skipped) = (0, 0);
         for node in &self.nodes {
             match &node.data {
@@ -826,7 +879,11 @@ impl eframe::App for App {
         // the panels so the closures only read `self` immutably).
         match self.selected {
             Some(i) if i < self.nodes.len() => {
-                let stale = self.hex_cache.as_ref().map(|(ci, _)| *ci != i).unwrap_or(true);
+                let stale = self
+                    .hex_cache
+                    .as_ref()
+                    .map(|(ci, _)| *ci != i)
+                    .unwrap_or(true);
                 if stale {
                     let text = match &self.nodes[i].data {
                         Ok(d) => hexdump(d, 16 * 1024),
@@ -837,14 +894,24 @@ impl eframe::App for App {
             }
             _ => self.hex_cache = None,
         }
-        let preview = self.hex_cache.as_ref().map(|(_, s)| s.clone()).unwrap_or_default();
-        let preview_name = self.selected.and_then(|i| self.nodes.get(i)).map(|n| n.name.clone());
+        let preview = self
+            .hex_cache
+            .as_ref()
+            .map(|(_, s)| s.clone())
+            .unwrap_or_default();
+        let preview_name = self
+            .selected
+            .and_then(|i| self.nodes.get(i))
+            .map(|n| n.name.clone());
 
         // Context flags that drive which buttons are enabled.
         let sel_now = self.selected;
         let has_sel = self.selected.is_some();
-        let sel_extractable =
-            self.selected.and_then(|i| self.nodes.get(i)).map(|n| n.data.is_ok()).unwrap_or(false);
+        let sel_extractable = self
+            .selected
+            .and_then(|i| self.nodes.get(i))
+            .map(|n| n.data.is_ok())
+            .unwrap_or(false);
         let any_extractable = self.nodes.iter().any(|n| n.data.is_ok());
 
         // Local copies of edited strings (write back after the frame).
@@ -860,7 +927,12 @@ impl eframe::App for App {
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(2.0);
             egui::menu::bar(ui, |ui| {
-                ui.label(egui::RichText::new("◆ SECTOR64").heading().color(c64::ACCENT).strong());
+                ui.label(
+                    egui::RichText::new("◆ SECTOR64")
+                        .heading()
+                        .color(c64::ACCENT)
+                        .strong(),
+                );
                 ui.separator();
 
                 ui.menu_button("File", |ui| {
@@ -898,21 +970,25 @@ impl eframe::App for App {
                     }
                     // Add file ▸ (type + pick) — only when a disk/archive is open.
                     ui.add_enabled_ui(editable, |ui| {
-                        egui::menu::menu_custom_button(ui, icon_button(&ic.plus, "Add file ▸"), |ui| {
-                            ui.set_min_width(160.0);
-                            ui.label(egui::RichText::new("as type").color(c64::TEXT_DIM));
-                            ui.horizontal(|ui| {
-                                for (i, t) in ["prg", "seq", "usr"].iter().enumerate() {
-                                    if ui.selectable_label(add_type == i, *t).clicked() {
-                                        add_type = i;
+                        egui::menu::menu_custom_button(
+                            ui,
+                            icon_button(&ic.plus, "Add file ▸"),
+                            |ui| {
+                                ui.set_min_width(160.0);
+                                ui.label(egui::RichText::new("as type").color(c64::TEXT_DIM));
+                                ui.horizontal(|ui| {
+                                    for (i, t) in ["prg", "seq", "usr"].iter().enumerate() {
+                                        if ui.selectable_label(add_type == i, *t).clicked() {
+                                            add_type = i;
+                                        }
                                     }
+                                });
+                                if ui.add(icon_button(&ic.plus, "Add file…")).clicked() {
+                                    acts.push(Act::AddFile);
+                                    ui.close_menu();
                                 }
-                            });
-                            if ui.add(icon_button(&ic.plus, "Add file…")).clicked() {
-                                acts.push(Act::AddFile);
-                                ui.close_menu();
-                            }
-                        });
+                            },
+                        );
                     });
                     ui.separator();
                     ui.add_enabled_ui(is_disk, |ui| {
@@ -925,7 +1001,11 @@ impl eframe::App for App {
                             ui.close_menu();
                         }
                     });
-                    if is_archive && ui.add(icon_button(&ic.floppy, "Save archive as…")).clicked() {
+                    if is_archive
+                        && ui
+                            .add(icon_button(&ic.floppy, "Save archive as…"))
+                            .clicked()
+                    {
                         acts.push(Act::SaveArchiveAs);
                         ui.close_menu();
                     }
@@ -983,7 +1063,11 @@ impl eframe::App for App {
             // "Open:" and "Output:" are equal-width buttons ("Open:  " padded to
             // match "Output:"), so the two path fields line up on the left.
             ui.horizontal(|ui| {
-                if ui.button("Open:  ").on_hover_text("open a disk or archive").clicked() {
+                if ui
+                    .button("Open:  ")
+                    .on_hover_text("open a disk or archive")
+                    .clicked()
+                {
                     acts.push(Act::OpenDialog);
                 }
                 let mut opened = self.opened_path.clone().unwrap_or_default();
@@ -994,7 +1078,9 @@ impl eframe::App for App {
                         .desired_width(f32::INFINITY),
                 );
                 if !opened.is_empty() {
-                    let r = r.on_hover_text("click to copy path").interact(egui::Sense::click());
+                    let r = r
+                        .on_hover_text("click to copy path")
+                        .interact(egui::Sense::click());
                     if r.clicked() {
                         ui.ctx().copy_text(opened.clone());
                         acts.push(Act::CopiedPath);
@@ -1003,7 +1089,11 @@ impl eframe::App for App {
             });
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                if ui.button("Output:").on_hover_text("choose output folder").clicked() {
+                if ui
+                    .button("Output:")
+                    .on_hover_text("choose output folder")
+                    .clicked()
+                {
                     acts.push(Act::PickOutDir);
                 }
                 ui.add(
@@ -1013,18 +1103,22 @@ impl eframe::App for App {
                 );
             });
             ui.add_space(2.0);
-            egui::Frame::none().fill(c64::WELL).inner_margin(egui::Margin::symmetric(8.0, 3.0)).show(
-                ui,
-                |ui| {
+            egui::Frame::none()
+                .fill(c64::WELL)
+                .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new("►").color(c64::ACCENT));
-                        let msg = if self.status.is_empty() { "ready" } else { &self.status };
+                        let msg = if self.status.is_empty() {
+                            "ready"
+                        } else {
+                            &self.status
+                        };
                         ui.add(
                             egui::Label::new(egui::RichText::new(msg).color(c64::TEXT)).truncate(),
                         );
                     });
-                },
-            );
+                });
         });
 
         // Validation results appear in a dismiss-on-click popover (built below).
@@ -1038,16 +1132,20 @@ impl eframe::App for App {
                     None => "PREVIEW".to_string(),
                 };
                 ui.label(egui::RichText::new(header).color(c64::ACCENT).strong());
-                egui::ScrollArea::vertical().id_salt("preview_scroll").show(ui, |ui| {
-                    if preview.is_empty() {
-                        ui.label(
-                            egui::RichText::new("Select a file to preview its bytes.")
-                                .color(c64::TEXT_DIM),
-                        );
-                    } else {
-                        ui.add(egui::Label::new(egui::RichText::new(&preview).monospace()).wrap());
-                    }
-                });
+                egui::ScrollArea::vertical()
+                    .id_salt("preview_scroll")
+                    .show(ui, |ui| {
+                        if preview.is_empty() {
+                            ui.label(
+                                egui::RichText::new("Select a file to preview its bytes.")
+                                    .color(c64::TEXT_DIM),
+                            );
+                        } else {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(&preview).monospace()).wrap(),
+                            );
+                        }
+                    });
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -1171,7 +1269,9 @@ impl eframe::App for App {
             let text = self.validation.clone();
             let warn = text.contains('⚠');
             let win = egui::Window::new(
-                egui::RichText::new("DISK VALIDATION").color(c64::ACCENT).strong(),
+                egui::RichText::new("DISK VALIDATION")
+                    .color(c64::ACCENT)
+                    .strong(),
             )
             .collapsible(false)
             .resizable(false)
@@ -1203,25 +1303,29 @@ impl eframe::App for App {
         // Unsaved-changes confirmation (before opening another file or quitting).
         if self.confirm.is_some() {
             let mut action: Option<u8> = None; // 0 discard, 1 cancel, 2 save
-            egui::Window::new(egui::RichText::new("UNSAVED CHANGES").color(c64::WARN).strong())
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.label("The open disk has unsaved changes.");
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if is_disk && ui.button("💾 Save first").clicked() {
-                            action = Some(2);
-                        }
-                        if ui.button("Discard").clicked() {
-                            action = Some(0);
-                        }
-                        if ui.button("Cancel").clicked() {
-                            action = Some(1);
-                        }
-                    });
+            egui::Window::new(
+                egui::RichText::new("UNSAVED CHANGES")
+                    .color(c64::WARN)
+                    .strong(),
+            )
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.label("The open disk has unsaved changes.");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if is_disk && ui.button("💾 Save first").clicked() {
+                        action = Some(2);
+                    }
+                    if ui.button("Discard").clicked() {
+                        action = Some(0);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        action = Some(1);
+                    }
                 });
+            });
             match action {
                 Some(0) => match self.confirm.take() {
                     Some(Confirm::OpenFile(p)) => self.open(&p),
@@ -1252,7 +1356,11 @@ impl eframe::App for App {
 
         // Drag-and-drop a host file onto the window to add it (editable disks).
         let dropped: Vec<PathBuf> = ctx.input(|i| {
-            i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect()
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
         });
         if editable {
             for p in dropped {
@@ -1266,7 +1374,9 @@ impl eframe::App for App {
         // field has focus; Ctrl combos always apply.
         let typing = ctx.wants_keyboard_input();
         let n = self.nodes.len();
-        let sel_name = sel_now.and_then(|s| self.nodes.get(s)).map(|x| x.name.clone());
+        let sel_name = sel_now
+            .and_then(|s| self.nodes.get(s))
+            .map(|x| x.name.clone());
         let order = self.sorted_order();
         ctx.input(|i| {
             if i.modifiers.command && i.key_pressed(egui::Key::O) {
@@ -1362,9 +1472,10 @@ fn header_row(
 
     let label = |key: SortKey, text: &str| -> (String, egui::Color32) {
         match sort {
-            Some((k, asc)) if k == key => {
-                (format!("{text}{}", if asc { " ▲" } else { " ▼" }), c64::ACCENT)
-            }
+            Some((k, asc)) if k == key => (
+                format!("{text}{}", if asc { " ▲" } else { " ▼" }),
+                c64::ACCENT,
+            ),
             _ => (text.to_string(), c64::TEXT_DIM),
         }
     };
@@ -1375,15 +1486,21 @@ fn header_row(
     draw(&painter, type_x, SortKey::Type, "TYPE");
     draw(&painter, name_x, SortKey::Name, "NAME");
     if is_disk {
-        painter.text(pos2(detail_x, cy), Align2::LEFT_CENTER, "BLK", mono.clone(), c64::TEXT_DIM);
+        draw(&painter, detail_x, SortKey::Blocks, "BLK");
     }
     draw(&painter, status_x, SortKey::Size, "SIZE");
-    painter.hline(rect.x_range(), rect.bottom() - 1.0, Stroke::new(1.0, c64::ACCENT_DIM));
+    painter.hline(
+        rect.x_range(),
+        rect.bottom() - 1.0,
+        Stroke::new(1.0, c64::ACCENT_DIM),
+    );
 
     if resp.clicked() {
         if let Some(p) = resp.interact_pointer_pos() {
             return Some(if p.x >= status_x - cw {
                 SortKey::Size
+            } else if is_disk && p.x >= detail_x - cw {
+                SortKey::Blocks
             } else if p.x < name_x {
                 SortKey::Type
             } else {
@@ -1426,7 +1543,11 @@ fn file_row(
     }
 
     let text_col = if selected { c64::BG } else { c64::TEXT };
-    let dim_col = if selected { c64::BG_PANEL } else { c64::TEXT_DIM };
+    let dim_col = if selected {
+        c64::BG_PANEL
+    } else {
+        c64::TEXT_DIM
+    };
     let pad = 8.0;
     let cy = rect.center().y;
 
@@ -1434,11 +1555,23 @@ fn file_row(
     let mut name_x = rect.left() + pad;
     if !node.badge.is_empty() {
         let bw = cw * node.badge.chars().count() as f32 + 8.0;
-        let brect =
-            Rect::from_min_size(pos2(rect.left() + pad, rect.top() + 3.0), vec2(bw, row_h - 6.0));
-        let bcol = if selected { c64::BG } else { badge_color(&node.badge) };
+        let brect = Rect::from_min_size(
+            pos2(rect.left() + pad, rect.top() + 3.0),
+            vec2(bw, row_h - 6.0),
+        );
+        let bcol = if selected {
+            c64::BG
+        } else {
+            badge_color(&node.badge)
+        };
         painter.rect_stroke(brect, Rounding::ZERO, egui::Stroke::new(1.0, bcol));
-        painter.text(brect.center(), Align2::CENTER_CENTER, node.badge.to_uppercase(), mono.clone(), bcol);
+        painter.text(
+            brect.center(),
+            Align2::CENTER_CENTER,
+            node.badge.to_uppercase(),
+            mono.clone(),
+            bcol,
+        );
         name_x = brect.right() + pad;
     }
 
@@ -1455,16 +1588,34 @@ fn file_row(
     match &node.data {
         Ok(d) => {
             let status = format!("{:>w$} bytes", d.len(), w = cols.size_digits);
-            painter.text(pos2(status_x, cy), Align2::LEFT_CENTER, status, mono.clone(), dim_col);
+            painter.text(
+                pos2(status_x, cy),
+                Align2::LEFT_CENTER,
+                status,
+                mono.clone(),
+                dim_col,
+            );
         }
         Err(_) => {
             let col = if selected { c64::BG } else { c64::WARN };
-            painter.text(pos2(right_edge, cy), Align2::RIGHT_CENTER, "⚠ can't extract", mono.clone(), col);
+            painter.text(
+                pos2(right_edge, cy),
+                Align2::RIGHT_CENTER,
+                "⚠ can't extract",
+                mono.clone(),
+                col,
+            );
         }
     }
 
     if !node.detail.is_empty() {
-        painter.text(pos2(detail_x, cy), Align2::LEFT_CENTER, &node.detail, mono.clone(), dim_col);
+        painter.text(
+            pos2(detail_x, cy),
+            Align2::LEFT_CENTER,
+            &node.detail,
+            mono.clone(),
+            dim_col,
+        );
     }
 
     // Name zone (left-aligned), or an inline editable field when renaming.
@@ -1497,7 +1648,11 @@ fn file_row(
 
     let max_chars = ((name_end - name_x) / cw).max(3.0) as usize;
     let name = if node.name.chars().count() > max_chars {
-        let mut s: String = node.name.chars().take(max_chars.saturating_sub(1)).collect();
+        let mut s: String = node
+            .name
+            .chars()
+            .take(max_chars.saturating_sub(1))
+            .collect();
         s.push('…');
         s
     } else {
@@ -1505,7 +1660,10 @@ fn file_row(
     };
     painter.text(pos2(name_x, cy), Align2::LEFT_CENTER, &name, mono, text_col);
 
-    (resp.on_hover_text("double-click to extract · right-click for actions"), RenameEdit::None)
+    (
+        resp.on_hover_text("double-click to extract · right-click for actions"),
+        RenameEdit::None,
+    )
 }
 
 /// A classic hex + ASCII dump of up to `cap` bytes, 16 per line.
@@ -1526,7 +1684,11 @@ fn hexdump(data: &[u8], cap: usize) -> String {
         }
         s.push(' ');
         for &b in chunk {
-            s.push(if (0x20..=0x7E).contains(&b) { b as char } else { '.' });
+            s.push(if (0x20..=0x7E).contains(&b) {
+                b as char
+            } else {
+                '.'
+            });
         }
         s.push('\n');
     }
@@ -1546,7 +1708,13 @@ fn cbm_name_from(path: &Path) -> String {
 fn sanitize(name: &str) -> String {
     let n: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || " .-_".contains(c) { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || " .-_".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let n = n.trim();
     if n.is_empty() {
@@ -1566,7 +1734,13 @@ fn disk_nodes(disk: &Disk) -> (String, Vec<Node>) {
     let header = disk.header();
     let entries = disk.directory().unwrap_or_default();
     // Width of the widest block count, so the numbers right-align in the column.
-    let bw = entries.iter().map(|e| e.blocks).max().unwrap_or(0).to_string().len();
+    let bw = entries
+        .iter()
+        .map(|e| e.blocks)
+        .max()
+        .unwrap_or(0)
+        .to_string()
+        .len();
     let mut nodes = Vec::new();
     for e in &entries {
         let (splat, lock) = e.flags();
@@ -1580,10 +1754,14 @@ fn disk_nodes(disk: &Disk) -> (String, Vec<Node>) {
             name: e.name.clone(),
             badge: e.file_type.mnemonic().to_string(),
             detail,
+            blocks: e.blocks as u32,
             data: disk.read_entry(e).map_err(|x| x.to_string()),
         });
     }
-    let free = disk.blocks_free().map(|f| format!("{f} free")).unwrap_or_default();
+    let free = disk
+        .blocks_free()
+        .map(|f| format!("{f} free"))
+        .unwrap_or_default();
     let title = match header {
         Ok(h) => format!("Disk  0 \"{}\" {} {}   {}", h.name, h.id, h.dos_type, free),
         Err(e) => format!("Disk (header error: {e})"),
@@ -1618,6 +1796,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
                 badge: f.file_type.mnemonic().to_string(),
                 detail: format!("{} bytes", f.data.len()),
                 name: f.name,
+                blocks: 0,
                 data: Ok(f.data),
             })
             .collect::<Vec<_>>()
@@ -1632,13 +1811,18 @@ fn open_path(path: &Path) -> Result<Opened, String> {
 
     let (kind, nodes) = match ext.as_str() {
         "arc" | "sda" => {
-            let parse = if bytes.starts_with(&[0x01, 0x08]) { parse_sda } else { parse_arc };
+            let parse = if bytes.starts_with(&[0x01, 0x08]) {
+                parse_sda
+            } else {
+                parse_arc
+            };
             let nodes = parse(&bytes)
                 .map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|e| Node {
                     badge: e.file_type.mnemonic().to_string(),
                     detail: format!("{} bytes  {}", e.orig_size, e.method.label()),
+                    blocks: 0,
                     data: e.decode().map_err(|x| x.to_string()),
                     name: e.name,
                 })
@@ -1651,16 +1835,31 @@ fn open_path(path: &Path) -> Result<Opened, String> {
                 .into_iter()
                 .map(|e| Node {
                     badge: String::new(),
-                    detail: format!("{} → {} bytes  {}", e.compressed_size, e.original_size, e.method_str()),
+                    detail: format!(
+                        "{} → {} bytes  {}",
+                        e.compressed_size,
+                        e.original_size,
+                        e.method_str()
+                    ),
+                    blocks: 0,
                     data: e.decode().map_err(|x| x.to_string()),
                     name: e.name,
                 })
                 .collect();
             ("LHA/SFX archive", nodes)
         }
-        "lbr" => ("LBR library", import_nodes(parse_lbr(&bytes).map_err(|e| e.to_string())?)),
-        "t64" => ("T64 tape archive", import_nodes(parse_t64(&bytes).map_err(|e| e.to_string())?)),
-        "lnx" => ("Lynx archive", import_nodes(parse_lnx(&bytes).map_err(|e| e.to_string())?)),
+        "lbr" => (
+            "LBR library",
+            import_nodes(parse_lbr(&bytes).map_err(|e| e.to_string())?),
+        ),
+        "t64" => (
+            "T64 tape archive",
+            import_nodes(parse_t64(&bytes).map_err(|e| e.to_string())?),
+        ),
+        "lnx" => (
+            "Lynx archive",
+            import_nodes(parse_lnx(&bytes).map_err(|e| e.to_string())?),
+        ),
         "wr3" => {
             // Members share one sliding window, so decode the whole archive.
             let nodes = sector64::decompress_wr3(&bytes)
@@ -1669,13 +1868,17 @@ fn open_path(path: &Path) -> Result<Opened, String> {
                 .map(|f| Node {
                     badge: String::new(),
                     detail: format!("{} bytes", f.content.len()),
+                    blocks: 0,
                     data: Ok(f.content),
                     name: f.name,
                 })
                 .collect();
             ("Wraptor-3 archive", nodes)
         }
-        _ if is_p00 => ("PC64 container", import_nodes(vec![parse_p00(&bytes).map_err(|e| e.to_string())?])),
+        _ if is_p00 => (
+            "PC64 container",
+            import_nodes(vec![parse_p00(&bytes).map_err(|e| e.to_string())?]),
+        ),
         other => return Err(format!("unrecognized file type (.{other})")),
     };
     Ok(Opened::List(kind.to_string(), nodes))
@@ -1700,7 +1903,7 @@ fn make_icon() -> egui::IconData {
     fill(24, 7, 40, 19, shutter); // metal shutter
     fill(30, 9, 34, 17, body); // shutter window
     fill(10, 24, 38, 40, label); // write-on label
-    // clip the top-right corner diagonally
+                                 // clip the top-right corner diagonally
     for y in 5..14 {
         for x in 34..43 {
             if (x - 34) + (43 - y) > 9 {
@@ -1709,7 +1912,11 @@ fn make_icon() -> egui::IconData {
             }
         }
     }
-    egui::IconData { rgba, width: w as u32, height: h as u32 }
+    egui::IconData {
+        rgba,
+        width: w as u32,
+        height: h as u32,
+    }
 }
 
 fn main() -> eframe::Result<()> {
