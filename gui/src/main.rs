@@ -323,6 +323,9 @@ enum Confirm {
     Quit,
 }
 
+/// The user manual, embedded so Help works with no external files.
+const MANUAL: &str = include_str!("../MANUAL.md");
+
 /// How long a toast stays fully visible before it starts to fade, and how long
 /// the fade-out lasts (seconds).
 const TOAST_TTL: f64 = 4.5;
@@ -425,6 +428,8 @@ struct App {
     validation: String,
     // whether the validation-result popover is showing
     show_validation: bool,
+    // whether the Help / user-manual window is open
+    show_help: bool,
     // button-icon textures, built lazily on the first frame
     icons: Option<Icons>,
 }
@@ -1099,6 +1104,7 @@ impl eframe::App for App {
         let mut rename_focus = self.rename_focus;
         let mut filter = std::mem::take(&mut self.filter);
         let mut preview_mode = self.preview_mode;
+        let mut show_help = self.show_help;
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(2.0);
@@ -1229,7 +1235,10 @@ impl eframe::App for App {
                     if ui.button("Validate Disk").clicked() {
                         acts.push(Act::Validate);
                     }
-                    ui.separator();
+                }
+                ui.separator();
+                if ui.button("Help").clicked() {
+                    show_help = true;
                 }
             });
             ui.add_space(2.0);
@@ -1508,6 +1517,46 @@ impl eframe::App for App {
             }
         }
 
+        // Help / user manual window — a resizable, scrollable panel showing the
+        // embedded MANUAL.md. Esc or the Close button dismisses it.
+        if show_help {
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                show_help = false;
+            }
+            let screen = ctx.screen_rect();
+            egui::Window::new(
+                egui::RichText::new("SECTOR64 — HELP")
+                    .color(c64::ACCENT)
+                    .strong(),
+            )
+            .collapsible(false)
+            .resizable(true)
+            .default_width(620.0)
+            .default_height((screen.height() * 0.8).min(680.0))
+            .max_height(screen.height() - 60.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("User manual").color(c64::TEXT_DIM));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            show_help = false;
+                        }
+                    });
+                });
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt("help_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(MANUAL).monospace())
+                                .wrap_mode(egui::TextWrapMode::Extend),
+                        );
+                    });
+            });
+        }
+
         // Unsaved-changes confirmation (before opening another file or quitting).
         if self.confirm.is_some() {
             let mut action: Option<u8> = None; // 0 discard, 1 cancel, 2 save
@@ -1630,6 +1679,7 @@ impl eframe::App for App {
         self.renaming = renaming;
         self.rename_focus = rename_focus;
         self.preview_mode = preview_mode;
+        self.show_help = show_help;
         for act in acts {
             self.apply(act);
         }

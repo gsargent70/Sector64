@@ -47,8 +47,8 @@ impl LhaEntry {
 
     /// Decode this entry to the original bytes.
     ///
-    /// Only the stored method (`-lh0-`) is implemented; compressed methods
-    /// return [`Error::UnsupportedLhaMethod`].
+    /// Stored (`-lh0-`) and `-lh1-` (LZHUF) are implemented; any other method
+    /// returns [`Error::UnsupportedLhaMethod`].
     pub fn decode(&self) -> Result<Vec<u8>> {
         match &self.method {
             b"-lh0-" => {
