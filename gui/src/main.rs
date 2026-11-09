@@ -428,6 +428,8 @@ struct App {
     validation: String,
     // whether the validation-result popover is showing
     show_validation: bool,
+    // whether the preview pane is visible (toggled from the menu bar)
+    show_preview: bool,
     // whether the Help / user-manual window is open
     show_help: bool,
     // button-icon textures, built lazily on the first frame
@@ -465,6 +467,7 @@ impl App {
         let mut app = App {
             new_name: "blank".into(),
             new_id: "01".into(),
+            show_preview: true,
             ..Default::default()
         };
         // Restore the remembered output folder (window geometry is restored by
@@ -1104,6 +1107,7 @@ impl eframe::App for App {
         let mut rename_focus = self.rename_focus;
         let mut filter = std::mem::take(&mut self.filter);
         let mut preview_mode = self.preview_mode;
+        let mut show_preview = self.show_preview;
         let mut show_help = self.show_help;
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
@@ -1237,6 +1241,14 @@ impl eframe::App for App {
                     }
                 }
                 ui.separator();
+                if ui
+                    .selectable_label(show_preview, "Preview")
+                    .on_hover_text("show or hide the preview pane")
+                    .clicked()
+                {
+                    show_preview = !show_preview;
+                }
+                ui.separator();
                 if ui.button("Help").clicked() {
                     show_help = true;
                 }
@@ -1309,39 +1321,44 @@ impl eframe::App for App {
 
         // Validation results appear in a dismiss-on-click popover (built below).
 
-        egui::SidePanel::right("preview")
-            .resizable(true)
-            .default_width(320.0)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let header = match &preview_name {
-                        Some(n) => format!("PREVIEW — {n}"),
-                        None => "PREVIEW".to_string(),
-                    };
-                    ui.label(egui::RichText::new(header).color(c64::ACCENT).strong());
-                    // Hex / Text segmented toggle, right-aligned.
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.selectable_value(&mut preview_mode, PreviewMode::Text, "TEXT")
-                            .on_hover_text("show the bytes as PETSCII text");
-                        ui.selectable_value(&mut preview_mode, PreviewMode::Hex, "HEX")
-                            .on_hover_text("show an offset + hex + ASCII dump");
+        // Preview pane — shown only when toggled on from the menu bar. All of
+        // its functionality (HEX/TEXT toggle, scrolling) is unchanged.
+        if show_preview {
+            egui::SidePanel::right("preview")
+                .resizable(true)
+                .default_width(320.0)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        let header = match &preview_name {
+                            Some(n) => format!("PREVIEW — {n}"),
+                            None => "PREVIEW".to_string(),
+                        };
+                        ui.label(egui::RichText::new(header).color(c64::ACCENT).strong());
+                        // Hex / Text segmented toggle, right-aligned.
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.selectable_value(&mut preview_mode, PreviewMode::Text, "TEXT")
+                                .on_hover_text("show the bytes as PETSCII text");
+                            ui.selectable_value(&mut preview_mode, PreviewMode::Hex, "HEX")
+                                .on_hover_text("show an offset + hex + ASCII dump");
+                        });
                     });
+                    egui::ScrollArea::vertical()
+                        .id_salt("preview_scroll")
+                        .show(ui, |ui| {
+                            if preview.is_empty() {
+                                ui.label(
+                                    egui::RichText::new("Select a file to preview its bytes.")
+                                        .color(c64::TEXT_DIM),
+                                );
+                            } else {
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(&preview).monospace())
+                                        .wrap(),
+                                );
+                            }
+                        });
                 });
-                egui::ScrollArea::vertical()
-                    .id_salt("preview_scroll")
-                    .show(ui, |ui| {
-                        if preview.is_empty() {
-                            ui.label(
-                                egui::RichText::new("Select a file to preview its bytes.")
-                                    .color(c64::TEXT_DIM),
-                            );
-                        } else {
-                            ui.add(
-                                egui::Label::new(egui::RichText::new(&preview).monospace()).wrap(),
-                            );
-                        }
-                    });
-            });
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.nodes.is_empty() {
@@ -1679,6 +1696,7 @@ impl eframe::App for App {
         self.renaming = renaming;
         self.rename_focus = rename_focus;
         self.preview_mode = preview_mode;
+        self.show_preview = show_preview;
         self.show_help = show_help;
         for act in acts {
             self.apply(act);
