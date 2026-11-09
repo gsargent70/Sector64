@@ -90,27 +90,49 @@ the whole archive.
  3. THE WINDOW AT A GLANCE
 ----------------------------------------------------------------
 
+Default layout (the preview pane is hidden until you turn it on):
+
   +----------------------------------------------------------+
-  | ◆ SECTOR64   File   Extract | Validate Disk              |  <- menu bar
+  | ◆ SECTOR64  File  Extract | Validate Disk  Preview  Help |  <- menu bar
   +----------------------------------------------------------+
-  | Disk 0 "MY DISK" 1A        664 free       |  PREVIEW ... |  <- header + preview
-  | Filter: [ type to filter by name    ]     |  HEX | TEXT  |
-  | TYPE  NAME           BLK      SIZE        |  0000: ...   |
-  | PRG   HELLO           3 BLK   689 BYTES   |  0010: ...   |  <- listing + preview
-  | SEQ   README          2 BLK   410 BYTES   |  ...         |
-  |  ...                                      |              |
+  | Disk 0 "MY DISK" 1A                          664 free    |  <- header row
+  | Filter: [ type to filter by name                       ] |  <- filter box
+  | TYPE  NAME              BLK          SIZE                |  <- column heads
+  | PRG   HELLO              3 BLK       689 BYTES           |
+  | SEQ   README             2 BLK       410 BYTES           |  <- listing
+  |  ...                                                     |
   +----------------------------------------------------------+
   | Open:   /path/to/the/file/you/opened.d64                 |  <- opened path
   | Output: /path/to/your/extract/folder                     |  <- output folder
   | 24 item(s) loaded                                        |  <- status line
   +----------------------------------------------------------+
 
-- Menu bar (top): File, Extract, and a Validate Disk button.
+With the preview pane turned on (menu bar > Preview), it opens on
+the right and the listing makes room for it:
+
+  +----------------------------------------------------------+
+  | ◆ SECTOR64  File  Extract | Validate Disk [Preview] Help |  <- Preview lit
+  +----------------------------------------------------------+
+  | Disk 0 "MY DISK" 1A   664 free |  PREVIEW — HELLO        |  <- header | preview
+  | Filter: [ filter by name     ] |           HEX | TEXT    |     head + toggle
+  | TYPE  NAME       BLK     SIZE  |  0000: 01 08 ...  ..    |
+  | PRG   HELLO       3 BLK  689 B |  0010: 0B 08 ...  ..    |  <- listing | preview
+  | SEQ   README      2 BLK  410 B |  ...                    |
+  +----------------------------------------------------------+
+  | Open:   /path/to/the/file/you/opened.d64                 |
+  | Output: /path/to/your/extract/folder                     |
+  | 24 item(s) loaded                                        |
+  +----------------------------------------------------------+
+
+- Menu bar (top): File, Extract, a Validate Disk button, a
+  Preview toggle, and Help.
 - Header row: the disk/archive title and, for disks, blocks
   free. Shown as the first line of the listing.
 - Filter box: live name filter.
-- Listing: the files, in columns, with colour-coded badges.
-- Preview pane (right): the selected file's bytes, as hex or
+- Listing: the files, in columns, with colour-coded badges. It
+  uses the full width until the preview pane is shown.
+- Preview pane (right): hidden by default; turn it on with the
+  Preview menu item. Shows the selected file's bytes as hex or
   text. Drag its left edge to resize it.
 - Bottom bar: the opened file path, the output folder, and the
   status line.
@@ -127,10 +149,10 @@ Three ways:
   - Launch argument:  sector64-gui <path>
   - Drag a disk image or archive onto the window.
 
-When a file opens, the first entry is selected automatically so
-the preview shows its contents right away. The folder the file
-came from is suggested as the output folder if you have not set
-one yet.
+When a file opens, the first entry is selected automatically, so
+if you turn the preview pane on it has something to show at once.
+The folder the file came from is suggested as the output folder
+if you have not set one yet.
 
 
 ----------------------------------------------------------------
@@ -190,8 +212,13 @@ KEYBOARD NAVIGATION
  6. THE PREVIEW PANE (HEX / TEXT)
 ----------------------------------------------------------------
 
-The pane on the right shows the bytes of the selected file. Use
-the toggle in its header to switch views:
+The preview pane is hidden by default. Click Preview in the menu
+bar to show it; the item lights up while the pane is open, and
+clicking it again hides the pane and returns the listing to the
+full window width.
+
+When shown, the pane on the right shows the bytes of the selected
+file. Use the toggle in its header to switch views:
 
   HEX    An offset + hex + ASCII dump:
              0000: 01 08 0B 08 ...   ........
