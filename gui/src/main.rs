@@ -313,6 +313,63 @@ enum Confirm {
     Quit,
 }
 
+/// How long a toast stays fully visible before it starts to fade, and how long
+/// the fade-out lasts (seconds).
+const TOAST_TTL: f64 = 4.5;
+const TOAST_FADE: f64 = 0.6;
+
+/// Severity of a transient toast, which picks its border colour and tag.
+#[derive(Clone, Copy, PartialEq)]
+enum ToastKind {
+    Success,
+    Error,
+    Info,
+}
+
+impl ToastKind {
+    /// Classify a status message into a toast severity by its wording.
+    fn of(msg: &str) -> ToastKind {
+        let l = msg.to_ascii_lowercase();
+        if l.contains("fail") || l.contains("error") || l.contains("cannot") || l.contains("unknown")
+        {
+            ToastKind::Error
+        } else if l.starts_with("select ")
+            || l.starts_with("enter ")
+            || l.contains("at least")
+            || l.contains("nothing to")
+            || l.contains("holds exactly")
+        {
+            ToastKind::Info
+        } else {
+            ToastKind::Success
+        }
+    }
+
+    fn color(self) -> egui::Color32 {
+        match self {
+            ToastKind::Success => c64::OK,
+            ToastKind::Error => c64::WARN,
+            ToastKind::Info => c64::ACCENT,
+        }
+    }
+
+    fn tag(self) -> &'static str {
+        match self {
+            ToastKind::Success => "OK",
+            ToastKind::Error => "ERR",
+            ToastKind::Info => "i",
+        }
+    }
+}
+
+/// A transient on-screen notification, stacked at the bottom-right.
+struct Toast {
+    kind: ToastKind,
+    text: String,
+    /// `ctx.input().time` at which this toast was created.
+    born: f64,
+}
+
 #[derive(Default)]
 struct App {
     // new-image controls
@@ -329,6 +386,10 @@ struct App {
     // bottom bar
     out_dir: String,
     status: String,
+    /// Last status text turned into a toast, so each change toasts once.
+    last_status: String,
+    /// Active transient notifications (newest first in the stack).
+    toasts: Vec<Toast>,
     /// Path of the currently-open file (shown on the "Open:" line).
     opened_path: Option<String>,
     // state
@@ -867,6 +928,77 @@ impl App {
             }
         }
         self.status = format!("Extracted {ok} file(s) to {dir}, {skipped} skipped");
+    }
+
+    /// Turn a new status line into a toast (once per change).
+    fn pump_toasts(&mut self, now: f64) {
+        if self.status.is_empty() || self.status == self.last_status {
+            return;
+        }
+        self.last_status = self.status.clone();
+        self.toasts.push(Toast {
+            kind: ToastKind::of(&self.status),
+            text: self.status.clone(),
+            born: now,
+        });
+        // Keep only the few most recent so the stack can't grow unbounded.
+        let n = self.toasts.len();
+        if n > 4 {
+            self.toasts.drain(0..n - 4);
+        }
+    }
+
+    /// Draw the toast stack (bottom-right) and drop expired or clicked ones.
+    fn show_toasts(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        self.toasts.retain(|t| now - t.born < TOAST_TTL);
+        if self.toasts.is_empty() {
+            return;
+        }
+        // Repaint while toasts live so they fade and expire even when idle.
+        ctx.request_repaint_after(std::time::Duration::from_millis(80));
+
+        let mut dismiss: Option<usize> = None;
+        egui::Area::new(egui::Id::new("toasts"))
+            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -44.0))
+            .interactable(true)
+            .show(ctx, |ui| {
+                // Bottom-up so the newest toast sits at the bottom of the stack.
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
+                    for (idx, t) in self.toasts.iter().enumerate() {
+                        let remain = TOAST_TTL - (now - t.born);
+                        let a = (remain / TOAST_FADE).clamp(0.0, 1.0) as f32;
+                        let accent = t.kind.color().gamma_multiply(a);
+                        let resp = egui::Frame::none()
+                            .fill(c64::BG_PANEL.gamma_multiply(a))
+                            .stroke(egui::Stroke::new(1.0, accent))
+                            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                            .outer_margin(egui::Margin {
+                                top: 6.0,
+                                ..Default::default()
+                            })
+                            .show(ui, |ui| {
+                                ui.set_max_width(360.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(t.kind.tag()).color(accent).strong(),
+                                    );
+                                    ui.add(egui::Label::new(
+                                        egui::RichText::new(&t.text)
+                                            .color(c64::TEXT.gamma_multiply(a)),
+                                    ));
+                                });
+                            })
+                            .response;
+                        if resp.interact(egui::Sense::click()).clicked() {
+                            dismiss = Some(idx);
+                        }
+                    }
+                });
+            });
+        if let Some(i) = dismiss {
+            self.toasts.remove(i);
+        }
     }
 }
 
@@ -1467,6 +1599,11 @@ impl eframe::App for App {
         for act in acts {
             self.apply(act);
         }
+
+        // Surface any new status line as a transient toast, then draw the stack.
+        let now = ctx.input(|i| i.time);
+        self.pump_toasts(now);
+        self.show_toasts(ctx);
     }
 }
 
