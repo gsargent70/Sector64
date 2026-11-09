@@ -3,9 +3,8 @@
 ================================================================
 
 Sector64 is a native tool for browsing, extracting from, and
-editing Commodore disk images and archives — a DirMaster-style
-workbench for the C64 world, built on a dependency-free Rust
-core.
+editing Commodore disk images and archives — a workbench for the
+C64 world, built on a dependency-free Rust core.
 
 This manual describes every feature of the graphical browser
 (`sector64-gui`) and how to use it.
