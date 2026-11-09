@@ -960,12 +960,16 @@ impl App {
 
         let mut dismiss: Option<usize> = None;
         egui::Area::new(egui::Id::new("toasts"))
-            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -44.0))
+            // Upper-right, clear of the menu bar's left-aligned items.
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 52.0))
+            // Foreground so the stack paints above the menu-bar panel.
+            .order(egui::Order::Foreground)
             .interactable(true)
             .show(ctx, |ui| {
-                // Bottom-up so the newest toast sits at the bottom of the stack.
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
-                    for (idx, t) in self.toasts.iter().enumerate() {
+                // Top-down with the newest first, so it sits at the top of the
+                // stack (nearest the corner) and older ones push down.
+                ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                    for (idx, t) in self.toasts.iter().enumerate().rev() {
                         let remain = TOAST_TTL - (now - t.born);
                         let a = (remain / TOAST_FADE).clamp(0.0, 1.0) as f32;
                         let accent = t.kind.color().gamma_multiply(a);
