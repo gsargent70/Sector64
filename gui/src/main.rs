@@ -467,7 +467,6 @@ impl App {
         let mut app = App {
             new_name: "blank".into(),
             new_id: "01".into(),
-            show_preview: true,
             ..Default::default()
         };
         // Restore the remembered output folder (window geometry is restored by
