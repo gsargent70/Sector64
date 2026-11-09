@@ -202,8 +202,8 @@ Not yet: GEOS/graphics formats. Those are the next layers.
 
 A native front-end (`gui/`, a separate workspace member so the engine stays
 dependency-free) built on [`egui`](https://github.com/emilk/egui). It opens a
-disk image or any supported archive, lists the contents, and extracts files —
-the core of what DirMaster does.
+disk image or any supported archive, lists the contents, and extracts files,
+with disk and archive editing on top.
 
 ```sh
 cargo run -p sector64-gui                 # open the window
