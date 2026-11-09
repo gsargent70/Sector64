@@ -1,0 +1,4 @@
+# Toolchain pin for the Sector64 workspace. With mise active, `cargo` and
+# `rustc` resolve to this version inside the repo without a global default.
+[tools]
+rust = "1.90.0"
