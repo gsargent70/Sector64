@@ -1967,6 +1967,7 @@ fn main() -> eframe::Result<()> {
     let initial = std::env::args().nth(1);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_app_id("sector64-gui")
             .with_inner_size([960.0, 640.0])
             .with_icon(std::sync::Arc::new(make_icon())),
         persist_window: true,
