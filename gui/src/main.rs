@@ -382,12 +382,19 @@ enum Act {
 }
 
 impl App {
-    fn new(initial: Option<String>) -> Self {
+    fn new(initial: Option<String>, storage: Option<&dyn eframe::Storage>) -> Self {
         let mut app = App {
             new_name: "blank".into(),
             new_id: "01".into(),
             ..Default::default()
         };
+        // Restore the remembered output folder (window geometry is restored by
+        // eframe itself).
+        if let Some(s) = storage {
+            if let Some(dir) = eframe::get_value::<String>(s, "out_dir") {
+                app.out_dir = dir;
+            }
+        }
         if let Some(p) = initial {
             app.open(Path::new(&p));
         }
@@ -864,6 +871,11 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Persist app state (window geometry is saved by eframe itself).
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, "out_dir", &self.out_dir);
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut acts: Vec<Act> = Vec::new();
         if self.icons.is_none() {
@@ -1957,6 +1969,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([960.0, 640.0])
             .with_icon(std::sync::Arc::new(make_icon())),
+        persist_window: true,
         ..Default::default()
     };
     eframe::run_native(
@@ -1965,7 +1978,7 @@ fn main() -> eframe::Result<()> {
         Box::new(move |cc| {
             load_c64_font(&cc.egui_ctx);
             apply_c64_theme(&cc.egui_ctx);
-            Ok(Box::new(App::new(initial)))
+            Ok(Box::new(App::new(initial, cc.storage)))
         }),
     )
 }
