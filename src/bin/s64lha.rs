@@ -5,8 +5,8 @@
 //!   `s64lha extract <archive.lzh|.sfx> <name>`    extract one file to stdout
 //!
 //! A self-extracting `.sfx` is handled by locating the first archive header
-//! past its loader stub. Only stored (`-lh0-`) entries can be extracted today;
-//! compressed entries report the method that is not yet supported.
+//! past its loader stub. Stored (`-lh0-`) and `-lh1-` entries decode; an entry
+//! using a method that is not implemented reports that method instead.
 
 use std::io::Write;
 use std::process::ExitCode;

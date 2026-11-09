@@ -5,9 +5,9 @@
 //!   `s64arc extract <archive.arc|.sda> <name>`    extract one file to stdout
 //!
 //! A `.sda` self-dissolving archive is detected by its BASIC loader and its
-//! embedded ARC archive is read. Only stored (method 0) entries can be
-//! extracted today; compressed entries report the method that is not yet
-//! supported.
+//! embedded ARC archive is read. Stored, packed, squeezed, crunched, and
+//! squashed entries all decode; an entry using a method that is not
+//! implemented reports that method instead.
 
 use std::io::Write;
 use std::process::ExitCode;
