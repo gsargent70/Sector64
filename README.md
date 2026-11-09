@@ -225,11 +225,20 @@ Double-click a file to extract it; the Open dialog filters to known types.
 **New archive** starts an empty staging list — add host files, then **Save
 archive as…** a `.t64/.lnx/.lbr/.p00`.
 
-Install it as a desktop app for the current user:
+## Install
+
+A no-root installer builds from source and installs everything for the current
+user under `~/.local` (XDG-aware; honours `PREFIX` and `XDG_DATA_HOME`):
 
 ```sh
-packaging/install.sh    # builds release, installs the binary + a .desktop launcher
+sh packaging/install.sh      # the GUI + all s64* CLI tools, a launcher, icon, and docs
+sh packaging/uninstall.sh    # remove it again (settings and your images are left alone)
 ```
+
+It installs `sector64-gui` (also in your app launcher as **Sector64**) and the
+command-line tools to `~/.local/bin`, a desktop entry and app icon, and the
+manuals to `~/.local/share/doc/sector64`. Requires `cargo` (install Rust from
+<https://rustup.rs>).
 
 ## Build and run
 

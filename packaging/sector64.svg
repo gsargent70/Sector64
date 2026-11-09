@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <!-- Sector64 app icon: a 3.5" floppy disk in the C64 palette, matching the
+       window icon drawn by make_icon() in the GUI. -->
+  <!-- Disk body, with the classic chamfered top-right corner. -->
+  <path d="M7 7 H33 L41 15 V41 H7 Z"
+        fill="#2b4b7a" stroke="#172a49" stroke-width="1.2" stroke-linejoin="round"/>
+  <!-- Metal shutter and its window. -->
+  <rect x="23" y="8" width="13" height="12" fill="#b8bec8"/>
+  <rect x="28.5" y="10" width="5" height="8" fill="#2b4b7a"/>
+  <!-- Write-on label. -->
+  <rect x="10" y="25" width="28" height="15" rx="1" fill="#efefe6"/>
+  <rect x="12.5" y="29" width="23" height="1.6" fill="#9a92c0"/>
+  <rect x="12.5" y="32.5" width="23" height="1.6" fill="#9a92c0"/>
+  <rect x="12.5" y="36" width="15" height="1.6" fill="#9a92c0"/>
+</svg>
