@@ -305,6 +305,16 @@ enum SortKey {
     Size,
 }
 
+/// How the preview pane renders the selected file's bytes.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum PreviewMode {
+    /// Offset + hex + ASCII gutter (the default).
+    #[default]
+    Hex,
+    /// The bytes as PETSCII text, with CR/LF as line breaks.
+    Text,
+}
+
 /// A pending action blocked by unsaved changes.
 enum Confirm {
     /// Open this file once the user discards changes.
@@ -408,7 +418,10 @@ struct App {
     // staging list when building a new archive
     archive: Option<Vec<ImportFile>>,
     // preview/validation pane
-    hex_cache: Option<(usize, String)>,
+    /// Cached rendered preview: (node index, mode it was rendered in, text).
+    hex_cache: Option<(usize, PreviewMode, String)>,
+    /// How the preview pane renders bytes (hex or PETSCII text).
+    preview_mode: PreviewMode,
     validation: String,
     // whether the validation-result popover is showing
     show_validation: bool,
@@ -545,6 +558,8 @@ impl App {
             }
         }
         self.opened_path = Some(path.display().to_string());
+        // Select the first entry so the preview pane shows something at once.
+        self.selected = (!self.nodes.is_empty()).then_some(0);
         self.status = format!("{} item(s) loaded", self.nodes.len());
     }
 
@@ -1034,17 +1049,21 @@ impl eframe::App for App {
         // the panels so the closures only read `self` immutably).
         match self.selected {
             Some(i) if i < self.nodes.len() => {
+                let mode = self.preview_mode;
                 let stale = self
                     .hex_cache
                     .as_ref()
-                    .map(|(ci, _)| *ci != i)
+                    .map(|(ci, cm, _)| *ci != i || *cm != mode)
                     .unwrap_or(true);
                 if stale {
                     let text = match &self.nodes[i].data {
-                        Ok(d) => hexdump(d, 16 * 1024),
+                        Ok(d) => match mode {
+                            PreviewMode::Hex => hexdump(d, 16 * 1024),
+                            PreviewMode::Text => petscii_text(d, 64 * 1024),
+                        },
                         Err(e) => format!("(not extractable: {e})"),
                     };
-                    self.hex_cache = Some((i, text));
+                    self.hex_cache = Some((i, mode, text));
                 }
             }
             _ => self.hex_cache = None,
@@ -1052,7 +1071,7 @@ impl eframe::App for App {
         let preview = self
             .hex_cache
             .as_ref()
-            .map(|(_, s)| s.clone())
+            .map(|(_, _, s)| s.clone())
             .unwrap_or_default();
         let preview_name = self
             .selected
@@ -1079,6 +1098,7 @@ impl eframe::App for App {
         let mut renaming = self.renaming.filter(|&i| i < self.nodes.len());
         let mut rename_focus = self.rename_focus;
         let mut filter = std::mem::take(&mut self.filter);
+        let mut preview_mode = self.preview_mode;
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(2.0);
@@ -1284,11 +1304,20 @@ impl eframe::App for App {
             .resizable(true)
             .default_width(320.0)
             .show(ctx, |ui| {
-                let header = match &preview_name {
-                    Some(n) => format!("PREVIEW — {n}"),
-                    None => "PREVIEW".to_string(),
-                };
-                ui.label(egui::RichText::new(header).color(c64::ACCENT).strong());
+                ui.horizontal(|ui| {
+                    let header = match &preview_name {
+                        Some(n) => format!("PREVIEW — {n}"),
+                        None => "PREVIEW".to_string(),
+                    };
+                    ui.label(egui::RichText::new(header).color(c64::ACCENT).strong());
+                    // Hex / Text segmented toggle, right-aligned.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.selectable_value(&mut preview_mode, PreviewMode::Text, "TEXT")
+                            .on_hover_text("show the bytes as PETSCII text");
+                        ui.selectable_value(&mut preview_mode, PreviewMode::Hex, "HEX")
+                            .on_hover_text("show an offset + hex + ASCII dump");
+                    });
+                });
                 egui::ScrollArea::vertical()
                     .id_salt("preview_scroll")
                     .show(ui, |ui| {
@@ -1600,6 +1629,7 @@ impl eframe::App for App {
         self.add_type = add_type;
         self.renaming = renaming;
         self.rename_focus = rename_focus;
+        self.preview_mode = preview_mode;
         for act in acts {
             self.apply(act);
         }
@@ -1879,6 +1909,30 @@ fn hexdump(data: &[u8], cap: usize) -> String {
     }
     if data.len() > n {
         s.push_str(&format!("… ({} of {} bytes shown)\n", n, data.len()));
+    }
+    s
+}
+
+/// Render bytes as PETSCII text for the preview pane. CR/LF become line
+/// breaks; printable ASCII passes through (the C64 font draws it as PETSCII);
+/// PETSCII uppercase ($C1-$DA) and shifted space ($A0) are folded to their
+/// base glyph; everything else shows as `.`. Good for reading SEQ text files.
+fn petscii_text(data: &[u8], cap: usize) -> String {
+    let n = data.len().min(cap);
+    let mut s = String::with_capacity(n + 64);
+    for &b in &data[..n] {
+        let c = match b {
+            0x0D | 0x0A | 0x8D => '\n',
+            0x09 => '\t',
+            0xA0 => ' ',
+            0x20..=0x7E => b as char,
+            0xC1..=0xDA => (b - 0x80) as char, // shifted/upper PETSCII letters
+            _ => '.',
+        };
+        s.push(c);
+    }
+    if data.len() > n {
+        s.push_str(&format!("\n… ({} of {} bytes shown)", n, data.len()));
     }
     s
 }
