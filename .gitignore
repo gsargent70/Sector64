@@ -4,3 +4,4 @@ Cargo.lock
 /fuzz/corpus
 /fuzz/artifacts
 /fuzz/Cargo.lock
+/dist/

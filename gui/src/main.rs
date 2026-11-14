@@ -75,6 +75,7 @@ fn load_c64_font(ctx: &egui::Context) -> bool {
 /// common font directories. Only a path that actually names a C64 font is used
 /// (fontconfig falls back to a default otherwise).
 fn find_c64_font() -> Option<Vec<u8>> {
+    #[cfg(not(windows))]
     if let Ok(out) = std::process::Command::new("fc-match")
         .args(["--format=%{file}", "C64 Pro Mono"])
         .output()
@@ -88,13 +89,29 @@ fn find_c64_font() -> Option<Vec<u8>> {
             }
         }
     }
-    let home = std::env::var("HOME").unwrap_or_default();
-    let dirs = [
-        format!("{home}/.local/share/fonts"),
-        format!("{home}/.fonts"),
-        "/usr/share/fonts".into(),
-        "/usr/local/share/fonts".into(),
-    ];
+    // The folder holding the executable comes first, so a portable install
+    // (zip next to the .exe) can keep a user-supplied font beside it.
+    let mut dirs: Vec<String> = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.display().to_string()))
+        .into_iter()
+        .collect();
+    #[cfg(windows)]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            dirs.push(format!("{local}/Microsoft/Windows/Fonts"));
+        }
+        let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:/Windows".into());
+        dirs.push(format!("{windir}/Fonts"));
+    }
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        dirs.push(format!("{home}/.local/share/fonts"));
+        dirs.push(format!("{home}/.fonts"));
+        dirs.push("/usr/share/fonts".into());
+        dirs.push("/usr/local/share/fonts".into());
+    }
     let names = [
         "C64_Pro_Mono-STYLE.ttf",
         "C64 Pro Mono.ttf",
@@ -167,7 +184,14 @@ fn apply_c64_theme(ctx: &egui::Context) {
     style.visuals = v;
     style.spacing.button_padding = egui::vec2(8.0, 4.0);
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    ctx.set_style(style);
+    // egui keeps separate dark and light styles and, by default, follows the
+    // OS theme; `set_style` alone only replaces the one active right now. On a
+    // light-themed OS (common on Windows) egui would then switch to its stock
+    // light style. Use the C64 look for both and pin the app to dark.
+    let style = std::sync::Arc::new(style);
+    ctx.set_style_of(egui::Theme::Dark, style.clone());
+    ctx.set_style_of(egui::Theme::Light, style);
+    ctx.set_theme(egui::ThemePreference::Dark);
 }
 
 /// 8×8 pixel-art button icons (`#` = ink, anything else = transparent),
@@ -2233,6 +2257,9 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([960.0, 640.0])
             .with_icon(std::sync::Arc::new(make_icon())),
         persist_window: true,
+        // See gui/Cargo.toml: wgpu on Windows, OpenGL (glow) everywhere else.
+        #[cfg(windows)]
+        renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
     eframe::run_native(
