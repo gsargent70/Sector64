@@ -198,8 +198,9 @@ s64cvt <file.cvt> <outdir>   also write each record to disk
 
 Reads a GEOS **CVT** (ConVerT) container. With just the file, it prints
 the GEOS file's name, types, structure and — for a VLIR file — its record
-index. With an output directory, it also writes the INFO block and each
-record's data as separate files (`<name>.rNN`).
+index. With an output directory (created if it doesn't exist), it also
+writes the INFO block and each record's data as separate files
+(`<name>.rNN`).
 
 ```sh
 s64cvt notepad.cvt

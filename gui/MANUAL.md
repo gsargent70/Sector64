@@ -63,6 +63,8 @@ between runs, so it comes back the way you left it.
 
 Disk images (read):
     .d64  .d71  .d81  .g64  .d2m
+    Zip-Code sets  (1!NAME … 4!NAME — open any one of the four
+                    parts; all four must be in the same folder)
 
 Disk images (read + write / edit):
     .d64  .d71  .d81
@@ -80,7 +82,8 @@ Archives you can create and save:
     .t64  .lnx  .lbr  .p00
 
 When you open an archive, each member is decompressed on the
-fly. A member that uses a decoder Sector64 does not implement is
+fly. For compressed archives (ARC/SDA, LHA) the PACKED column
+shows each member's stored size and method next to its full SIZE. A member that uses a decoder Sector64 does not implement is
 listed with the reason in place of its bytes, instead of failing
 the whole archive.
 
