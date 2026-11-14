@@ -184,7 +184,14 @@ fn apply_c64_theme(ctx: &egui::Context) {
     style.visuals = v;
     style.spacing.button_padding = egui::vec2(8.0, 4.0);
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    ctx.set_style(style);
+    // egui keeps separate dark and light styles and, by default, follows the
+    // OS theme; `set_style` alone only replaces the one active right now. On a
+    // light-themed OS (common on Windows) egui would then switch to its stock
+    // light style. Use the C64 look for both and pin the app to dark.
+    let style = std::sync::Arc::new(style);
+    ctx.set_style_of(egui::Theme::Dark, style.clone());
+    ctx.set_style_of(egui::Theme::Light, style);
+    ctx.set_theme(egui::ThemePreference::Dark);
 }
 
 /// 8×8 pixel-art button icons (`#` = ink, anything else = transparent),
@@ -2250,6 +2257,9 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([960.0, 640.0])
             .with_icon(std::sync::Arc::new(make_icon())),
         persist_window: true,
+        // See gui/Cargo.toml: wgpu on Windows, OpenGL (glow) everywhere else.
+        #[cfg(windows)]
+        renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
     eframe::run_native(
