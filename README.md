@@ -227,7 +227,20 @@ archive as…** a `.t64/.lnx/.lbr/.p00`.
 
 ## Install
 
-A no-root installer builds from source and installs everything for the current
+**Prebuilt downloads** are on the
+[Releases page](https://github.com/gsargent70/Sector64/releases):
+
+- `sector64-<ver>-x86_64-linux.tar.gz`: the GUI, all CLI tools, a launcher
+  and icon, and the docs (see `INSTALL.txt` inside).
+- `sector64-<ver>-x86_64-windows.zip`: a portable Windows 10/11 build.
+  Unzip it anywhere and run `Sector64.exe`; the `s64*.exe` tools are
+  alongside it.
+
+Both are built by the `release` GitHub Actions workflow when a `v*` tag is
+pushed. To build them yourself, run `sh packaging/build-linux.sh`, or
+`sh packaging/build-windows.sh` to cross-compile from Linux with MinGW-w64.
+
+**From source**, a no-root installer builds from source and installs everything for the current
 user under `~/.local` (XDG-aware; honours `PREFIX` and `XDG_DATA_HOME`):
 
 ```sh
