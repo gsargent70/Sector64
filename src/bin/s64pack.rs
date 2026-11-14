@@ -5,6 +5,9 @@
 //! Each input file becomes a member; its CBM name is the upper-cased file stem
 //! (≤16 chars) and its type is PRG. A `.p00` holds exactly one file.
 
+#[macro_use]
+mod common;
+
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -59,7 +62,7 @@ fn main() -> ExitCode {
 
     match std::fs::write(out, &bytes) {
         Ok(()) => {
-            println!("wrote {out} ({} file(s), {} bytes)", files.len(), bytes.len());
+            outln!("wrote {out} ({} file(s), {} bytes)", files.len(), bytes.len());
             ExitCode::SUCCESS
         }
         Err(e) => {

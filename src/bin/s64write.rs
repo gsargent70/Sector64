@@ -10,6 +10,9 @@
 //! `add` stores the host file's raw bytes (for a PRG, that includes its two-byte
 //! load address). Edits are written back to the same image file.
 
+#[macro_use]
+mod common;
+
 use std::ffi::OsString;
 use std::path::Path;
 use std::process::ExitCode;
@@ -47,7 +50,7 @@ fn main() -> ExitCode {
 
     match result {
         Ok(msg) => {
-            println!("{msg}");
+            outln!("{msg}");
             ExitCode::SUCCESS
         }
         Err(msg) => {

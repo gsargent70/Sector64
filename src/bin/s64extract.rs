@@ -10,7 +10,9 @@
 //! s64extract disk.d64 GAME > game.prg
 //! ```
 
-use std::io::Write;
+#[macro_use]
+mod common;
+
 use std::process::ExitCode;
 
 use sector64::Disk;
@@ -58,10 +60,7 @@ fn main() -> ExitCode {
         }
     };
 
-    if let Err(e) = std::io::stdout().write_all(&data) {
-        eprintln!("s64extract: write failed: {e}");
-        return ExitCode::FAILURE;
-    }
+    common::write_stdout(&data);
     eprintln!(
         "s64extract: {} bytes from \"{}\" ({})",
         data.len(),

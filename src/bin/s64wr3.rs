@@ -9,6 +9,9 @@
 //! writes each file into `out-dir` (default: the current directory), sanitising
 //! the member name into a safe file name.
 
+#[macro_use]
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -44,11 +47,11 @@ fn list(path: &str) -> ExitCode {
         Ok(f) => f,
         Err(c) => return c,
     };
-    println!("{:<22} {:>10}", "name", "size");
+    outln!("{:<22} {:>10}", "name", "size");
     for f in &files {
-        println!("{:<22} {:>10}", format!("\"{}\"", f.name), f.content.len());
+        outln!("{:<22} {:>10}", format!("\"{}\"", f.name), f.content.len());
     }
-    println!("{} file(s)", files.len());
+    outln!("{} file(s)", files.len());
     ExitCode::SUCCESS
 }
 
@@ -66,13 +69,13 @@ fn extract(path: &str, out_dir: &Path) -> ExitCode {
         let out = out_dir.join(safe_name(&f.name));
         match std::fs::write(&out, &f.content) {
             Ok(()) => {
-                println!("{} ({} bytes)", out.display(), f.content.len());
+                outln!("{} ({} bytes)", out.display(), f.content.len());
                 written += 1;
             }
             Err(e) => eprintln!("s64wr3: cannot write {}: {e}", out.display()),
         }
     }
-    println!("extracted {written}/{} file(s)", files.len());
+    outln!("extracted {written}/{} file(s)", files.len());
     if written == files.len() {
         ExitCode::SUCCESS
     } else {

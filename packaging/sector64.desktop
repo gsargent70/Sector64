@@ -6,6 +6,7 @@ Comment=Browse, extract and edit Commodore disk images and archives
 Exec=sector64-gui %f
 Icon=sector64
 Terminal=false
+StartupWMClass=sector64-gui
 Categories=Utility;Archiving;FileTools;
 Keywords=Commodore;C64;D64;D81;disk;image;ARC;LHA;PETSCII;
 MimeType=application/x-d64;application/x-d81;application/x-t64;

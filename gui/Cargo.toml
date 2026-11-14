@@ -11,6 +11,11 @@ eframe = { version = "0.29", default-features = false, features = [
     "glow",
     "default_fonts",
     "persistence",
+    # Linux windowing back-ends. `wayland` is also what applies the app id
+    # ("sector64-gui") to the Wayland window, so the desktop matches it to
+    # sector64.desktop and its icon; without it the window class is empty.
+    "wayland",
+    "x11",
 ] }
 rfd = "0.15"
 
