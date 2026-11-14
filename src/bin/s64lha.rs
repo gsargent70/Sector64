@@ -8,7 +8,9 @@
 //! past its loader stub. Stored (`-lh0-`) and `-lh1-` entries decode; an entry
 //! using a method that is not implemented reports that method instead.
 
-use std::io::Write;
+#[macro_use]
+mod common;
+
 use std::process::ExitCode;
 
 use sector64::{parse_lha, LhaEntry};
@@ -43,9 +45,9 @@ fn run_list(path: &str) -> ExitCode {
         Ok(e) => e,
         Err(c) => return c,
     };
-    println!("{:<18} {:<4} {:>8} {:>8}  method", "name", "type", "orig", "packed");
+    outln!("{:<18} {:<4} {:>8} {:>8}  method", "name", "type", "orig", "packed");
     for e in &entries {
-        println!(
+        outln!(
             "{:<18} {:<4} {:>8} {:>8}  {}",
             format!("\"{}\"", e.name),
             e.file_type.mnemonic(),
@@ -54,7 +56,7 @@ fn run_list(path: &str) -> ExitCode {
             e.method_str(),
         );
     }
-    println!("{} file(s)", entries.len());
+    outln!("{} file(s)", entries.len());
     ExitCode::SUCCESS
 }
 
@@ -69,9 +71,7 @@ fn run_extract(path: &str, name: &str) -> ExitCode {
     };
     match entry.decode() {
         Ok(data) => {
-            if std::io::stdout().write_all(&data).is_err() {
-                return ExitCode::FAILURE;
-            }
+            common::write_stdout(&data);
             ExitCode::SUCCESS
         }
         Err(e) => {

@@ -2,6 +2,9 @@
 //!
 //! Usage: `s64ls <image.d64>`
 
+#[macro_use]
+mod common;
+
 use std::process::ExitCode;
 
 use sector64::Disk;
@@ -41,19 +44,19 @@ fn main() -> ExitCode {
 fn print_listing(disk: &Disk) -> sector64::Result<()> {
     let header = disk.header()?;
     // Reverse-video header line, as `LOAD"$",8` would show it.
-    println!("0 \"{:<16}\" {} {}", header.name, header.id, header.dos_type);
+    outln!("0 \"{:<16}\" {} {}", header.name, header.id, header.dos_type);
 
     for e in disk.directory()? {
         let (splat, lock) = e.flags();
         // blocks, then "name" in quotes, then the type with its flags.
         let quoted = format!("\"{}\"", e.name);
-        println!("{:<5}{:<18}{}{}{}", e.blocks, quoted, splat, e.file_type.mnemonic(), lock);
+        outln!("{:<5}{:<18}{}{}{}", e.blocks, quoted, splat, e.file_type.mnemonic(), lock);
     }
 
     match disk.blocks_free() {
-        Ok(free) => println!("{free} blocks free."),
+        Ok(free) => outln!("{free} blocks free."),
         Err(sector64::Error::UnsupportedGeometry) => {
-            println!("(blocks free: not available for this image)")
+            outln!("(blocks free: not available for this image)")
         }
         Err(e) => return Err(e),
     }

@@ -6,6 +6,9 @@
 //! pulses, not files: the bit encoding is loader-specific (most commercial
 //! tapes use custom turbo loaders), so there is no general file extraction.
 
+#[macro_use]
+mod common;
+
 use std::process::ExitCode;
 
 use sector64::parse_tap;
@@ -42,11 +45,11 @@ fn main() -> ExitCode {
         2 => "old NTSC",
         _ => "unknown",
     };
-    println!("version:   {}", tap.version);
-    println!("platform:  {platform}");
-    println!("video:     {video}");
-    println!("pulses:    {}", tap.pulses.len());
-    println!("cycles:    {}", tap.total_cycles());
-    println!("duration:  {:.1} s", tap.duration_secs());
+    outln!("version:   {}", tap.version);
+    outln!("platform:  {platform}");
+    outln!("video:     {video}");
+    outln!("pulses:    {}", tap.pulses.len());
+    outln!("cycles:    {}", tap.total_cycles());
+    outln!("duration:  {:.1} s", tap.duration_secs());
     ExitCode::SUCCESS
 }

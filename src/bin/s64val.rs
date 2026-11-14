@@ -6,6 +6,9 @@
 //! Map, reporting cross-linked blocks and blocks used but marked free. Exits
 //! non-zero if the disk is inconsistent or structurally broken.
 
+#[macro_use]
+mod common;
+
 use std::process::ExitCode;
 
 use sector64::Disk;
@@ -40,22 +43,23 @@ fn main() -> ExitCode {
         }
     };
 
-    println!(
+    outln!(
         "{} blocks used by files, {} free in BAM",
-        report.blocks_used, report.blocks_free
+        report.blocks_used,
+        report.blocks_free
     );
     for (t, s) in &report.cross_linked {
-        println!("  cross-linked block {t}/{s}");
+        outln!("  cross-linked block {t}/{s}");
     }
     for (t, s) in &report.used_but_free {
-        println!("  used but marked free in BAM: {t}/{s}");
+        outln!("  used but marked free in BAM: {t}/{s}");
     }
 
     if report.is_clean() {
-        println!("OK: no inconsistencies found.");
+        outln!("OK: no inconsistencies found.");
         ExitCode::SUCCESS
     } else {
-        println!(
+        outln!(
             "FAIL: {} cross-linked, {} used-but-free.",
             report.cross_linked.len(),
             report.used_but_free.len()

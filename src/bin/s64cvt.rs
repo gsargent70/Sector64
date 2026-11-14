@@ -8,6 +8,9 @@
 //! index; with an output directory, writes the INFO block and each record's
 //! data as separate files.
 
+#[macro_use]
+mod common;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -35,31 +38,31 @@ fn main() -> ExitCode {
         }
     };
 
-    println!("name:      \"{}\"", info.name);
-    println!("CBM type:  {}", info.cbm_type.mnemonic());
-    println!(
+    outln!("name:      \"{}\"", info.name);
+    outln!("CBM type:  {}", info.cbm_type.mnemonic());
+    outln!(
         "GEOS type: {} ({})",
         info.geos_file_type,
         geos_type_name(info.geos_file_type)
     );
-    println!(
+    outln!(
         "structure: {}",
         match info.structure {
             GeosStructure::Sequential => "sequential",
             GeosStructure::Vlir => "VLIR",
         }
     );
-    println!("signature: \"{}\"", info.signature);
+    outln!("signature: \"{}\"", info.signature);
     if info.structure == GeosStructure::Vlir {
         let present = info.records.iter().filter(|&&(c, s)| !(c == 0 && s == 0xFF)).count();
-        println!("records:   {} slots, {present} present", info.records.len());
+        outln!("records:   {} slots, {present} present", info.records.len());
         for (i, &(c, s)) in info.records.iter().enumerate() {
             if !(c == 0 && s == 0xFF) {
-                println!("  [{i:3}] {c} sector(s), last {s} bytes");
+                outln!("  [{i:3}] {c} sector(s), last {s} bytes");
             }
         }
     }
-    println!("data:      {} bytes", info.data.len());
+    outln!("data:      {} bytes", info.data.len());
 
     if let Some(dir) = out_dir {
         let base: String = info
@@ -92,7 +95,7 @@ fn main() -> ExitCode {
             }
             written += 1;
         }
-        println!("wrote {written} file(s) to {}", dir.display());
+        outln!("wrote {written} file(s) to {}", dir.display());
     }
     ExitCode::SUCCESS
 }
