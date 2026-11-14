@@ -70,6 +70,11 @@ fn main() -> ExitCode {
         let base = base.trim();
         let base = if base.is_empty() { "geos" } else { base };
         let dir = PathBuf::from(&dir);
+        // Create the output directory if needed, as s64wr3 does.
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("s64cvt: cannot create {}: {e}", dir.display());
+            return ExitCode::FAILURE;
+        }
         let info_path = dir.join(format!("{base}.info"));
         if let Err(e) = std::fs::write(&info_path, &info.info_block) {
             eprintln!("s64cvt: write {}: {e}", info_path.display());

@@ -442,6 +442,9 @@ struct App {
     /// A pending confirmation (unsaved changes before open/quit).
     confirm: Option<Confirm>,
     disk: Option<EditDisk>,
+    /// The listing is a read-only disk (G64, a 1581-partition D2M, a Zip-Code
+    /// set): its rows carry block counts, so the BLK column applies.
+    read_only_disk: bool,
     // staging list when building a new archive
     archive: Option<Vec<ImportFile>>,
     // preview/validation pane
@@ -559,6 +562,7 @@ impl App {
         self.filter.clear();
         self.disk = None;
         self.archive = None;
+        self.read_only_disk = false;
         self.title.clear();
         self.hex_cache = None;
         self.validation.clear();
@@ -576,6 +580,12 @@ impl App {
             Ok(Opened::List(title, nodes)) => {
                 self.title = title;
                 self.nodes = nodes;
+                self.after_open(path);
+            }
+            Ok(Opened::ReadOnlyDisk(title, nodes)) => {
+                self.title = title;
+                self.nodes = nodes;
+                self.read_only_disk = true;
                 self.after_open(path);
             }
             Err(e) => self.status = format!("Error: {e}"),
@@ -608,7 +618,7 @@ impl App {
                 .map(|f| Node {
                     name: f.name.clone(),
                     badge: f.file_type.mnemonic().to_string(),
-                    detail: format!("{} BYTES", f.data.len()),
+                    detail: String::new(), // size is in the SIZE column
                     blocks: 0,
                     data: Ok(f.data.clone()),
                 })
@@ -712,6 +722,7 @@ impl App {
             Act::Validate => self.validate(),
             Act::NewArchive => {
                 self.disk = None;
+                self.read_only_disk = false;
                 self.archive = Some(Vec::new());
                 self.selected = None;
                 self.hex_cache = None;
@@ -1450,7 +1461,8 @@ impl eframe::App for App {
             // Column header (reserves the scrollbar width so it lines up with
             // the rows below), clickable to sort.
             let bar = ui.spacing().scroll.bar_width + 2.0;
-            if let Some(key) = header_row(ui, cols, is_disk, bar, self.sort) {
+            let disk_columns = is_disk || self.read_only_disk;
+            if let Some(key) = header_row(ui, cols, disk_columns, bar, self.sort) {
                 acts.push(Act::Sort(key));
             }
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1793,6 +1805,15 @@ fn header_row(
     draw(&painter, name_x, SortKey::Name, "NAME");
     if is_disk {
         draw(&painter, detail_x, SortKey::Blocks, "BLK");
+    } else if cols.detail_chars > 0 {
+        // Compressed archives: packed size and method (not sortable).
+        painter.text(
+            pos2(detail_x, cy),
+            Align2::LEFT_CENTER,
+            "PACKED",
+            mono.clone(),
+            c64::TEXT_DIM,
+        );
     }
     draw(&painter, status_x, SortKey::Size, "SIZE");
     painter.hline(
@@ -2056,6 +2077,9 @@ fn sanitize(name: &str) -> String {
 
 enum Opened {
     Disk(Disk),
+    /// A disk shown as a listing only (title, rows with block counts).
+    ReadOnlyDisk(String, Vec<Node>),
+    /// An archive or container listing (title, rows).
     List(String, Vec<Node>),
 }
 
@@ -2099,6 +2123,35 @@ fn disk_nodes(disk: &Disk) -> (String, Vec<Node>) {
     (title, nodes)
 }
 
+/// If `path` names one part of a Zip-Code set (`1!NAME` to `4!NAME`), read
+/// all four parts from the same folder and decode them into a D64 image.
+/// Returns `None` when the name isn't a Zip-Code part.
+fn zipcode_set(path: &Path) -> Option<Result<Vec<u8>, String>> {
+    let file = path.file_name()?.to_str()?;
+    let rest = match file.as_bytes() {
+        [b'1'..=b'4', b'!', ..] if file.len() > 2 => &file[2..],
+        _ => return None,
+    };
+    let dir = path.parent().unwrap_or(Path::new(""));
+    let mut parts = Vec::with_capacity(4);
+    for n in 1..=4 {
+        let p = dir.join(format!("{n}!{rest}"));
+        match std::fs::read(&p) {
+            Ok(b) => parts.push(b),
+            Err(e) => {
+                return Some(Err(format!(
+                    "Zip-Code set incomplete: cannot read {}: {e}",
+                    p.display()
+                )))
+            }
+        }
+    }
+    Some(
+        sector64::parse_zipcode([&parts[0], &parts[1], &parts[2], &parts[3]])
+            .map_err(|e| format!("Zip-Code: {e}")),
+    )
+}
+
 /// Open a path as an editable disk or a read-only listing.
 fn open_path(path: &Path) -> Result<Opened, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
@@ -2108,6 +2161,17 @@ fn open_path(path: &Path) -> Result<Opened, String> {
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
 
+    // A Zip-Code set (1!NAME … 4!NAME) opens from any of its four parts as a
+    // read-only disk: saving must never write a D64 over a Zip-Code file.
+    if let Some(d64) = zipcode_set(path) {
+        let disk = Disk::load(d64?).map_err(|e| e.to_string())?;
+        let (title, nodes) = disk_nodes(&disk);
+        return Ok(Opened::ReadOnlyDisk(
+            format!("{title}   (Zip-Code, read-only)"),
+            nodes,
+        ));
+    }
+
     if let Ok(disk) = Disk::load(bytes.clone()) {
         // The sector formats are editable, as is a CMD-native (DNP) D2M (its
         // header byte at 1/1 is 'H'); G64 and 1581-partition D2Ms are read-only.
@@ -2116,7 +2180,10 @@ fn open_path(path: &Path) -> Result<Opened, String> {
             return Ok(Opened::Disk(disk));
         }
         let (title, nodes) = disk_nodes(&disk);
-        return Ok(Opened::List(format!("{title}   (read-only)"), nodes));
+        return Ok(Opened::ReadOnlyDisk(
+            format!("{title}   (read-only)"),
+            nodes,
+        ));
     }
 
     let import_nodes = |files: Vec<sector64::ImportFile>| {
@@ -2124,7 +2191,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
             .into_iter()
             .map(|f| Node {
                 badge: f.file_type.mnemonic().to_string(),
-                detail: format!("{} BYTES", f.data.len()),
+                detail: String::new(), // size is in the SIZE column
                 name: f.name,
                 blocks: 0,
                 data: Ok(f.data),
@@ -2151,7 +2218,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
                 .into_iter()
                 .map(|e| Node {
                     badge: e.file_type.mnemonic().to_string(),
-                    detail: format!("{} BYTES  {}", e.orig_size, e.method.label()),
+                    detail: format!("{} BYTES  {}", e.packed.len(), e.method.label()),
                     blocks: 0,
                     data: e.decode().map_err(|x| x.to_string()),
                     name: e.name,
@@ -2165,12 +2232,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
                 .into_iter()
                 .map(|e| Node {
                     badge: String::new(),
-                    detail: format!(
-                        "{} → {} BYTES  {}",
-                        e.compressed_size,
-                        e.original_size,
-                        e.method_str()
-                    ),
+                    detail: format!("{} BYTES  {}", e.compressed_size, e.method_str()),
                     blocks: 0,
                     data: e.decode().map_err(|x| x.to_string()),
                     name: e.name,
@@ -2197,7 +2259,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
                 .into_iter()
                 .map(|f| Node {
                     badge: String::new(),
-                    detail: format!("{} BYTES", f.content.len()),
+                    detail: String::new(), // size is in the SIZE column
                     blocks: 0,
                     data: Ok(f.content),
                     name: f.name,
@@ -2271,4 +2333,93 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(App::new(initial, cc.storage)))
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sector64::FileType;
+
+    /// A fresh, empty scratch folder under the system temp dir.
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("s64gui-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// A small D64 with one file on it.
+    fn sample_d64() -> Vec<u8> {
+        let mut disk = Disk::format("ZIP TEST", "ZT");
+        let data: Vec<u8> = (0..5000u32).map(|i| (i * 7 % 251) as u8).collect();
+        disk.write_file("HELLO", FileType::Prg, &data).unwrap();
+        disk.as_bytes().to_vec()
+    }
+
+    #[test]
+    fn zipcode_set_opens_from_any_part() {
+        let d64 = sample_d64();
+        let dir = scratch("zip");
+        for (i, part) in sector64::write_zipcode(&d64).unwrap().iter().enumerate() {
+            std::fs::write(dir.join(format!("{}!GAME", i + 1)), part).unwrap();
+        }
+        for n in 1..=4 {
+            let got = zipcode_set(&dir.join(format!("{n}!GAME"))).expect("is a zip-code part");
+            assert_eq!(got.unwrap(), d64, "opened via part {n}");
+        }
+        match open_path(&dir.join("3!GAME")).unwrap() {
+            Opened::ReadOnlyDisk(title, nodes) => {
+                assert!(
+                    title.contains("ZIP TEST") && title.contains("read-only"),
+                    "{title}"
+                );
+                assert!(nodes.iter().any(|n| n.name == "HELLO"));
+            }
+            _ => panic!("a Zip-Code set must open as a read-only disk"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn zipcode_set_reports_a_missing_part() {
+        let dir = scratch("zipmissing");
+        let parts = sector64::write_zipcode(&sample_d64()).unwrap();
+        for i in [0, 1, 3] {
+            std::fs::write(dir.join(format!("{}!GAME", i + 1)), &parts[i]).unwrap();
+        }
+        let err = zipcode_set(&dir.join("1!GAME")).unwrap().unwrap_err();
+        assert!(err.contains("3!GAME"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn non_zipcode_names_are_ignored() {
+        for name in ["disk.d64", "5!GAME", "1!", "!GAME", "x1!GAME"] {
+            assert!(zipcode_set(Path::new(name)).is_none(), "{name}");
+        }
+    }
+
+    /// The real sample set, when present (see the repo's tests/ for the convention).
+    #[test]
+    fn zipcode_sample_set() {
+        let dir = match std::env::var("SECTOR64_SAMPLES") {
+            Ok(p) => PathBuf::from(p),
+            Err(_) => match std::env::var("HOME") {
+                Ok(h) => PathBuf::from(h).join("Downloads/Sector64 Test Files"),
+                Err(_) => return,
+            },
+        };
+        let first = dir.join("1!ZIP-CODE-2");
+        if !first.is_file() {
+            eprintln!("skipping: Zip-Code sample not present");
+            return;
+        }
+        match open_path(&first).unwrap() {
+            Opened::ReadOnlyDisk(title, nodes) => {
+                assert!(title.contains("Zip-Code"), "{title}");
+                assert!(!nodes.is_empty());
+            }
+            _ => panic!("a Zip-Code set must open as a read-only disk"),
+        }
+    }
 }
