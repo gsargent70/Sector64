@@ -1,6 +1,6 @@
 [package]
 name = "sector64"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "Clean-room reader for Commodore 1541 D64 disk images"
 license = "MIT OR Apache-2.0"

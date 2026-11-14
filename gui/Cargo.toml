@@ -1,6 +1,6 @@
 [package]
 name = "sector64-gui"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "Native GUI for browsing Commodore disk images and archives"
 license = "MIT OR Apache-2.0"
