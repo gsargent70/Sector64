@@ -4,9 +4,8 @@ A small, clean-room Rust library (crate `sector64`) for Commodore **D64**
 (1541), **D71** (1571), and **D81** (1581) disk images — reading, writing, and
 validation.
 
-Written from the publicly documented 1541 disk format. It is **not** derived
-from DirMaster or any other tool's code, and it contains none of their fonts,
-icons, or branding. It is intended as the format-engine core you can build a
+Written from the publicly documented 1541 disk format. 
+It is intended as the format-engine core you can build a
 native Linux GUI (wxWidgets/Qt/egui) around.
 
 ## Why it exists / what's different
