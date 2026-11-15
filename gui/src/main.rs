@@ -301,6 +301,21 @@ fn badge_color(mnemonic: &str) -> Color32 {
     }
 }
 
+/// The PACKED column text for compressed archive members: each packed size
+/// right-aligned to the widest one, so the method names after it line up.
+fn packed_details(items: impl Iterator<Item = (usize, String)>) -> Vec<String> {
+    let items: Vec<_> = items.collect();
+    let w = items
+        .iter()
+        .map(|(n, _)| n.to_string().len())
+        .max()
+        .unwrap_or(1);
+    items
+        .into_iter()
+        .map(|(n, m)| format!("{n:>w$} BYTES  {m}"))
+        .collect()
+}
+
 /// One listed item: name, a short type badge, a detail line, and its decoded
 /// bytes (or a reason it can't be extracted).
 struct Node {
@@ -2213,12 +2228,18 @@ fn open_path(path: &Path) -> Result<Opened, String> {
             } else {
                 parse_arc
             };
-            let nodes = parse(&bytes)
-                .map_err(|e| e.to_string())?
+            let entries = parse(&bytes).map_err(|e| e.to_string())?;
+            let details = packed_details(
+                entries
+                    .iter()
+                    .map(|e| (e.packed.len(), e.method.label().to_string())),
+            );
+            let nodes = entries
                 .into_iter()
-                .map(|e| Node {
+                .zip(details)
+                .map(|(e, detail)| Node {
                     badge: e.file_type.mnemonic().to_string(),
-                    detail: format!("{} BYTES  {}", e.packed.len(), e.method.label()),
+                    detail,
                     blocks: 0,
                     data: e.decode().map_err(|x| x.to_string()),
                     name: e.name,
@@ -2227,12 +2248,18 @@ fn open_path(path: &Path) -> Result<Opened, String> {
             ("ARC/SDA archive", nodes)
         }
         "lha" | "lzh" | "sfx" => {
-            let nodes = parse_lha(&bytes)
-                .map_err(|e| e.to_string())?
+            let entries = parse_lha(&bytes).map_err(|e| e.to_string())?;
+            let details = packed_details(
+                entries
+                    .iter()
+                    .map(|e| (e.compressed_size as usize, e.method_str().to_string())),
+            );
+            let nodes = entries
                 .into_iter()
-                .map(|e| Node {
+                .zip(details)
+                .map(|(e, detail)| Node {
                     badge: String::new(),
-                    detail: format!("{} BYTES  {}", e.compressed_size, e.method_str()),
+                    detail,
                     blocks: 0,
                     data: e.decode().map_err(|x| x.to_string()),
                     name: e.name,
@@ -2338,6 +2365,23 @@ fn main() -> eframe::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packed_details_align_the_method_column() {
+        let d = packed_details(
+            [(6068, "lz"), (992, "lz"), (19374, "huffman+rle")]
+                .into_iter()
+                .map(|(n, m)| (n, m.to_string())),
+        );
+        assert_eq!(
+            d,
+            [
+                " 6068 BYTES  lz",
+                "  992 BYTES  lz",
+                "19374 BYTES  huffman+rle"
+            ]
+        );
+    }
     use sector64::FileType;
 
     /// A fresh, empty scratch folder under the system temp dir.
