@@ -135,7 +135,7 @@ the right and the listing makes room for it:
   uses the full width until the preview pane is shown.
 - Preview pane (right): hidden by default; turn it on with the
   Preview menu item. Shows the selected file's bytes as hex or
-  text. Drag its left edge to resize it.
+  text. It sizes itself to fit (see 6).
 - Bottom bar: the opened file path, the output folder, and the
   status line.
 - Toasts: brief messages pop in at the upper-right.
@@ -240,8 +240,14 @@ file. Use the toggle in its header to switch views:
          and non-text bytes show as a dot. Good for reading SEQ
          text files, DOCs, and strings embedded in programs.
 
-Drag the pane's left edge to make it wider or narrower. Files
-that cannot be decoded (an unsupported archive member) show the
+The pane sizes itself: wide enough for a whole hex line, or for
+40 columns of text (a C64 screen's width), whichever mode is on.
+If the window is too narrow for that and the listing, the pane
+gives way first, down to about 20 characters; hex lines then
+scroll sideways instead of wrapping. If the window is narrower
+still, the listing shortens long names, then hides the BLK /
+PACKED column, then the SIZE column, so text never overlaps.
+Widen the window to bring them back. Files that cannot be decoded (an unsupported archive member) show the
 reason here instead of bytes.
 
 

@@ -1387,26 +1387,48 @@ impl eframe::App for App {
 
         // Preview pane — shown only when toggled on from the menu bar. All of
         // its functionality (HEX/TEXT toggle, scrolling) is unchanged.
+        // Column widths for the listing, shared by the preview sizing below and
+        // the list itself.
+        let cols = Cols::of(&self.nodes);
+
         if show_preview {
+            let pane_w = preview_width(ctx, preview_mode, &preview, preview_name.as_deref(), cols);
             egui::SidePanel::right("preview")
-                .resizable(true)
-                .default_width(320.0)
+                .resizable(false)
+                .exact_width(pane_w)
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         let header = match &preview_name {
                             Some(n) => format!("PREVIEW — {n}"),
                             None => "PREVIEW".to_string(),
                         };
-                        ui.label(egui::RichText::new(header).color(c64::ACCENT).strong());
-                        // Hex / Text segmented toggle, right-aligned.
+                        // Hex / Text segmented toggle, right-aligned and laid
+                        // out first, so the title is shortened to the space
+                        // left beside it instead of running underneath.
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.selectable_value(&mut preview_mode, PreviewMode::Text, "TEXT")
                                 .on_hover_text("show the bytes as PETSCII text");
                             ui.selectable_value(&mut preview_mode, PreviewMode::Hex, "HEX")
                                 .on_hover_text("show an offset + hex + ASCII dump");
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(header).color(c64::ACCENT).strong(),
+                                        )
+                                        .truncate(),
+                                    );
+                                },
+                            );
                         });
                     });
-                    egui::ScrollArea::vertical()
+                    // Hex lines never wrap (the pane is sized to fit them, with
+                    // a horizontal scrollbar if the window is too narrow);
+                    // PETSCII text wraps at the pane's 40 columns, like a C64
+                    // screen.
+                    let hex = preview_mode == PreviewMode::Hex;
+                    egui::ScrollArea::new([hex, true])
                         .id_salt("preview_scroll")
                         .show(ui, |ui| {
                             if preview.is_empty() {
@@ -1415,10 +1437,9 @@ impl eframe::App for App {
                                         .color(c64::TEXT_DIM),
                                 );
                             } else {
-                                ui.add(
-                                    egui::Label::new(egui::RichText::new(&preview).monospace())
-                                        .wrap(),
-                                );
+                                let label =
+                                    egui::Label::new(egui::RichText::new(&preview).monospace());
+                                ui.add(if hex { label.extend() } else { label.wrap() });
                             }
                         });
                 });
@@ -1477,17 +1498,6 @@ impl eframe::App for App {
             });
             ui.add_space(2.0);
             // Auto-pad columns to the widest row so they line up.
-            let cols = Cols {
-                detail_chars: self.nodes.iter().map(|n| n.detail.chars().count()).max().unwrap_or(0),
-                size_digits: self
-                    .nodes
-                    .iter()
-                    .filter_map(|n| n.data.as_ref().ok())
-                    .map(|d| d.len().to_string().len())
-                    .max()
-                    .unwrap_or(1)
-                    .max(1),
-            };
             // Column header (reserves the scrollbar width so it lines up with
             // the rows below), clickable to sort.
             let bar = ui.spacing().scroll.bar_width + 2.0;
@@ -1785,6 +1795,118 @@ impl eframe::App for App {
 struct Cols {
     detail_chars: usize,
     size_digits: usize,
+    /// Some row can't be extracted, so the size column must also fit the
+    /// "⚠ can't extract" marker.
+    has_errors: bool,
+    /// The longest name in the listing.
+    name_chars: usize,
+}
+
+/// The marker shown in the size column for a row whose bytes can't be decoded.
+const CANT_EXTRACT: &str = "⚠ can't extract";
+
+/// The fewest name characters a row keeps before the listing starts dropping
+/// columns to make room.
+const MIN_NAME_CHARS: usize = 8;
+
+impl Cols {
+    /// Column widths for a listing: the widest detail text and size.
+    fn of(nodes: &[Node]) -> Cols {
+        Cols {
+            detail_chars: nodes
+                .iter()
+                .map(|n| n.detail.chars().count())
+                .max()
+                .unwrap_or(0),
+            size_digits: nodes
+                .iter()
+                .filter_map(|n| n.data.as_ref().ok())
+                .map(|d| d.len().to_string().len())
+                .max()
+                .unwrap_or(1)
+                .max(1),
+            has_errors: nodes.iter().any(|n| n.data.is_err()),
+            name_chars: nodes
+                .iter()
+                .map(|n| n.name.chars().count())
+                .max()
+                .unwrap_or(0),
+        }
+    }
+
+    /// Width of the size column in characters ("NNNNN BYTES", or the
+    /// can't-extract marker if wider).
+    fn size_chars(self) -> usize {
+        let bytes = self.size_digits + 6;
+        if self.has_errors {
+            bytes.max(CANT_EXTRACT.chars().count())
+        } else {
+            bytes
+        }
+    }
+
+    /// Characters a row needs for the type badge, a minimum-length name and
+    /// the given optional columns, including the gaps between them.
+    fn row_chars(self, detail: bool, size: bool) -> usize {
+        self.row_chars_with_name(MIN_NAME_CHARS, detail, size)
+    }
+
+    /// As [`Cols::row_chars`], with room for a `name`-character name.
+    fn row_chars_with_name(self, name: usize, detail: bool, size: bool) -> usize {
+        let mut n = 6 + name;
+        if detail && self.detail_chars > 0 {
+            n += 1 + self.detail_chars + 2;
+        } else if size {
+            n += 2;
+        }
+        if size {
+            n += self.size_chars();
+        }
+        n
+    }
+}
+
+/// Where a listing row's columns go at a given width. Columns that don't fit
+/// beside a [`MIN_NAME_CHARS`] name are dropped (detail first, then size),
+/// so text never overlaps.
+struct Placement {
+    /// Left edge of the size column, if shown.
+    status_x: Option<f32>,
+    /// Left edge of the detail (BLK / PACKED) column, if shown.
+    detail_x: Option<f32>,
+    /// Right limit for the name.
+    name_end: f32,
+}
+
+/// Lay out a row from `left` (the row's left edge, inside padding) to
+/// `right_edge`. Header and rows call this with the same inputs, so they
+/// always agree on which columns are shown.
+fn place_cols(left: f32, right_edge: f32, cw: f32, cols: Cols) -> Placement {
+    let avail = right_edge - left;
+    let fits = |chars: usize| chars as f32 * cw <= avail;
+    let size_w = cols.size_chars() as f32 * cw;
+    if cols.detail_chars > 0 && fits(cols.row_chars(true, true)) {
+        let status_x = right_edge - size_w;
+        let detail_x = status_x - 2.0 * cw - cols.detail_chars as f32 * cw;
+        Placement {
+            status_x: Some(status_x),
+            detail_x: Some(detail_x),
+            name_end: detail_x - cw,
+        }
+    } else if fits(cols.row_chars(false, true)) {
+        let status_x = right_edge - size_w;
+        Placement {
+            status_x: Some(status_x),
+            detail_x: None,
+            name_end: status_x - 2.0 * cw,
+        }
+    } else {
+        Placement {
+            status_x: None,
+            detail_x: None,
+            name_end: right_edge,
+        }
+    }
 }
 
 /// Outcome of an in-place name edit on a row.
@@ -1816,11 +1938,8 @@ fn header_row(
     let pad = 8.0;
     let cy = rect.center().y;
     let right_edge = rect.right() - pad - scrollbar;
-    let size_field_w = (cols.size_digits + 6) as f32 * cw;
-    let status_x = right_edge - size_field_w;
-    let detail_field_w = cols.detail_chars as f32 * cw;
-    let detail_x = status_x - 2.0 * cw - detail_field_w;
     let type_x = rect.left() + pad;
+    let place = place_cols(type_x, right_edge, cw, cols);
     let name_x = type_x + cw * 6.0;
 
     let label = |key: SortKey, text: &str| -> (String, egui::Color32) {
@@ -1838,19 +1957,23 @@ fn header_row(
     };
     draw(&painter, type_x, SortKey::Type, "TYPE");
     draw(&painter, name_x, SortKey::Name, "NAME");
-    if is_disk {
-        draw(&painter, detail_x, SortKey::Blocks, "BLK");
-    } else if cols.detail_chars > 0 {
-        // Compressed archives: packed size and method (not sortable).
-        painter.text(
-            pos2(detail_x, cy),
-            Align2::LEFT_CENTER,
-            "PACKED",
-            mono.clone(),
-            c64::TEXT_DIM,
-        );
+    if let Some(detail_x) = place.detail_x {
+        if is_disk {
+            draw(&painter, detail_x, SortKey::Blocks, "BLK");
+        } else {
+            // Compressed archives: packed size and method (not sortable).
+            painter.text(
+                pos2(detail_x, cy),
+                Align2::LEFT_CENTER,
+                "PACKED",
+                mono.clone(),
+                c64::TEXT_DIM,
+            );
+        }
     }
-    draw(&painter, status_x, SortKey::Size, "SIZE");
+    if let Some(status_x) = place.status_x {
+        draw(&painter, status_x, SortKey::Size, "SIZE");
+    }
     painter.hline(
         rect.x_range(),
         rect.bottom() - 1.0,
@@ -1859,9 +1982,10 @@ fn header_row(
 
     if resp.clicked() {
         if let Some(p) = resp.interact_pointer_pos() {
-            return Some(if p.x >= status_x - cw {
+            let past = |x: Option<f32>| x.is_some_and(|x| p.x >= x - cw);
+            return Some(if past(place.status_x) {
                 SortKey::Size
-            } else if is_disk && p.x >= detail_x - cw {
+            } else if is_disk && past(place.detail_x) {
                 SortKey::Blocks
             } else if p.x < name_x {
                 SortKey::Type
@@ -1941,36 +2065,37 @@ fn file_row(
     // right-padded number so the digits (and the "bytes"/"blk" units) line up;
     // the detail column is left-aligned at a fixed x computed from the widest
     // row, so every row's columns align regardless of content.
+    // Columns are dropped (detail, then size) when the row is too narrow,
+    // using the same decision as the header row.
     let right_edge = rect.right() - pad;
-    let size_field_w = (cols.size_digits + 6) as f32 * cw; // "NNNNN bytes"
-    let status_x = right_edge - size_field_w;
-    let detail_field_w = cols.detail_chars as f32 * cw;
-    let detail_x = status_x - 2.0 * cw - detail_field_w;
+    let place = place_cols(rect.left() + pad, right_edge, cw, cols);
 
-    match &node.data {
-        Ok(d) => {
-            let status = format!("{:>w$} BYTES", d.len(), w = cols.size_digits);
-            painter.text(
-                pos2(status_x, cy),
-                Align2::LEFT_CENTER,
-                status,
-                mono.clone(),
-                dim_col,
-            );
-        }
-        Err(_) => {
-            let col = if selected { c64::BG } else { c64::WARN };
-            painter.text(
-                pos2(right_edge, cy),
-                Align2::RIGHT_CENTER,
-                "⚠ can't extract",
-                mono.clone(),
-                col,
-            );
+    if let Some(status_x) = place.status_x {
+        match &node.data {
+            Ok(d) => {
+                let status = format!("{:>w$} BYTES", d.len(), w = cols.size_digits);
+                painter.text(
+                    pos2(status_x, cy),
+                    Align2::LEFT_CENTER,
+                    status,
+                    mono.clone(),
+                    dim_col,
+                );
+            }
+            Err(_) => {
+                let col = if selected { c64::BG } else { c64::WARN };
+                painter.text(
+                    pos2(right_edge, cy),
+                    Align2::RIGHT_CENTER,
+                    CANT_EXTRACT,
+                    mono.clone(),
+                    col,
+                );
+            }
         }
     }
 
-    if !node.detail.is_empty() {
+    if let (Some(detail_x), false) = (place.detail_x, node.detail.is_empty()) {
         painter.text(
             pos2(detail_x, cy),
             Align2::LEFT_CENTER,
@@ -1981,7 +2106,7 @@ fn file_row(
     }
 
     // Name zone (left-aligned), or an inline editable field when renaming.
-    let name_end = detail_x - cw;
+    let name_end = place.name_end;
     if let Some(buf) = edit {
         let name_rect = Rect::from_min_max(
             pos2(name_x, rect.top() + 2.0),
@@ -2008,8 +2133,10 @@ fn file_row(
         return (resp, result);
     }
 
-    let max_chars = ((name_end - name_x) / cw).max(3.0) as usize;
-    let name = if node.name.chars().count() > max_chars {
+    let max_chars = ((name_end - name_x) / cw).max(0.0) as usize;
+    let name = if max_chars == 0 {
+        String::new()
+    } else if node.name.chars().count() > max_chars {
         let mut s: String = node
             .name
             .chars()
@@ -2026,6 +2153,51 @@ fn file_row(
         resp.on_hover_text("double-click to extract · right-click for actions"),
         RenameEdit::None,
     )
+}
+
+/// Columns of PETSCII text the preview shows per line: a C64 screen's 40.
+const TEXT_PREVIEW_COLS: usize = 40;
+
+/// Width of the preview pane: wide enough for its content (a full hex line,
+/// or 40 columns of text) and its header, but never so wide that the file
+/// list loses columns it would otherwise show. If the window is too narrow
+/// for both, the pane gives way first, down to a floor.
+fn preview_width(
+    ctx: &egui::Context,
+    mode: PreviewMode,
+    preview: &str,
+    name: Option<&str>,
+    cols: Cols,
+) -> f32 {
+    let mono = egui::FontId::monospace(16.0);
+    let cw = ctx.fonts(|f| f.glyph_width(&mono, '0')).max(6.0);
+    let style = ctx.style();
+    let scroll = &style.spacing.scroll;
+    let bar = scroll.bar_width + scroll.bar_inner_margin + scroll.bar_outer_margin;
+    // Panel frame margins on both sides, plus a little slack.
+    let chrome = 2.0 * 8.0 + bar + 8.0;
+
+    let content_chars = match mode {
+        PreviewMode::Hex => preview
+            .lines()
+            .map(|l| l.chars().count())
+            .max()
+            .unwrap_or(0),
+        PreviewMode::Text => TEXT_PREVIEW_COLS,
+    };
+    // "PREVIEW — NAME" plus the HEX / TEXT toggle.
+    let header_chars = "PREVIEW — ".chars().count() + name.map_or(0, |n| n.chars().count()) + 12;
+    let want = content_chars.max(header_chars) as f32 * cw + chrome;
+
+    // Leave the list beside it room for its longest name and all its
+    // columns if possible, but keep at least ~20 characters of preview;
+    // below that the list shortens names, then drops columns (`place_cols`).
+    let screen = ctx.screen_rect().width();
+    let list_chrome = 2.0 * 8.0 + 2.0 * 8.0 + bar + 8.0;
+    let name = cols.name_chars.max(MIN_NAME_CHARS);
+    let list_full = cols.row_chars_with_name(name, true, true) as f32 * cw + list_chrome;
+    let floor = 20.0 * cw + chrome;
+    want.min(screen - list_full).max(floor.min(want))
 }
 
 /// A classic hex + ASCII dump of up to `cap` bytes, 16 per line.
@@ -2403,6 +2575,140 @@ fn main() -> eframe::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Run `f` inside one egui frame of a `width`-wide screen, so font
+    /// metrics and the screen size are available.
+    fn in_frame<R>(width: f32, f: impl FnOnce(&egui::Context) -> R) -> R {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(width, 700.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = None;
+        let mut f = Some(f);
+        let _ = ctx.run(input, |ctx| {
+            if let Some(f) = f.take() {
+                out = Some(f(ctx));
+            }
+        });
+        out.unwrap()
+    }
+
+    fn sample_cols() -> [Cols; 3] {
+        let disk = Cols {
+            detail_chars: 7, // "162 BLK"
+            size_digits: 5,
+            has_errors: false,
+            name_chars: 16,
+        };
+        let arc = Cols {
+            detail_chars: 22, // "19374 BYTES  huffman+rle"
+            size_digits: 5,
+            has_errors: false,
+            name_chars: 16,
+        };
+        let broken = Cols {
+            detail_chars: 0,
+            size_digits: 2,
+            has_errors: true,
+            name_chars: 16,
+        };
+        [disk, arc, broken]
+    }
+
+    #[test]
+    fn list_columns_never_overlap_at_any_width() {
+        let cw = 10.0;
+        let left = 8.0;
+        for cols in sample_cols() {
+            let mut shown_before = 0;
+            for w in (0..2000).step_by(5) {
+                let right = left + w as f32;
+                let p = place_cols(left, right, cw, cols);
+                let mut shown = 0;
+                if let Some(sx) = p.status_x {
+                    shown += 1;
+                    assert!(sx + cols.size_chars() as f32 * cw <= right + 0.01);
+                    if let Some(dx) = p.detail_x {
+                        shown += 1;
+                        assert!(dx + cols.detail_chars as f32 * cw <= sx);
+                        assert!(p.name_end <= dx);
+                    } else {
+                        assert!(p.name_end <= sx);
+                    }
+                    // A column is only shown with a minimum-length name
+                    // beside it (after the 6-char type badge).
+                    assert!(p.name_end - (left + 6.0 * cw) >= MIN_NAME_CHARS as f32 * cw - 0.01);
+                } else {
+                    assert!(p.detail_x.is_none());
+                    assert!(p.name_end <= right);
+                }
+                // Widening the row never hides a column.
+                assert!(
+                    shown >= shown_before,
+                    "width {w}: columns went {shown_before} → {shown}"
+                );
+                shown_before = shown;
+            }
+            assert_eq!(shown_before, if cols.detail_chars > 0 { 2 } else { 1 });
+        }
+    }
+
+    #[test]
+    fn preview_pane_fits_hex_lines_and_gives_way_to_the_list() {
+        let dump = hexdump(&[0x41; 64], 64);
+        let line = dump.lines().map(|l| l.chars().count()).max().unwrap();
+        for cols in sample_cols() {
+            let mut last = 0.0;
+            for screen in (400..3000).step_by(20) {
+                let screen = screen as f32;
+                let (pane, cw) = in_frame(screen, |ctx| {
+                    let cw = ctx.fonts(|f| f.glyph_width(&egui::FontId::monospace(16.0), '0'));
+                    (
+                        preview_width(ctx, PreviewMode::Hex, &dump, Some("STARFALL.GAME"), cols),
+                        cw,
+                    )
+                });
+                let want_min = line as f32 * cw;
+                let floor = 20.0 * cw;
+                // Never wider than a full hex line needs (plus chrome).
+                assert!(pane <= want_min + 120.0, "screen {screen}: pane {pane}");
+                // Never narrower than the floor.
+                assert!(
+                    pane >= floor,
+                    "screen {screen}: pane {pane} < floor {floor}"
+                );
+                // Wide screens: the whole hex line fits.
+                let list_full = cols.row_chars_with_name(16, true, true) as f32 * cw + 80.0;
+                if screen >= want_min + 120.0 + list_full {
+                    assert!(
+                        pane >= want_min,
+                        "screen {screen}: pane {pane} < line {want_min}"
+                    );
+                }
+                // Widening the window never shrinks the pane.
+                assert!(pane >= last);
+                last = pane;
+            }
+        }
+    }
+
+    #[test]
+    fn text_preview_is_forty_columns_wide() {
+        let cols = sample_cols()[0];
+        let (pane, cw) = in_frame(2400.0, |ctx| {
+            let cw = ctx.fonts(|f| f.glyph_width(&egui::FontId::monospace(16.0), '0'));
+            (
+                preview_width(ctx, PreviewMode::Text, "HELLO", Some("README"), cols),
+                cw,
+            )
+        });
+        assert!(pane >= TEXT_PREVIEW_COLS as f32 * cw);
+        assert!(pane <= (TEXT_PREVIEW_COLS + 12) as f32 * cw);
+    }
 
     #[test]
     fn sector64_x11_values() {
