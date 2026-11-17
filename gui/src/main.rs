@@ -495,6 +495,11 @@ enum Act {
     Create,
     AddFile,
     AddBytes(String, Vec<u8>),
+    /// A file was dropped on the window with nothing editable open: open it.
+    /// The count is how many other dropped files were ignored.
+    OpenDropped(PathBuf, usize),
+    /// Show a status message.
+    Status(String),
     Rename,
     Delete,
     Save,
@@ -699,6 +704,16 @@ impl App {
                 }
             }
             Act::CopiedPath => self.status = "Copied path to clipboard".into(),
+            Act::OpenDropped(p, ignored) => {
+                self.open(&p);
+                if ignored > 0 && !self.status.starts_with("Error") {
+                    self.status = format!(
+                        "{} (opened the first dropped file; {ignored} other(s) ignored)",
+                        self.status
+                    );
+                }
+            }
+            Act::Status(msg) => self.status = msg,
             Act::Sort(key) => self.cycle_sort(key),
             Act::ExtractSelected => self.extract_selected(),
             Act::ExtractAll => self.extract_all(),
@@ -1678,7 +1693,9 @@ impl eframe::App for App {
             }
         }
 
-        // Drag-and-drop a host file onto the window to add it (editable disks).
+        // Drag-and-drop. With an editable disk or a new archive open, dropped
+        // host files are added to it; otherwise the first dropped file is
+        // opened as a disk image or archive.
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -1688,10 +1705,13 @@ impl eframe::App for App {
         });
         if editable {
             for p in dropped {
-                if let Ok(bytes) = std::fs::read(&p) {
-                    acts.push(Act::AddBytes(cbm_name_from(&p), bytes));
+                match std::fs::read(&p) {
+                    Ok(bytes) => acts.push(Act::AddBytes(cbm_name_from(&p), bytes)),
+                    Err(e) => acts.push(Act::Status(format!("Can't add {}: {e}", p.display()))),
                 }
             }
+        } else if let Some(first) = dropped.first() {
+            acts.push(Act::OpenDropped(first.clone(), dropped.len() - 1));
         }
 
         // Keyboard shortcuts. Single-key actions are suppressed while a text
@@ -2338,9 +2358,17 @@ fn make_icon() -> egui::IconData {
     }
 }
 
+/// Whether `SECTOR64_X11` asks for the X11 back-end: set to anything except
+/// empty or "0".
+#[cfg(any(target_os = "linux", test))]
+fn force_x11(v: Option<&std::ffi::OsStr>) -> bool {
+    v.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
 fn main() -> eframe::Result<()> {
     let initial = std::env::args().nth(1);
-    let options = eframe::NativeOptions {
+    #[allow(unused_mut)]
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_app_id("sector64-gui")
             .with_inner_size([960.0, 640.0])
@@ -2351,6 +2379,16 @@ fn main() -> eframe::Result<()> {
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
+    // Linux: native Wayland by default. SECTOR64_X11=1 runs the window
+    // through X11 (XWayland on a Wayland desktop) instead, because winit 0.30
+    // only delivers drag-and-drop on X11.
+    #[cfg(target_os = "linux")]
+    if force_x11(std::env::var_os("SECTOR64_X11").as_deref()) {
+        options.event_loop_builder = Some(Box::new(|builder| {
+            use winit::platform::x11::EventLoopBuilderExtX11 as _;
+            builder.with_x11();
+        }));
+    }
     eframe::run_native(
         "Sector64",
         options,
@@ -2365,6 +2403,16 @@ fn main() -> eframe::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sector64_x11_values() {
+        use std::ffi::OsStr;
+        assert!(!force_x11(None));
+        assert!(!force_x11(Some(OsStr::new(""))));
+        assert!(!force_x11(Some(OsStr::new("0"))));
+        assert!(force_x11(Some(OsStr::new("1"))));
+        assert!(force_x11(Some(OsStr::new("yes"))));
+    }
 
     #[test]
     fn packed_details_align_the_method_column() {
