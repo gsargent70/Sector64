@@ -33,6 +33,12 @@ It runs on Linux and Windows. Releases are on GitHub
     wgpu there (`Renderer::Wgpu` in `main()`), because glow aborts on
     machines without an RGBA8 GL pixel format (seen under Wine). Linux
     keeps glow.
+- **Drag-and-drop on Linux:** winit 0.30 has no drag-and-drop on Wayland, so
+  the GUI only receives drops on X11. `SECTOR64_X11=1` makes `main()` start
+  the window on X11 (XWayland under Wayland) via `with_x11()`; that's why
+  `gui/Cargo.toml` names `winit` directly (Linux only, the same 0.30 eframe
+  uses). Drops add files when an editable disk/new archive is open, and open
+  the first file otherwise.
 - The GUI pins its C64 style to **both** egui themes and forces dark mode
   (`apply_c64_theme`). Otherwise a light-themed OS reverts it to egui's
   stock light style.

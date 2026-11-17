@@ -221,6 +221,10 @@ For the writable formats (`.d64/.d71/.d81` and CMD-native `.d2m`) it is also an
 prg/seq/usr, rename, delete, and Save / Save As. G64, 1581-partition D2Ms, and
 archives are read-only.
 Double-click a file to extract it; the Open dialog filters to known types.
+Drag a disk or archive onto the window to open it (when nothing editable is
+open). On Linux, drag-and-drop needs X11: on a Wayland desktop, start the GUI
+with `SECTOR64_X11=1 sector64-gui` to run it through XWayland, because the
+windowing library doesn't support drag-and-drop on Wayland yet.
 **New archive** starts an empty staging list — add host files, then **Save
 archive as…** a `.t64/.lnx/.lbr/.p00`.
 

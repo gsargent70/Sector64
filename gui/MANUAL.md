@@ -151,6 +151,15 @@ Three ways:
   - Launch argument:  sector64-gui <path>
   - Drag a disk image or archive onto the window.
 
+Dragging opens the file only when nothing editable is open (the
+start screen, or a read-only file such as an ARC or G64). With an
+editable disk or a new archive open, dropped files are added to
+it instead (see 8). If you drop several files, the first is
+opened and the rest are ignored.
+
+On Linux, drag-and-drop works only when Sector64 runs on X11; see
+"Drag-and-drop on Linux (Wayland)" in section 14.
+
 When a file opens, the first entry is selected automatically, so
 if you turn the preview pane on it has something to show at once.
 The folder the file came from is suggested as the output folder
@@ -277,7 +286,8 @@ CREATING A NEW DISK
 ADDING FILES
 
   With a disk open, either:
-    - Drag host files onto the window, or
+    - Drag host files onto the window (on Linux this needs X11;
+      see section 14), or
     - File > Add file ▸, choose the type (prg / seq / usr), then
       Add file… and pick a file.
   The file is given a Commodore name derived from its host name
@@ -317,7 +327,8 @@ THE UNSAVED-CHANGES GUARD
 ----------------------------------------------------------------
 
   1. File > New ▸ > Empty archive.
-  2. Add files by dragging them in, or File > Add file ▸.
+  2. Add files by dragging them in (on Linux this needs X11; see
+     section 14), or File > Add file ▸.
   3. File > Save archive as… and choose a container format by
      the extension you type:
          .t64   tape image
@@ -406,6 +417,22 @@ NOTHING HAPPENS WHEN I EXTRACT
   Make sure you have set an Output folder (the Output: button at
   the bottom). The status line / a toast will tell you where the
   files went.
+
+DRAG-AND-DROP ON LINUX (WAYLAND)
+
+  On a Wayland desktop (GNOME, KDE Plasma, Hyprland, Sway…)
+  Sector64 runs as a native Wayland window, and files dropped on
+  it never arrive: the windowing library it uses does not yet
+  support drag-and-drop on Wayland. Use File > Open… and
+  File > Add file ▸ instead, or start Sector64 through X11:
+
+      SECTOR64_X11=1 sector64-gui
+
+  On Wayland this runs the window through XWayland, where
+  drag-and-drop works. The catch: with display scaling above
+  100% an XWayland window may look slightly blurry. Set the
+  variable to 0 (or leave it unset) for the native Wayland
+  window. Windows and X11 desktops always support drag-and-drop.
 
 A FILE SHOWS "NOT EXTRACTABLE"
 

@@ -19,6 +19,12 @@ eframe = { version = "0.29", default-features = false, features = [
 ] }
 rfd = "0.15"
 
+# Linux: the same winit eframe already uses (no new crates), named directly
+# only to select the X11 back-end when SECTOR64_X11 is set. winit 0.30 has
+# no drag-and-drop on Wayland; see main().
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["x11"] }
+
 [[bin]]
 name = "sector64-gui"
 path = "src/main.rs"
