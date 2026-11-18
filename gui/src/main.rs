@@ -335,6 +335,24 @@ struct EditDisk {
     dirty: bool,
 }
 
+/// How many edits Undo can step back through.
+const UNDO_MAX: usize = 32;
+
+/// The editable content at one point in its history, for Undo / Redo.
+enum Snapshot {
+    /// An open disk image and whether it differed from the file on disk.
+    Disk(Disk, bool),
+    /// A new archive's staged files.
+    Archive(Vec<ImportFile>),
+}
+
+/// One undoable step: the content before (on the undo stack) or after (on the
+/// redo stack) an edit, and what the edit was, for the status line.
+struct UndoStep {
+    snapshot: Snapshot,
+    label: String,
+}
+
 /// Which column the listing is sorted by.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SortKey {
@@ -466,6 +484,10 @@ struct App {
     read_only_disk: bool,
     // staging list when building a new archive
     archive: Option<Vec<ImportFile>>,
+    /// Edits that Undo steps back through, newest last.
+    undo: Vec<UndoStep>,
+    /// Edits that Redo re-applies, newest last; cleared by any new edit.
+    redo: Vec<UndoStep>,
     // preview/validation pane
     /// Cached rendered preview: (node index, mode it was rendered in, text).
     hex_cache: Option<(usize, PreviewMode, String)>,
@@ -508,6 +530,8 @@ enum Act {
     OpenRecent(PathBuf),
     /// Empty the recent-files list.
     ClearRecent,
+    Undo,
+    Redo,
     Rename,
     Delete,
     Save,
@@ -588,6 +612,7 @@ impl App {
     }
 
     fn open(&mut self, path: &Path) {
+        self.clear_history();
         self.nodes.clear();
         self.selected = None;
         self.marked.clear();
@@ -741,6 +766,8 @@ impl App {
                     self.open(&p);
                 }
             }
+            Act::Undo => self.undo(),
+            Act::Redo => self.redo(),
             Act::ClearRecent => {
                 self.recent.clear();
                 self.status = "Cleared the recent-files list".into();
@@ -754,6 +781,7 @@ impl App {
                     2 => Disk::format_d81(&self.new_name, &self.new_id),
                     _ => Disk::format(&self.new_name, &self.new_id),
                 };
+                self.clear_history();
                 self.disk = Some(EditDisk {
                     disk,
                     path: None,
@@ -782,6 +810,7 @@ impl App {
             Act::SaveAs => self.save(true),
             Act::Validate => self.validate(),
             Act::NewArchive => {
+                self.clear_history();
                 self.disk = None;
                 self.read_only_disk = false;
                 self.archive = Some(Vec::new());
@@ -864,12 +893,15 @@ impl App {
             2 => FileType::Usr,
             _ => FileType::Prg,
         };
+        let before = self.snapshot();
+        let done = format!("Added \"{name}\" ({} bytes)", bytes.len());
         if let Some(ed) = &mut self.disk {
             match ed.disk.write_file(&name, ft, bytes) {
                 Ok(()) => {
                     ed.dirty = true;
+                    self.record(before, &done);
                     self.refresh();
-                    self.status = format!("Added \"{name}\" ({} bytes)", bytes.len());
+                    self.status = done;
                 }
                 Err(e) => self.status = format!("Add failed: {e}"),
             }
@@ -879,8 +911,9 @@ impl App {
                 file_type: ft,
                 data: bytes.to_vec(),
             });
+            self.record(before, &done);
             self.refresh();
-            self.status = format!("Added \"{name}\" ({} bytes)", bytes.len());
+            self.status = done;
         }
     }
 
@@ -895,19 +928,23 @@ impl App {
             self.status = "Enter a new name".into();
             return;
         }
+        let before = self.snapshot();
+        let done = format!("Renamed \"{old}\" → \"{new}\"");
         if let Some(ed) = &mut self.disk {
             match ed.disk.rename(&old, &new) {
                 Ok(()) => {
                     ed.dirty = true;
+                    self.record(before, &done);
                     self.refresh();
-                    self.status = format!("Renamed \"{old}\" → \"{new}\"");
+                    self.status = done;
                 }
                 Err(e) => self.status = format!("Rename failed: {e}"),
             }
         } else if let Some(stage) = &mut self.archive {
             stage[i].name = new.clone();
+            self.record(before, &done);
             self.refresh();
-            self.status = format!("Renamed \"{old}\" → \"{new}\"");
+            self.status = done;
         }
     }
 
@@ -917,22 +954,96 @@ impl App {
             return;
         };
         let name = self.nodes[i].name.clone();
+        let before = self.snapshot();
         if let Some(ed) = &mut self.disk {
             match ed.disk.scratch(&name) {
                 Ok(n) => {
                     ed.dirty = true;
+                    let done = format!("Deleted \"{name}\" ({n} blocks freed)");
+                    self.record(before, &done);
                     self.selected = None;
                     self.refresh();
-                    self.status = format!("Deleted \"{name}\" ({n} blocks freed)");
+                    self.status = done;
                 }
                 Err(e) => self.status = format!("Delete failed: {e}"),
             }
         } else if let Some(stage) = &mut self.archive {
             stage.remove(i);
+            let done = format!("Removed \"{name}\"");
+            self.record(before, &done);
             self.selected = None;
             self.refresh();
-            self.status = format!("Removed \"{name}\"");
+            self.status = done;
         }
+    }
+
+    /// The editable content as it is now, if a disk or new archive is open.
+    fn snapshot(&self) -> Option<Snapshot> {
+        if let Some(ed) = &self.disk {
+            Some(Snapshot::Disk(ed.disk.clone(), ed.dirty))
+        } else {
+            self.archive.as_ref().map(|a| Snapshot::Archive(a.clone()))
+        }
+    }
+
+    /// Put `snapshot` back as the editable content.
+    fn restore(&mut self, snapshot: Snapshot) {
+        match snapshot {
+            Snapshot::Disk(disk, dirty) => {
+                if let Some(ed) = &mut self.disk {
+                    ed.disk = disk;
+                    ed.dirty = dirty;
+                }
+            }
+            Snapshot::Archive(files) => self.archive = Some(files),
+        }
+        self.hex_cache = None;
+        self.refresh();
+    }
+
+    /// Record a successful edit: `before` goes on the undo stack and the redo
+    /// stack is dropped (a new edit starts a new branch of history).
+    fn record(&mut self, before: Option<Snapshot>, label: &str) {
+        let Some(snapshot) = before else { return };
+        self.undo.push(UndoStep {
+            snapshot,
+            label: label.to_string(),
+        });
+        if self.undo.len() > UNDO_MAX {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+    }
+
+    fn clear_history(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+    }
+
+    fn undo(&mut self) {
+        let (Some(step), Some(now)) = (self.undo.pop(), self.snapshot()) else {
+            self.status = "Nothing to undo".into();
+            return;
+        };
+        self.restore(step.snapshot);
+        self.status = format!("Undone: {}", step.label);
+        self.redo.push(UndoStep {
+            snapshot: now,
+            label: step.label,
+        });
+    }
+
+    fn redo(&mut self) {
+        let (Some(step), Some(now)) = (self.redo.pop(), self.snapshot()) else {
+            self.status = "Nothing to redo".into();
+            return;
+        };
+        self.restore(step.snapshot);
+        self.status = format!("Redone: {}", step.label);
+        self.undo.push(UndoStep {
+            snapshot: now,
+            label: step.label,
+        });
     }
 
     fn save(&mut self, save_as: bool) {
@@ -960,6 +1071,12 @@ impl App {
             Ok(()) => {
                 ed.path = Some(path.clone());
                 ed.dirty = false;
+                // Every other point in the history now differs from the file.
+                for step in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+                    if let Snapshot::Disk(_, dirty) = &mut step.snapshot {
+                        *dirty = true;
+                    }
+                }
                 self.opened_path = Some(path.display().to_string());
                 remember_recent(&mut self.recent, &path);
                 self.status = format!("Saved {}", path.display());
@@ -1312,6 +1429,30 @@ impl eframe::App for App {
                             .clicked()
                     {
                         acts.push(Act::SaveArchiveAs);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    // Undo / Redo, with what they would undo or redo on hover.
+                    let undo_next = self.undo.last().map(|s| s.label.clone());
+                    let redo_next = self.redo.last().map(|s| s.label.clone());
+                    let undo = ui
+                        .add_enabled(
+                            undo_next.is_some(),
+                            egui::Button::new("Undo").shortcut_text("Ctrl+Z"),
+                        )
+                        .on_hover_text(undo_next.as_deref().unwrap_or("nothing to undo"));
+                    if undo.clicked() {
+                        acts.push(Act::Undo);
+                        ui.close_menu();
+                    }
+                    let redo = ui
+                        .add_enabled(
+                            redo_next.is_some(),
+                            egui::Button::new("Redo").shortcut_text("Ctrl+Y"),
+                        )
+                        .on_hover_text(redo_next.as_deref().unwrap_or("nothing to redo"));
+                    if redo.clicked() {
+                        acts.push(Act::Redo);
                         ui.close_menu();
                     }
                     ui.separator();
@@ -1817,6 +1958,17 @@ impl eframe::App for App {
                 acts.push(Act::Save);
             }
             if !typing {
+                // Undo / redo (text fields keep Ctrl+Z for their own text).
+                if i.modifiers.command && i.key_pressed(egui::Key::Z) {
+                    acts.push(if i.modifiers.shift {
+                        Act::Redo
+                    } else {
+                        Act::Undo
+                    });
+                }
+                if i.modifiers.command && i.key_pressed(egui::Key::Y) {
+                    acts.push(Act::Redo);
+                }
                 if i.key_pressed(egui::Key::Enter) && sel_extractable {
                     acts.push(Act::ExtractSelected);
                 }
@@ -2910,6 +3062,100 @@ mod tests {
         );
         assert_eq!(basic_preview(&prg[..15]), "10 PRINT \"HI\"\n");
         assert!(basic_preview(b"\x00\xc0\xa9\x00\x60").starts_with("(not a BASIC program"));
+    }
+
+    /// An app with a blank, saved D64 open (as if loaded from a file).
+    fn app_with_disk() -> App {
+        let mut app = App {
+            disk: Some(EditDisk {
+                disk: Disk::format("UNDO TEST", "UT"),
+                path: None,
+                dirty: false,
+            }),
+            ..Default::default()
+        };
+        app.refresh();
+        app
+    }
+
+    fn names(app: &App) -> Vec<String> {
+        app.nodes.iter().map(|n| n.name.clone()).collect()
+    }
+
+    #[test]
+    fn undo_and_redo_step_through_disk_edits() {
+        let mut app = app_with_disk();
+        app.add("ONE".into(), b"\x01\x08");
+        app.add("TWO".into(), b"\x01\x08");
+        app.selected = Some(0);
+        app.rename_to = "FIRST".into();
+        app.rename();
+        app.selected = Some(1);
+        app.delete();
+        assert_eq!(names(&app), ["FIRST"]);
+
+        app.undo(); // delete
+        assert_eq!(names(&app), ["FIRST", "TWO"]);
+        assert_eq!(app.status, "Undone: Deleted \"TWO\" (1 blocks freed)");
+        app.undo(); // rename
+        assert_eq!(names(&app), ["ONE", "TWO"]);
+        app.undo(); // add TWO
+        app.undo(); // add ONE
+        assert!(names(&app).is_empty());
+        assert!(!app.is_dirty(), "back to the state that was loaded");
+        app.undo();
+        assert_eq!(app.status, "Nothing to undo");
+
+        app.redo();
+        app.redo();
+        assert_eq!(names(&app), ["ONE", "TWO"]);
+        assert!(app.is_dirty());
+        // A new edit drops the redo history.
+        app.add("NEW".into(), b"\x01\x08");
+        app.redo();
+        assert_eq!(app.status, "Nothing to redo");
+        assert_eq!(names(&app), ["ONE", "TWO", "NEW"]);
+    }
+
+    #[test]
+    fn failed_edits_are_not_recorded_and_history_is_capped() {
+        let mut app = app_with_disk();
+        app.selected = None;
+        app.delete(); // nothing selected: no change
+        assert!(app.undo.is_empty());
+        for i in 0..UNDO_MAX + 5 {
+            app.add(format!("F{i}"), b"\x01\x08");
+        }
+        assert_eq!(app.undo.len(), UNDO_MAX);
+    }
+
+    #[test]
+    fn undo_after_save_marks_the_disk_unsaved() {
+        let dir = std::env::temp_dir().join(format!("s64-undo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("u.d64");
+        let mut app = app_with_disk();
+        app.disk.as_mut().unwrap().path = Some(path.clone());
+        app.add("ONE".into(), b"\x01\x08");
+        app.save(false);
+        assert!(!app.is_dirty());
+        app.undo();
+        assert!(app.is_dirty(), "the disk no longer matches the saved file");
+        app.redo();
+        assert!(!app.is_dirty(), "back to exactly what was saved");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_works_on_a_new_archive_and_opening_clears_history() {
+        let mut app = App::default();
+        app.apply(Act::NewArchive);
+        app.add("A".into(), b"aaa");
+        app.add("B".into(), b"bbb");
+        app.undo();
+        assert_eq!(names(&app), ["A"]);
+        app.apply(Act::NewArchive);
+        assert!(app.undo.is_empty() && app.redo.is_empty());
     }
 
     #[test]
