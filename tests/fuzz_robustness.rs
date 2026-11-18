@@ -108,6 +108,11 @@ fn no_panics_on_arbitrary_input() {
             let _ = parse_lbr(&buf);
             let _ = sector64::parse_p00(&buf);
             let _ = sector64::parse_cvt(&buf);
+            let _ = sector64::detokenize_basic(&buf);
+            // ...and the same bytes behind a C64 BASIC load address.
+            let mut prg = vec![0x01, 0x08];
+            prg.extend_from_slice(&buf);
+            let _ = sector64::detokenize_basic(&prg);
             let _ = sector64::parse_tap(&buf);
             let _ = sector64::parse_wr3(&buf);
             let _ = parse_zipcode([&buf, &buf, &buf, &buf]);

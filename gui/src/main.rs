@@ -352,6 +352,8 @@ enum PreviewMode {
     Hex,
     /// The bytes as PETSCII text, with CR/LF as line breaks.
     Text,
+    /// A BASIC program listed the way the C64's LIST shows it.
+    Basic,
 }
 
 /// A pending action blocked by unsaved changes.
@@ -1163,6 +1165,7 @@ impl eframe::App for App {
                         Ok(d) => match mode {
                             PreviewMode::Hex => hexdump(d, 16 * 1024),
                             PreviewMode::Text => petscii_text(d, 64 * 1024),
+                            PreviewMode::Basic => basic_preview(d),
                         },
                         Err(e) => format!("(not extractable: {e})"),
                     };
@@ -1458,6 +1461,8 @@ impl eframe::App for App {
                         // out first, so the title is shortened to the space
                         // left beside it instead of running underneath.
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.selectable_value(&mut preview_mode, PreviewMode::Basic, "BASIC")
+                                .on_hover_text("list a BASIC program, like LIST on a C64");
                             ui.selectable_value(&mut preview_mode, PreviewMode::Text, "TEXT")
                                 .on_hover_text("show the bytes as PETSCII text");
                             ui.selectable_value(&mut preview_mode, PreviewMode::Hex, "HEX")
@@ -1477,8 +1482,8 @@ impl eframe::App for App {
                     });
                     // Hex lines never wrap (the pane is sized to fit them, with
                     // a horizontal scrollbar if the window is too narrow);
-                    // PETSCII text wraps at the pane's 40 columns, like a C64
-                    // screen.
+                    // PETSCII text and BASIC listings wrap at the pane's 40
+                    // columns, like a C64 screen.
                     let hex = preview_mode == PreviewMode::Hex;
                     egui::ScrollArea::new([hex, true])
                         .id_salt("preview_scroll")
@@ -1488,6 +1493,14 @@ impl eframe::App for App {
                                     egui::RichText::new("Select a file to preview its bytes.")
                                         .color(c64::TEXT_DIM),
                                 );
+                            } else if preview_mode == PreviewMode::Basic {
+                                let job = basic_layout(
+                                    &preview,
+                                    egui::TextStyle::Monospace.resolve(ui.style()),
+                                    ui.visuals().text_color(),
+                                    ui.available_width(),
+                                );
+                                ui.add(egui::Label::new(job));
                             } else {
                                 let label =
                                     egui::Label::new(egui::RichText::new(&preview).monospace());
@@ -2247,10 +2260,10 @@ fn preview_width(
             .map(|l| l.chars().count())
             .max()
             .unwrap_or(0),
-        PreviewMode::Text => TEXT_PREVIEW_COLS,
+        PreviewMode::Text | PreviewMode::Basic => TEXT_PREVIEW_COLS,
     };
-    // "PREVIEW — NAME" plus the HEX / TEXT toggle.
-    let header_chars = "PREVIEW — ".chars().count() + name.map_or(0, |n| n.chars().count()) + 12;
+    // "PREVIEW — NAME" plus the HEX / TEXT / BASIC toggle.
+    let header_chars = "PREVIEW — ".chars().count() + name.map_or(0, |n| n.chars().count()) + 18;
     let want = content_chars.max(header_chars) as f32 * cw + chrome;
 
     // Leave the list beside it room for its longest name and all its
@@ -2318,6 +2331,46 @@ fn petscii_text(data: &[u8], cap: usize) -> String {
         s.push_str(&format!("\n… ({} of {} bytes shown)", n, data.len()));
     }
     s
+}
+
+/// The BASIC preview: the program listed as on a C64, or a note when the
+/// file isn't BASIC. `data` is the whole file, load address included.
+fn basic_preview(data: &[u8]) -> String {
+    match sector64::detokenize_basic(data) {
+        Some(l) if l.trailing_bytes > 0 => format!(
+            "{}\n(followed by {} bytes of machine code or data)",
+            l.text, l.trailing_bytes
+        ),
+        Some(l) => l.text,
+        None => "(not a BASIC program; try HEX or TEXT)".into(),
+    }
+}
+
+/// Lay out a BASIC listing: line numbers in the accent colour so each line's
+/// start stands out, notes in parentheses dimmed, and long lines broken at
+/// any character (as on a C64 screen) rather than only at spaces.
+fn basic_layout(
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+    width: f32,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = width;
+    job.wrap.break_anywhere = true;
+    let fmt = |c| egui::TextFormat::simple(font.clone(), c);
+    for line in text.split_inclusive('\n') {
+        let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+        if line.starts_with('(') {
+            job.append(line, 0.0, fmt(c64::TEXT_DIM));
+        } else if digits > 0 {
+            job.append(&line[..digits], 0.0, fmt(c64::ACCENT));
+            job.append(&line[digits..], 0.0, fmt(color));
+        } else {
+            job.append(line, 0.0, fmt(color));
+        }
+    }
+    job
 }
 
 /// A CBM file name derived from a host path: the stem, uppercased, ≤16 chars.
@@ -2842,6 +2895,21 @@ mod tests {
             ["disk.d64  (games)", "disk.d64  (tools)", "demo.lnx"]
         );
         assert_eq!(recent_labels(&list)[1].1, "/a/tools/disk.d64");
+    }
+
+    #[test]
+    fn basic_preview_lists_programs_and_flags_the_rest() {
+        // 10 PRINT "HI"  (link $080D), end marker, then 2 bytes of code.
+        let prg = [
+            0x01, 0x08, 0x0D, 0x08, 0x0A, 0x00, 0x99, 0x20, 0x22, 0x48, 0x49, 0x22, 0x00, 0x00,
+            0x00, 0xEA, 0x60,
+        ];
+        assert_eq!(
+            basic_preview(&prg),
+            "10 PRINT \"HI\"\n\n(followed by 2 bytes of machine code or data)"
+        );
+        assert_eq!(basic_preview(&prg[..15]), "10 PRINT \"HI\"\n");
+        assert!(basic_preview(b"\x00\xc0\xa9\x00\x60").starts_with("(not a BASIC program"));
     }
 
     #[test]
