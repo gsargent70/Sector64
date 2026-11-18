@@ -61,6 +61,9 @@ It runs on Linux and Windows. Releases are on GitHub
   is installed (`/usr/bin/c1541`).
 - `*_samples.rs` (and a GUI Zip-Code test) read real-world files from
   `$SECTOR64_SAMPLES`, defaulting to `~/Downloads/Sector64 Test Files`.
+- `tests/petcat_basic.rs` checks the BASIC detokenizer (`src/basic.rs`)
+  against programs tokenized by VICE's **`petcat`** (installed with VICE).
+  Note: in petcat source π is `~`; `{pi}` is literal text.
 - `arc_samples.rs`'s squeeze plaintext check needs `ARC_PLAINTEXT` pointing at
   the plaintext directory. **Not** the samples dir; that trips the
   `checked > 0` assert.

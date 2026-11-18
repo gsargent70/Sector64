@@ -23,7 +23,7 @@ This manual describes every feature of the graphical browser
        - Filtering
        - Selecting files
        - Keyboard navigation
-  6. The preview pane (HEX / TEXT)
+  6. The preview pane (HEX / TEXT / BASIC)
   7. Extracting files
   8. Editing a disk image
        - Creating a new disk
@@ -229,7 +229,7 @@ KEYBOARD NAVIGATION
 
 
 ----------------------------------------------------------------
- 6. THE PREVIEW PANE (HEX / TEXT)
+ 6. THE PREVIEW PANE (HEX / TEXT / BASIC)
 ----------------------------------------------------------------
 
 The preview pane is hidden by default. Click Preview in the menu
@@ -249,8 +249,25 @@ file. Use the toggle in its header to switch views:
          and non-text bytes show as a dot. Good for reading SEQ
          text files, DOCs, and strings embedded in programs.
 
+  BASIC  A BASIC program listed the way LIST shows it on a C64:
+             10 PRINT "{CLR}{5 DOWN}HELLO"
+             20 GOTO 10
+         Keywords are spelled out, line numbers are highlighted,
+         and control codes inside quotes are shown by name, as
+         in printed magazine listings ({CLR}, {RVS ON}, {RED},
+         {5 DOWN} for five in a row). π shows as π. Codes with no
+         usual name show as {$xx}, and so do keywords from other
+         BASICs (C128 BASIC 7.0, Simons' BASIC), which this view
+         does not spell out.
+         A program that ends with a SYS line and machine code
+         lists the BASIC part, then says how many bytes follow.
+         A file that isn't a BASIC program says so; use HEX or
+         TEXT for it.
+
 The pane sizes itself: wide enough for a whole hex line, or for
-40 columns of text (a C64 screen's width), whichever mode is on.
+40 columns of text or BASIC (a C64 screen's width), whichever
+mode is on. Long BASIC lines wrap at any character, as they do on
+a C64 screen.
 If the window is too narrow for that and the listing, the pane
 gives way first, down to about 20 characters; hex lines then
 scroll sideways instead of wrapping. If the window is narrower
