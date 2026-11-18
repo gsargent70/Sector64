@@ -31,6 +31,7 @@ This manual describes every feature of the graphical browser
        - Renaming
        - Deleting (scratching)
        - Saving
+       - Undo and redo
        - The unsaved-changes guard
   9. Building an archive
  10. Validating a disk
@@ -344,6 +345,23 @@ SAVING
   File > Save As… writes to a new file (and lets you choose the
   format/name). The title drops the "•modified" mark once saved.
 
+UNDO AND REDO
+
+  File > Undo (Ctrl+Z) steps back through your edits to a disk or
+  a new archive: adds, renames and deletes, up to the last 32.
+  File > Redo (Ctrl+Y, or Ctrl+Shift+Z) puts them back. Hover over
+  either menu item to see which edit it would undo or redo; the
+  status line says what was undone.
+
+  Making a new edit after undoing clears the redo history.
+  Opening another file or starting a new disk or archive clears
+  both. Undo works across a save: undoing past it marks the disk
+  "•modified" again, since it no longer matches the file, and
+  redoing back to the saved state clears the mark.
+
+  While you are typing in a text field (the filter box or a
+  rename), Ctrl+Z undoes the typing instead.
+
 THE UNSAVED-CHANGES GUARD
 
   If a disk has unsaved edits and you try to open another file or
@@ -408,6 +426,8 @@ early. The most recent few are shown at once.
 
     Ctrl+O      Open a file
     Ctrl+S      Save the open disk
+    Ctrl+Z      Undo the last edit
+    Ctrl+Y      Redo (also Ctrl+Shift+Z)
     Enter       Extract the selected file
     Delete      Delete / scratch the selected file(s)
     F2          Rename the selected file (in place)

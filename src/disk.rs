@@ -9,6 +9,7 @@ use crate::geometry::{
 use crate::petscii;
 
 /// A loaded D64 disk image.
+#[derive(Clone)]
 pub struct Disk {
     data: Vec<u8>,
     /// Track/sector addressing and directory location for this image family.
