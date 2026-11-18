@@ -98,6 +98,12 @@ It runs on Linux and Windows. Releases are on GitHub
   3. Once the workflow finishes, replace the generated notes with
      hand-written ones (`gh release edit --notes-file`).
   4. Download the assets and check them against `SHA256SUMS`.
+  5. Publish to itch.io: `sh packaging/itch-publish.sh` (page
+     `gsargent/sector64`, channels `linux`/`windows`). It downloads the
+     release, checks `SHA256SUMS`, adds an `.itch.toml` so the itch app
+     launches the GUI, and pushes with butler (`--if-changed`). It needs
+     butler on `PATH` or in `$BUTLER`, logged in (`butler login`, run by the
+     user). Try `--dry-run` first.
 
 ## Rules
 
