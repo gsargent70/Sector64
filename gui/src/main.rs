@@ -3066,12 +3066,14 @@ mod tests {
 
     /// An app with a blank, saved D64 open (as if loaded from a file).
     fn app_with_disk() -> App {
-        let mut app = App::default();
-        app.disk = Some(EditDisk {
-            disk: Disk::format("UNDO TEST", "UT"),
-            path: None,
-            dirty: false,
-        });
+        let mut app = App {
+            disk: Some(EditDisk {
+                disk: Disk::format("UNDO TEST", "UT"),
+                path: None,
+                dirty: false,
+            }),
+            ..Default::default()
+        };
         app.refresh();
         app
     }
