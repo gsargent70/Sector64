@@ -53,8 +53,9 @@ You can also open a file straight away by passing its path:
     sector64-gui disk.d64
     sector64-gui "MY ARCHIVE.ARC"
 
-The window remembers its size and your chosen output folder
-between runs, so it comes back the way you left it.
+The window remembers its size, your chosen output folder and
+your recent files between runs, so it comes back the way you
+left it.
 
 
 ----------------------------------------------------------------
@@ -145,11 +146,19 @@ the right and the listing makes room for it:
  4. OPENING A FILE
 ----------------------------------------------------------------
 
-Three ways:
+Four ways:
 
   - Menu:  File > Open…  (or press Ctrl+O), then pick a file.
+  - Recent files:  File > Open Recent, or click a name under
+    RECENT FILES on the start screen.
   - Launch argument:  sector64-gui <path>
   - Drag a disk image or archive onto the window.
+
+Open Recent lists the last 10 files you opened or saved, newest
+first. Hover over a name to see its full path; when two files
+share a name, the folder each is in is shown after it. A file
+that has been moved or deleted is dropped from the list when you
+pick it. "Clear list", at the bottom of the menu, empties it.
 
 Dragging opens the file only when nothing editable is open (the
 start screen, or a read-only file such as an ARC or G64). With an
@@ -399,7 +408,8 @@ field (the filter box or a rename).
 Between runs Sector64 remembers:
     - the window size (and position, where the window manager
       allows it), and
-    - the Output folder you last chose.
+    - the Output folder you last chose, and
+    - your recent files (see 4).
 
 Note: under a tiling Wayland compositor the window manager
 controls window geometry, so the saved size may be overridden by

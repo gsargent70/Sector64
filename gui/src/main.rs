@@ -444,6 +444,8 @@ struct App {
     toasts: Vec<Toast>,
     /// Path of the currently-open file (shown on the "Open:" line).
     opened_path: Option<String>,
+    /// Recently opened or saved files, newest first (File ▸ Open Recent).
+    recent: Vec<String>,
     // state
     title: String,
     nodes: Vec<Node>,
@@ -500,6 +502,10 @@ enum Act {
     OpenDropped(PathBuf, usize),
     /// Show a status message.
     Status(String),
+    /// Open a file from the recent-files list.
+    OpenRecent(PathBuf),
+    /// Empty the recent-files list.
+    ClearRecent,
     Rename,
     Delete,
     Save,
@@ -521,6 +527,10 @@ impl App {
         if let Some(s) = storage {
             if let Some(dir) = eframe::get_value::<String>(s, "out_dir") {
                 app.out_dir = dir;
+            }
+            if let Some(list) = eframe::get_value::<Vec<String>>(s, "recent_files") {
+                app.recent = list;
+                app.recent.truncate(RECENT_MAX);
             }
         }
         if let Some(p) = initial {
@@ -619,6 +629,7 @@ impl App {
             }
         }
         self.opened_path = Some(path.display().to_string());
+        remember_recent(&mut self.recent, path);
         // Select the first entry so the preview pane shows something at once.
         self.selected = (!self.nodes.is_empty()).then_some(0);
         self.status = format!("{} item(s) loaded", self.nodes.len());
@@ -714,6 +725,24 @@ impl App {
                 }
             }
             Act::Status(msg) => self.status = msg,
+            Act::OpenRecent(p) => {
+                if !p.exists() {
+                    // Just the name: a full path would push the message
+                    // off the end of the status line.
+                    let shown = p.file_name().unwrap_or(p.as_os_str()).to_string_lossy();
+                    self.status =
+                        format!("Error: {shown} no longer exists (removed from recent files)");
+                    self.recent.retain(|r| Path::new(r) != p);
+                } else if self.is_dirty() {
+                    self.confirm = Some(Confirm::OpenFile(p));
+                } else {
+                    self.open(&p);
+                }
+            }
+            Act::ClearRecent => {
+                self.recent.clear();
+                self.status = "Cleared the recent-files list".into();
+            }
             Act::Sort(key) => self.cycle_sort(key),
             Act::ExtractSelected => self.extract_selected(),
             Act::ExtractAll => self.extract_all(),
@@ -930,6 +959,7 @@ impl App {
                 ed.path = Some(path.clone());
                 ed.dirty = false;
                 self.opened_path = Some(path.display().to_string());
+                remember_recent(&mut self.recent, &path);
                 self.status = format!("Saved {}", path.display());
                 self.refresh();
             }
@@ -1097,6 +1127,7 @@ impl eframe::App for App {
     /// Persist app state (window geometry is saved by eframe itself).
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "out_dir", &self.out_dir);
+        eframe::set_value(storage, "recent_files", &self.recent);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1218,6 +1249,27 @@ impl eframe::App for App {
                         acts.push(Act::OpenDialog);
                         ui.close_menu();
                     }
+                    // Open Recent ▸ (newest first; disabled when empty)
+                    ui.add_enabled_ui(!self.recent.is_empty(), |ui| {
+                        egui::menu::menu_custom_button(
+                            ui,
+                            icon_button(&ic.folder, "Open Recent ▸"),
+                            |ui| {
+                                ui.set_min_width(220.0);
+                                for (label, path) in recent_labels(&self.recent) {
+                                    if ui.button(label).on_hover_text(&path).clicked() {
+                                        acts.push(Act::OpenRecent(PathBuf::from(path)));
+                                        ui.close_menu();
+                                    }
+                                }
+                                ui.separator();
+                                if ui.button("Clear list").clicked() {
+                                    acts.push(Act::ClearRecent);
+                                    ui.close_menu();
+                                }
+                            },
+                        );
+                    });
                     // Add file ▸ (type + pick) — only when a disk/archive is open.
                     ui.add_enabled_ui(editable, |ui| {
                         egui::menu::menu_custom_button(
@@ -1447,14 +1499,26 @@ impl eframe::App for App {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.nodes.is_empty() {
-                ui.centered_and_justified(|ui| {
-                    ui.label(
-                        egui::RichText::new(
-                            "◆ SECTOR64\n\nOpen a disk or archive, or make a new image,\nthen drag files in to add them.",
-                        )
-                        .color(c64::TEXT_DIM),
-                    );
-                });
+                let intro = "◆ SECTOR64\n\nOpen a disk or archive, or make a new image,\nthen drag files in to add them.";
+                if self.recent.is_empty() || self.editable() || self.opened_path.is_some() {
+                    ui.centered_and_justified(|ui| {
+                        ui.label(egui::RichText::new(intro).color(c64::TEXT_DIM));
+                    });
+                } else {
+                    // Start screen: the intro, then the recent files as links.
+                    ui.vertical_centered(|ui| {
+                        ui.add_space((ui.available_height() * 0.25).max(8.0));
+                        ui.label(egui::RichText::new(intro).color(c64::TEXT_DIM));
+                        ui.add_space(16.0);
+                        ui.label(egui::RichText::new("RECENT FILES").color(c64::ACCENT));
+                        ui.add_space(4.0);
+                        for (label, path) in recent_labels(&self.recent) {
+                            if ui.link(label).on_hover_text(&path).clicked() {
+                                acts.push(Act::OpenRecent(PathBuf::from(path)));
+                            }
+                        }
+                    });
+                }
                 return;
             }
             // Disk/archive header, shown as a fixed title row above the files
@@ -2537,6 +2601,41 @@ fn force_x11(v: Option<&std::ffi::OsStr>) -> bool {
     v.is_some_and(|v| !v.is_empty() && v != "0")
 }
 
+/// How many files File ▸ Open Recent remembers.
+const RECENT_MAX: usize = 10;
+
+/// Put `path` at the front of the recent-files list, dropping any older
+/// entry for the same file and keeping at most `RECENT_MAX`.
+fn remember_recent(list: &mut Vec<String>, path: &Path) {
+    let full = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let full = full.display().to_string();
+    list.retain(|p| *p != full);
+    list.insert(0, full);
+    list.truncate(RECENT_MAX);
+}
+
+/// Menu labels for the recent files: the file name, with its folder added
+/// when two entries share a name. Returns `(label, full path)` pairs.
+fn recent_labels(list: &[String]) -> Vec<(String, String)> {
+    let name = |p: &str| {
+        Path::new(p)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| p.to_string())
+    };
+    list.iter()
+        .map(|p| {
+            let n = name(p);
+            let dup = list.iter().filter(|q| name(q) == n).count() > 1;
+            let label = match Path::new(p).parent().and_then(|d| d.file_name()) {
+                Some(dir) if dup => format!("{n}  ({})", dir.to_string_lossy()),
+                _ => n,
+            };
+            (label, p.clone())
+        })
+        .collect()
+}
+
 fn main() -> eframe::Result<()> {
     let initial = std::env::args().nth(1);
     #[allow(unused_mut)]
@@ -2708,6 +2807,41 @@ mod tests {
         });
         assert!(pane >= TEXT_PREVIEW_COLS as f32 * cw);
         assert!(pane <= (TEXT_PREVIEW_COLS + 12) as f32 * cw);
+    }
+
+    #[test]
+    #[cfg(unix)] // the expected strings are Unix absolute paths
+    fn remember_recent_dedupes_and_caps() {
+        let mut list = Vec::new();
+        for i in 0..12 {
+            remember_recent(&mut list, Path::new(&format!("/disks/{i}.d64")));
+        }
+        assert_eq!(list.len(), RECENT_MAX);
+        assert_eq!(list[0], "/disks/11.d64");
+        assert_eq!(list[RECENT_MAX - 1], "/disks/2.d64");
+        // Re-opening an older file moves it to the front, once.
+        remember_recent(&mut list, Path::new("/disks/5.d64"));
+        assert_eq!(list[0], "/disks/5.d64");
+        assert_eq!(list.iter().filter(|p| *p == "/disks/5.d64").count(), 1);
+        assert_eq!(list.len(), RECENT_MAX);
+        // Relative paths are stored absolute, so they still work from
+        // another working directory.
+        remember_recent(&mut list, Path::new("rel.d64"));
+        assert!(Path::new(&list[0]).is_absolute());
+    }
+
+    #[test]
+    fn recent_labels_add_the_folder_only_for_clashing_names() {
+        let list: Vec<String> = ["/a/games/disk.d64", "/a/tools/disk.d64", "/a/x/demo.lnx"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let labels: Vec<String> = recent_labels(&list).into_iter().map(|(l, _)| l).collect();
+        assert_eq!(
+            labels,
+            ["disk.d64  (games)", "disk.d64  (tools)", "demo.lnx"]
+        );
+        assert_eq!(recent_labels(&list)[1].1, "/a/tools/disk.d64");
     }
 
     #[test]
