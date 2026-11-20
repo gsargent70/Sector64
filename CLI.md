@@ -63,7 +63,7 @@ s64ls games.d64
 ### `s64extract` — extract one file to stdout
 
 ```
-s64extract <image.d64> <name>
+s64extract [--list[=v2|7.0|simons]] <image> <name>
 ```
 
 Writes the raw bytes of the named file to stdout. `<name>` is matched
@@ -74,10 +74,23 @@ save:
 s64extract games.d64 "ZORK I" > zork.prg
 ```
 
+With `--list`, a BASIC program is printed as text instead, the way
+`LIST` shows it on a C64. Control codes inside quotes are shown by name
+(`{CLR}`, `{RED}`, `{5 DOWN}`), as in printed listings. The dialect is
+detected: BASIC 7.0 for programs saved on a C128, Simons' BASIC when its
+keywords are used, otherwise BASIC V2. Give it with `--list=v2`,
+`--list=7.0` or `--list=simons` when the guess is wrong. stderr says
+which dialect was used, and whether machine code follows the program. A
+file that isn't a BASIC program is an error (exit 1).
+
+```sh
+s64extract --list games.d64 menu
+```
+
 ### `s64val` — validate a disk against its BAM
 
 ```
-s64val <image.d64>
+s64val [--map] <image>
 ```
 
 Walks every file's block chain and compares it to the Block Availability
@@ -88,6 +101,32 @@ so it is usable in scripts:
 ```sh
 s64val suspect.d64 && echo "disk is clean"
 ```
+
+With `--map`, it prints a disk map instead: one line per track (long
+tracks wrap every 64 sectors, marked `+64`, `+128`…), one character per
+sector, then a legend.
+
+```
+       0         1         2
+  trk  012345678901234567890
+    1  AAAB.................
+  ...
+   18  ==.................
+
+  .  free               =  DOS (header, BAM, directory)
+  ?  allocated, unused   !  conflict (in use but free in the BAM, or shared)
+  A  "ONE"              prg  3 blocks
+  B  "TWO"              seq  1 block
+
+683 blocks: 4 in files, 2 DOS, 677 free, 0 allocated but unused, 0 in conflict
+```
+
+Each file's blocks show its letter (`A`–`Z`, `a`–`z`, `0`–`9`, then `*`).
+`?` blocks are allocated but no file uses them: lost blocks, or data a
+copy-protected disk or boot loader keeps outside the directory. The map
+follows broken chains as far as they go and lists the faults at the end.
+It exits non-zero only when a block is in conflict or a chain is broken.
+It works on every disk image, G64 and D2M included.
 
 ### `s64write` — create and edit D64 images
 
@@ -230,8 +269,8 @@ s64tap game.tap
 | Command      | Purpose                                   | Writes to    |
 |--------------|-------------------------------------------|--------------|
 | `s64ls`      | List a disk directory                     | stdout       |
-| `s64extract` | Extract one file from a disk              | stdout       |
-| `s64val`     | Validate a disk against its BAM           | stderr + exit|
+| `s64extract` | Extract one file (or list it as BASIC)    | stdout       |
+| `s64val`     | Validate a disk, or draw its block map    | stdout + exit|
 | `s64write`   | Create / edit a D64 (format/add/del/ren)  | the image    |
 | `s64pack`    | Create a t64/lnx/lbr/p00 archive          | the archive  |
 | `s64arc`     | List / extract ARC or SDA                 | stdout       |

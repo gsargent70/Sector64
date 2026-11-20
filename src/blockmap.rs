@@ -133,6 +133,77 @@ impl BlockMap {
         out
     }
 
+    /// The character [`Self::to_text`] draws a block with: `.` free, `=`
+    /// the DOS, `?` allocated but unused, `!` a conflict, and a file's own
+    /// symbol ([`file_symbol`]) for its blocks.
+    pub fn block_char(block: &MapBlock) -> char {
+        match block.status() {
+            BlockStatus::Free => '.',
+            BlockStatus::System => '=',
+            BlockStatus::Orphan => '?',
+            BlockStatus::Conflict => '!',
+            BlockStatus::File(i) => file_symbol(i),
+        }
+    }
+
+    /// The map as text: one line per track (wrapped every 64 sectors),
+    /// sector numbers across the top, then a legend naming each file's
+    /// symbol, the totals, and any problems.
+    pub fn to_text(&self) -> String {
+        let max = self.tracks.iter().map(Vec::len).max().unwrap_or(0);
+        let width = max.clamp(1, 64);
+        let mut out = String::new();
+        // Sector numbers, as tens over units.
+        let tens: String = (0..width)
+            .map(|s| {
+                if s % 10 == 0 {
+                    char::from(b'0' + (s / 10 % 10) as u8)
+                } else {
+                    ' '
+                }
+            })
+            .collect();
+        out.push_str("       ");
+        out.push_str(tens.trim_end());
+        out.push_str("\n  trk  ");
+        out.extend((0..width).map(|s| char::from(b'0' + (s % 10) as u8)));
+        out.push('\n');
+        for (t, row) in self.tracks.iter().enumerate() {
+            for (part, chunk) in row.chunks(width).enumerate() {
+                if part == 0 {
+                    out.push_str(&format!("  {:>3}  ", t + 1));
+                } else {
+                    out.push_str(&format!(" +{:<3}  ", part * width));
+                }
+                out.extend(chunk.iter().map(Self::block_char));
+                out.push('\n');
+            }
+        }
+        out.push_str("\n  .  free               =  DOS (header, BAM, directory)\n");
+        out.push_str(
+            "  ?  allocated, unused   !  conflict (in use but free in the BAM, or shared)\n",
+        );
+        for (i, e) in self.files.iter().enumerate() {
+            let blocks = self.blocks_of(i).len();
+            out.push_str(&format!(
+                "  {}  {:<18} {}  {blocks} block{}\n",
+                file_symbol(i),
+                format!("\"{}\"", e.name),
+                e.file_type.mnemonic(),
+                if blocks == 1 { "" } else { "s" }
+            ));
+        }
+        let (free, file, sys, orphan, conflict) = self.counts();
+        out.push_str(&format!(
+            "\n{} blocks: {file} in files, {sys} DOS, {free} free, {orphan} allocated but unused, {conflict} in conflict\n",
+            free + file + sys + orphan + conflict
+        ));
+        for p in &self.problems {
+            out.push_str(&format!("problem: {p}\n"));
+        }
+        out
+    }
+
     fn claim(&mut self, track: u8, sector: u8, owner: Owner) {
         let Some(b) = (track as usize)
             .checked_sub(1)
@@ -321,10 +392,57 @@ impl Disk {
     }
 }
 
+/// A file's symbol in [`BlockMap::to_text`]: `A`–`Z`, `a`–`z`, `0`–`9` in
+/// directory order, then `*` for the 63rd file on.
+pub fn file_symbol(index: usize) -> char {
+    const SYMBOLS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    SYMBOLS.get(index).map_or('*', |&b| char::from(b))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::directory::FileType;
+
+    #[test]
+    fn text_map_marks_each_files_blocks_with_its_symbol() {
+        let mut disk = Disk::format("text map", "tm");
+        disk.write_file("ONE", FileType::Prg, &[1; 600]).unwrap();
+        disk.write_file("TWO", FileType::Seq, b"x").unwrap();
+        let text = disk.block_map().to_text();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "       0         1         2");
+        assert_eq!(lines[1], "  trk  012345678901234567890");
+        // This crate's write_file fills from track 1.
+        assert_eq!(lines[2], format!("    1  AAAB{}", ".".repeat(17)));
+        // Track 18: header/BAM and the first directory block, then free.
+        assert_eq!(lines[19], format!("   18  =={}", ".".repeat(17)));
+        // Track 25 has 18 sectors, so its line is shorter.
+        assert_eq!(lines[26].len(), 7 + 18);
+        let count = |c: char| {
+            text.lines()
+                .take(37)
+                .flat_map(str::chars)
+                .filter(|&x| x == c)
+                .count()
+        };
+        assert_eq!((count('A'), count('B'), count('=')), (3, 1, 2));
+        assert!(text.contains("  A  \"ONE\"              prg  3 blocks\n"));
+        assert!(text.contains("  B  \"TWO\"              seq  1 block\n"));
+        assert!(text.contains(
+            "\n683 blocks: 4 in files, 2 DOS, 677 free, 0 allocated but unused, 0 in conflict\n"
+        ));
+        assert_eq!(
+            [
+                file_symbol(0),
+                file_symbol(25),
+                file_symbol(26),
+                file_symbol(61),
+                file_symbol(62)
+            ],
+            ['A', 'Z', 'a', '9', '*']
+        );
+    }
 
     #[test]
     fn blank_disk_is_free_except_the_dos_blocks() {
