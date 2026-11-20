@@ -36,10 +36,11 @@ This manual describes every feature of the graphical browser
   9. Building an archive
  10. Validating a disk
  11. The disk map
- 12. Status line and toast messages
- 13. Keyboard shortcuts
- 14. Settings that persist
- 15. Tips and troubleshooting
+ 12. Copying between disks
+ 13. Status line and toast messages
+ 14. Keyboard shortcuts
+ 15. Settings that persist
+ 16. Tips and troubleshooting
 
 
 ----------------------------------------------------------------
@@ -169,7 +170,7 @@ it instead (see 8). If you drop several files, the first is
 opened and the rest are ignored.
 
 On Linux, drag-and-drop works only when Sector64 runs on X11; see
-"Drag-and-drop on Linux (Wayland)" in section 15.
+"Drag-and-drop on Linux (Wayland)" in section 16.
 
 When a file opens, the first entry is selected automatically, so
 if you turn the preview pane on it has something to show at once.
@@ -355,7 +356,7 @@ ADDING FILES
 
   With a disk open, either:
     - Drag host files onto the window (on Linux this needs X11;
-      see section 15), or
+      see section 16), or
     - File > Add file ▸, choose the type (prg / seq / usr), then
       Add file… and pick a file.
   The file is given a Commodore name derived from its host name
@@ -413,7 +414,7 @@ THE UNSAVED-CHANGES GUARD
 
   1. File > New ▸ > Empty archive.
   2. Add files by dragging them in (on Linux this needs X11; see
-     section 15), or File > Add file ▸.
+     section 16), or File > Add file ▸.
   3. File > Save archive as… and choose a container format by
      the extension you type:
          .t64   tape image
@@ -481,7 +482,49 @@ Esc or Close hides it.
 
 
 ----------------------------------------------------------------
- 12. STATUS LINE AND TOAST MESSAGES
+ 12. COPYING BETWEEN DISKS
+----------------------------------------------------------------
+
+Click Copy in the menu bar (or press Ctrl+K) to open the Copy
+window. It holds a second disk, alongside the one in the main
+window, and copies files between the two.
+
+  1. In the Copy window, click Open... to pick the disk to copy
+     to (a D64, D71, D81 or CMD-native D2M), or New ▸ to make a
+     blank D64, D71 or D81. A new disk takes its name and ID
+     from File > New.
+  2. In the main list, select the files to copy (Ctrl-click or
+     Shift-click for several), then click Copy Here.
+
+The main window can show any disk or archive, read-only ones
+included (G64, D2M, Zip-Code, T64, ARC...), so this is also how
+you put files from an archive onto a disk. The second disk stays
+in the Copy window while you open other files in the main
+window, so you can gather files from several sources onto one
+disk.
+
+To copy the other way, select files in the Copy window's list
+and click Copy to Open Disk. That needs an editable disk (or a
+new archive) in the main window, and the main Undo takes it back.
+
+Copies keep each file's name exactly, its type and its lock
+flag. Files that can't be copied are skipped, and the status
+line says why:
+  - a file of the same name is already on the disk
+  - the disk is full
+  - REL files: their side sectors belong to the disk they're on
+  - GEOS files on a GEOS disk: a plain copy would lose the info
+    block and VLIR records, which GEOS needs
+
+The Copy window's disk has its own Save, Save As..., Undo (for
+the copies onto it) and Close Disk buttons. While it has unsaved
+changes, Open... and New ▸ are disabled, and Close Disk becomes
+Discard. Quitting with unsaved changes on either disk asks first.
+Esc or Close hides the window without closing its disk.
+
+
+----------------------------------------------------------------
+ 13. STATUS LINE AND TOAST MESSAGES
 ----------------------------------------------------------------
 
 The status line at the bottom always shows the result of your
@@ -497,7 +540,7 @@ early. The most recent few are shown at once.
 
 
 ----------------------------------------------------------------
- 13. KEYBOARD SHORTCUTS
+ 14. KEYBOARD SHORTCUTS
 ----------------------------------------------------------------
 
     Ctrl+O      Open a file
@@ -505,18 +548,20 @@ early. The most recent few are shown at once.
     Ctrl+Z      Undo the last edit
     Ctrl+Y      Redo (also Ctrl+Shift+Z)
     Ctrl+M      Show or hide the disk map
+    Ctrl+K      Show or hide the Copy window
     Enter       Extract the selected file
     Delete      Delete / scratch the selected file(s)
     F2          Rename the selected file (in place)
     Up / Down   Move the selection
     Esc         Cancel an in-place rename; close the disk map
+                or the Copy window
 
 Single-key shortcuts are ignored while you are typing in a text
 field (the filter box or a rename).
 
 
 ----------------------------------------------------------------
- 14. SETTINGS THAT PERSIST
+ 15. SETTINGS THAT PERSIST
 ----------------------------------------------------------------
 
 Between runs Sector64 remembers:
@@ -531,7 +576,7 @@ your layout. The output folder is always restored.
 
 
 ----------------------------------------------------------------
- 15. TIPS AND TROUBLESHOOTING
+ 16. TIPS AND TROUBLESHOOTING
 ----------------------------------------------------------------
 
 THE PETSCII FONT

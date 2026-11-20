@@ -205,6 +205,16 @@ impl Disk {
         self.geom
     }
 
+    /// Whether this is a GEOS disk: "GEOS format" at `$AD` in the header
+    /// block (never on a CMD-native disk).
+    pub fn is_geos(&self) -> bool {
+        const SIGNATURE: &[u8] = b"GEOS format";
+        !matches!(self.geom, Geometry::CmdNative { .. })
+            && self
+                .block(self.dir_track(), self.geom.header_sector())
+                .is_ok_and(|h| h.get(0xAD..0xAD + SIGNATURE.len()) == Some(SIGNATURE))
+    }
+
     fn dir_track(&self) -> u8 {
         self.geom.directory_track()
     }
@@ -1037,6 +1047,41 @@ impl Disk {
         Ok(freed)
     }
 
+    /// Copy the file `entry` from the disk `src` onto this one, with the same
+    /// name (byte for byte), type and lock flag. The copy is written closed.
+    ///
+    /// Refuses ([`Error::CannotCopy`]) REL files, whose side sectors depend on
+    /// the disk, and GEOS files on a GEOS disk (an info block, or VLIR
+    /// records), which a byte copy would break. Refuses
+    /// ([`Error::FileExists`]) a name already on this disk, and
+    /// ([`Error::DiskFull`]) a file that doesn't fit; either way this disk is
+    /// left unchanged.
+    pub fn copy_file_from(&mut self, src: &Disk, entry: &Entry) -> Result<()> {
+        if entry.file_type == FileType::Rel {
+            return Err(Error::CannotCopy("REL files"));
+        }
+        if src.is_geos() && (entry.side_track != 0 || entry.rel_record_len != 0) {
+            return Err(Error::CannotCopy("GEOS files"));
+        }
+        if self.entry_location(&entry.name)?.is_some() {
+            return Err(Error::FileExists);
+        }
+        let data = src.read_entry(entry)?;
+        self.write_file(&entry.name, entry.file_type, &data)?;
+        // Keep the exact name bytes (the text form may not round-trip) and
+        // the lock flag.
+        let (dt, ds, slot) = self
+            .entry_location(&entry.name)?
+            .ok_or(Error::FileNotFound)?;
+        let b = self.block_mut(dt, ds)?;
+        let o = slot * SLOT_SIZE;
+        b[o + 5..o + 21].copy_from_slice(&entry.name_raw);
+        if entry.locked {
+            b[o + 2] |= 0x40;
+        }
+        Ok(())
+    }
+
     /// Rename a file in place, leaving its data untouched.
     pub fn rename(&mut self, old: &str, new: &str) -> Result<()> {
         let (dt, ds, slot) = self.entry_location(old)?.ok_or(Error::FileNotFound)?;
@@ -1535,5 +1580,88 @@ mod tests {
         }
         assert_eq!(disk.blocks_free().unwrap(), 24 * 256 - 30);
         assert!(disk.validate().unwrap().is_clean());
+    }
+
+    /// Set bits in the type byte of `name`'s directory slot, or store the
+    /// GEOS info-block pointer (bytes 21/22).
+    fn patch_slot(disk: &mut Disk, name: &str, f: impl Fn(&mut [u8])) {
+        let (t, s, slot) = disk.entry_location(name).unwrap().unwrap();
+        f(&mut disk.block_mut(t, s).unwrap()[slot * SLOT_SIZE..][..SLOT_SIZE]);
+    }
+
+    #[test]
+    fn copy_file_from_keeps_name_bytes_type_and_lock() {
+        let mut src = Disk::format("source", "s1");
+        let prg: Vec<u8> = (0..1000u32).map(|i| (i * 7) as u8).collect();
+        src.write_file("GAME", FileType::Prg, &prg).unwrap();
+        src.write_file("NOTES", FileType::Seq, b"HELLO").unwrap();
+        // A shifted-space in the name and a locked flag.
+        patch_slot(&mut src, "GAME", |e| {
+            e[2] |= 0x40;
+            e[9] = 0xA0;
+            e[10] = b'X';
+        });
+        let entries = src.directory().unwrap();
+        let mut dst = Disk::format_d81("target", "t1");
+        let free = dst.blocks_free().unwrap();
+        for e in &entries {
+            dst.copy_file_from(&src, e).unwrap();
+        }
+        let copied = dst.directory().unwrap();
+        assert_eq!(copied.len(), 2);
+        for (a, b) in entries.iter().zip(&copied) {
+            assert_eq!(
+                (a.name_raw, a.file_type, a.locked, a.blocks),
+                (b.name_raw, b.file_type, b.locked, b.blocks)
+            );
+            assert_eq!(src.read_entry(a).unwrap(), dst.read_entry(b).unwrap());
+        }
+        assert_eq!(dst.blocks_free().unwrap(), free - 4 - 1);
+        assert!(dst.validate().unwrap().is_clean());
+
+        // Again: both names are taken now, and nothing changes.
+        let before = dst.as_bytes().to_vec();
+        assert!(matches!(
+            dst.copy_file_from(&src, &entries[1]),
+            Err(Error::FileExists)
+        ));
+        assert_eq!(dst.as_bytes(), &before[..]);
+    }
+
+    #[test]
+    fn copy_file_from_refuses_rel_geos_and_overfull_copies() {
+        let mut src = Disk::format_d81("source", "s1");
+        src.write_file("REL", FileType::Prg, b"x").unwrap();
+        src.write_file("BIG", FileType::Prg, &vec![1u8; 254 * 700])
+            .unwrap();
+        patch_slot(&mut src, "REL", |e| e[2] = 0x84);
+        let mut dst = Disk::format("target", "t1");
+        let before = dst.as_bytes().to_vec();
+        let entries = src.directory().unwrap();
+        assert!(matches!(
+            dst.copy_file_from(&src, &entries[0]),
+            Err(Error::CannotCopy("REL files"))
+        ));
+        assert!(matches!(
+            dst.copy_file_from(&src, &entries[1]),
+            Err(Error::DiskFull)
+        ));
+        assert_eq!(dst.as_bytes(), &before[..]);
+
+        // On a GEOS disk, a file with an info block is a GEOS file; a plain
+        // PRG next to it still copies.
+        let mut geos = Disk::format("geos", "g1");
+        geos.block_mut(18, 0).unwrap()[0xAD..0xAD + 11].copy_from_slice(b"GEOS format");
+        geos.write_file("DESKTOP", FileType::Usr, b"geos").unwrap();
+        geos.write_file("PLAIN", FileType::Prg, b"plain").unwrap();
+        patch_slot(&mut geos, "DESKTOP", |e| (e[21], e[22]) = (19, 5));
+        assert!(geos.is_geos() && !src.is_geos());
+        let entries = geos.directory().unwrap();
+        assert!(matches!(
+            dst.copy_file_from(&geos, &entries[0]),
+            Err(Error::CannotCopy("GEOS files"))
+        ));
+        dst.copy_file_from(&geos, &entries[1]).unwrap();
+        assert_eq!(dst.directory().unwrap()[0].name, "PLAIN");
     }
 }
