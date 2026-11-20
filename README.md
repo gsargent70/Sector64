@@ -127,12 +127,13 @@ job with those failure modes designed out:
   (a new `Geometry::CmdNative`). Confirmed against `c1541` on two real disks
   (a DNP and a 1581-partition D2M): every regular file extracts byte-for-byte.
   The DNP **BAM** is decoded too (a 32-byte-per-track bitmap at track 1 sectors
-  2–33, with the track count read from the BAM header), so `blocks_free` and
-  `validate` work: `blocks_free` matches c1541 (5610 on the sample) and
-  validation correctly flags that disk's two genuine used-but-free blocks.
+  2–33, sector 0 in bit 7, with the track count read from the BAM header), so
+  `blocks_free` and `validate` work: `blocks_free` matches c1541 (5610 on the
+  sample) and the sample validates clean.
   **Writing a DNP works too** — `write_file`/`scratch`/`rename` update the
-  bitmap (no free-count byte exists), confirmed by `c1541` reading back a file
-  this crate added to a real D2M.
+  bitmap (no free-count byte exists), confirmed both ways with `c1541`: it
+  reads back a file this crate added to a real D2M (and every file already
+  there is unchanged), and a file it adds validates clean here.
 
 - **TAP** (`parse_tap` → `TapImage`, `s64tap`): the raw datasette pulse stream.
   A TAP records the length of every tape pulse in clock cycles, nothing more —

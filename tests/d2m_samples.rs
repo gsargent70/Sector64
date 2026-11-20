@@ -34,14 +34,12 @@ fn dnp_bam_blocks_free_matches_c1541() {
     // c1541 reports 5610 free for this native partition.
     assert_eq!(disk.blocks_free().unwrap(), 5610, "blocks free");
 
-    // Validation runs and agrees on the free count. This particular disk has
-    // two genuine used-but-free blocks (4/16, 4/17), confirmed by an
-    // independent BAM walk — a real anomaly the check correctly surfaces.
+    // Validation runs, agrees on the free count, and finds the BAM consistent
+    // with every file. (An earlier LSB-first reading of the DNP bitmap made
+    // 4/16 and 4/17 look used-but-free; c1541 allocates around them.)
     let report = disk.validate().expect("validate");
     assert_eq!(report.blocks_free, 5610);
-    assert_eq!(report.cross_linked.len(), 0);
-    assert!(report.used_but_free.contains(&(4, 16)));
-    assert!(report.used_but_free.contains(&(4, 17)));
+    assert!(report.is_clean(), "{report:?}");
     eprintln!(
         "ok: d2m DNP BAM — {} free, {} used, {} used-but-free",
         report.blocks_free,
