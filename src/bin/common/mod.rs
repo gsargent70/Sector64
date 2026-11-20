@@ -14,7 +14,7 @@
 use std::io::{self, Write};
 
 /// `println!` that treats a closed stdout pipe as a quiet, successful exit.
-#[allow(unused_macros)] // s64extract only writes raw bytes
+#[allow(unused_macros)] // not every tool prints text
 macro_rules! outln {
     ($($arg:tt)*) => {{
         use std::io::Write as _;

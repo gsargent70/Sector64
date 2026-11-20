@@ -272,6 +272,8 @@ cargo test                           # unit tests, incl. malformed-image rejecti
 cargo run --bin s64ls -- disk.d64    # directory listing
 cargo run --bin s64extract -- disk.d64 GAME > game.prg   # extract one file
 cargo run --bin s64val -- disk.d64                       # validate vs. the BAM
+cargo run --bin s64extract -- --list disk.d64 MENU       # list a BASIC program
+cargo run --bin s64val -- --map disk.d64                 # draw the block map
 cargo run --bin s64write -- format disk.d64 "my disk" 01 # create a blank image
 cargo run --bin s64write -- add disk.d64 hello hello.prg # write a host file in
 cargo run --bin s64write -- rename disk.d64 hello hi     # rename
@@ -336,8 +338,8 @@ against a real disk.
 | `src/petscii.rs`   | minimal PETSCII→UTF-8 for display |
 | `src/error.rs`     | error type (every malformed input is a recoverable error) |
 | `src/bin/s64ls.rs` | CLI directory listing |
-| `src/bin/s64extract.rs` | CLI: extract one file to stdout |
-| `src/bin/s64val.rs` | CLI: validate the disk against its BAM |
+| `src/bin/s64extract.rs` | CLI: extract one file to stdout, or list it as BASIC |
+| `src/bin/s64val.rs` | CLI: validate the disk against its BAM, or draw its block map |
 | `src/bin/s64write.rs` | CLI: format, add, delete, rename |
 | `src/bin/s64pack.rs` | CLI: create a T64/LNX/LBR/P00 archive |
 | `src/arc.rs`       | Commodore ARC + SDA walk, stored + crunch (LZW+RLE) decode |
