@@ -46,6 +46,7 @@ fn exercise(bytes: Vec<u8>) {
     let _ = disk.header();
     let _ = disk.blocks_free();
     let _ = disk.validate();
+    let _ = disk.block_map();
     if let Ok(dir) = disk.directory() {
         for entry in dir.iter().take(48) {
             let _ = disk.read_entry(entry);

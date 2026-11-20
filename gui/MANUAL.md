@@ -35,10 +35,11 @@ This manual describes every feature of the graphical browser
        - The unsaved-changes guard
   9. Building an archive
  10. Validating a disk
- 11. Status line and toast messages
- 12. Keyboard shortcuts
- 13. Settings that persist
- 14. Tips and troubleshooting
+ 11. The disk map
+ 12. Status line and toast messages
+ 13. Keyboard shortcuts
+ 14. Settings that persist
+ 15. Tips and troubleshooting
 
 
 ----------------------------------------------------------------
@@ -129,7 +130,7 @@ the right and the listing makes room for it:
   +----------------------------------------------------------+
 
 - Menu bar (top): File, Extract, a Validate Disk button, a
-  Preview toggle, and Help.
+  Disk Map toggle (for disks), a Preview toggle, and Help.
 - Header row: the disk/archive title and, for disks, blocks
   free. Shown as the first line of the listing.
 - Filter box: live name filter.
@@ -168,7 +169,7 @@ it instead (see 8). If you drop several files, the first is
 opened and the rest are ignored.
 
 On Linux, drag-and-drop works only when Sector64 runs on X11; see
-"Drag-and-drop on Linux (Wayland)" in section 14.
+"Drag-and-drop on Linux (Wayland)" in section 15.
 
 When a file opens, the first entry is selected automatically, so
 if you turn the preview pane on it has something to show at once.
@@ -320,7 +321,7 @@ ADDING FILES
 
   With a disk open, either:
     - Drag host files onto the window (on Linux this needs X11;
-      see section 14), or
+      see section 15), or
     - File > Add file ▸, choose the type (prg / seq / usr), then
       Add file… and pick a file.
   The file is given a Commodore name derived from its host name
@@ -378,7 +379,7 @@ THE UNSAVED-CHANGES GUARD
 
   1. File > New ▸ > Empty archive.
   2. Add files by dragging them in (on Linux this needs X11; see
-     section 14), or File > Add file ▸.
+     section 15), or File > Add file ▸.
   3. File > Save archive as… and choose a container format by
      the extension you type:
          .t64   tape image
@@ -405,7 +406,48 @@ Click anywhere on the popover to dismiss it.
 
 
 ----------------------------------------------------------------
- 11. STATUS LINE AND TOAST MESSAGES
+ 11. THE DISK MAP
+----------------------------------------------------------------
+
+Click Disk Map in the menu bar (or press Ctrl+M) to see every
+block of the open disk in one picture: a column per track, a row
+per sector, each cell coloured by what is stored there. It works
+for every disk image, including read-only ones (G64, D2M,
+Zip-Code sets).
+
+    green / teal /     a file's blocks, in its type colour
+    purple / yellow    (PRG / SEQ / USR / REL), as in the listing
+    white              the file selected in the listing
+    lavender           the DOS: header, BAM and directory
+    dark               free
+    amber              allocated in the BAM, but no file uses it
+    red                a conflict: a file's block that the BAM
+                       marks free (the next file written could
+                       overwrite it), or a block two files share
+
+Hover over a block to see its track and sector, and which file
+it belongs to ("block 4 of 12"). The rest of that file's blocks
+are outlined, so you can see how it is spread across the disk.
+Click a block to select its file in the listing.
+
+The line under the title totals each kind. Its free count
+includes the directory track, which the header's "blocks free"
+figure leaves out, so the two can differ.
+
+If a file's block links are broken (a link off the disk, or a
+chain that loops), the map shows as much as it could follow and
+lists the problem above the grid. Validate Disk (section 10)
+stops at such faults; the map carries on.
+
+Amber blocks aren't always damage: some copy-protected disks and
+boot loaders keep data where the directory doesn't point. GEOS
+disks are understood: VLIR records and info blocks belong to
+their file. The map is rebuilt after every edit, undo and redo.
+Esc or Close hides it.
+
+
+----------------------------------------------------------------
+ 12. STATUS LINE AND TOAST MESSAGES
 ----------------------------------------------------------------
 
 The status line at the bottom always shows the result of your
@@ -421,25 +463,26 @@ early. The most recent few are shown at once.
 
 
 ----------------------------------------------------------------
- 12. KEYBOARD SHORTCUTS
+ 13. KEYBOARD SHORTCUTS
 ----------------------------------------------------------------
 
     Ctrl+O      Open a file
     Ctrl+S      Save the open disk
     Ctrl+Z      Undo the last edit
     Ctrl+Y      Redo (also Ctrl+Shift+Z)
+    Ctrl+M      Show or hide the disk map
     Enter       Extract the selected file
     Delete      Delete / scratch the selected file(s)
     F2          Rename the selected file (in place)
     Up / Down   Move the selection
-    Esc         Cancel an in-place rename
+    Esc         Cancel an in-place rename; close the disk map
 
 Single-key shortcuts are ignored while you are typing in a text
 field (the filter box or a rename).
 
 
 ----------------------------------------------------------------
- 13. SETTINGS THAT PERSIST
+ 14. SETTINGS THAT PERSIST
 ----------------------------------------------------------------
 
 Between runs Sector64 remembers:
@@ -454,7 +497,7 @@ your layout. The output folder is always restored.
 
 
 ----------------------------------------------------------------
- 14. TIPS AND TROUBLESHOOTING
+ 15. TIPS AND TROUBLESHOOTING
 ----------------------------------------------------------------
 
 THE PETSCII FONT

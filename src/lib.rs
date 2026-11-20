@@ -21,6 +21,7 @@
 
 pub mod arc;
 pub mod basic;
+pub mod blockmap;
 pub mod bam;
 pub mod container;
 pub mod cvt;
@@ -37,6 +38,7 @@ pub mod disk;
 
 pub use arc::{parse_arc, parse_sda, ArcEntry, ArcMethod};
 pub use basic::{detokenize as detokenize_basic, BasicListing};
+pub use blockmap::{BamState, BlockMap, BlockStatus, MapBlock, Owner};
 pub use cvt::{geos_type_name, parse_cvt, CvtInfo, GeosStructure};
 pub use bam::{Bam, DosFormat};
 pub use container::{
