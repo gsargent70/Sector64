@@ -17,7 +17,7 @@ use egui::Color32;
 use sector64::{
     parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64, write_lbr,
     write_lnx, write_p00, write_t64, BamState, BasicDialect, BlockMap, BlockStatus, Disk, FileType,
-    ImportFile, Owner,
+    GfxKind, GfxSheet, ImportFile, Owner,
 };
 
 /// The Commodore 64 palette this UI is themed around (Pepto values).
@@ -375,6 +375,20 @@ enum PreviewMode {
     Text,
     /// A BASIC program listed the way the C64's LIST shows it.
     Basic,
+    /// The bytes drawn as sprites or characters.
+    Gfx,
+}
+
+/// The sprite/character sheet the GFX preview shows, and what it was drawn
+/// from: (node index, kind, multicolour, cells per row).
+struct GfxView {
+    key: (usize, GfxKind, bool, usize),
+    sheet: GfxSheet,
+    tex: egui::TextureHandle,
+    /// The PRG load address the cells were aligned to, if any.
+    load: Option<u16>,
+    /// Whole cells in the file; the sheet may show fewer.
+    total: usize,
 }
 
 /// A pending action blocked by unsaved changes.
@@ -504,6 +518,11 @@ struct App {
     preview_mode: PreviewMode,
     /// The BASIC dialect the BASIC preview lists in; `None` detects it.
     basic_dialect: Option<BasicDialect>,
+    /// What the GFX preview draws the bytes as, and whether in multicolour.
+    gfx_kind: GfxKind,
+    gfx_multi: bool,
+    /// The GFX preview's sheet, redrawn when the selection or options change.
+    gfx_cache: Option<GfxView>,
     validation: String,
     // whether the validation-result popover is showing
     show_validation: bool,
@@ -643,6 +662,7 @@ impl App {
         self.map_cache = None;
         self.title.clear();
         self.hex_cache = None;
+        self.gfx_cache = None;
         self.validation.clear();
         self.renaming = None;
         match open_path(path) {
@@ -839,6 +859,7 @@ impl App {
                 self.archive = Some(Vec::new());
                 self.selected = None;
                 self.hex_cache = None;
+                self.gfx_cache = None;
                 self.refresh();
                 self.opened_path = None;
                 self.status = "New archive — add files, then Save archive as…".into();
@@ -1021,6 +1042,7 @@ impl App {
             Snapshot::Archive(files) => self.archive = Some(files),
         }
         self.hex_cache = None;
+        self.gfx_cache = None;
         self.refresh();
     }
 
@@ -1307,13 +1329,19 @@ impl eframe::App for App {
                             PreviewMode::Hex => hexdump(d, 16 * 1024),
                             PreviewMode::Text => petscii_text(d, 64 * 1024),
                             PreviewMode::Basic => basic_preview(d, dialect),
+                            // Drawn from the bytes by the pane itself; this
+                            // only marks that there is something to show.
+                            PreviewMode::Gfx => "gfx".into(),
                         },
                         Err(e) => format!("(not extractable: {e})"),
                     };
                     self.hex_cache = Some((i, mode, dialect, text));
                 }
             }
-            _ => self.hex_cache = None,
+            _ => {
+                self.hex_cache = None;
+                self.gfx_cache = None;
+            }
         }
         let preview = self
             .hex_cache
@@ -1347,6 +1375,9 @@ impl eframe::App for App {
         let mut filter = std::mem::take(&mut self.filter);
         let mut preview_mode = self.preview_mode;
         let mut basic_dialect = self.basic_dialect;
+        let mut gfx_kind = self.gfx_kind;
+        let mut gfx_multi = self.gfx_multi;
+        let mut gfx_cache = self.gfx_cache.take();
         let mut show_preview = self.show_preview;
         let mut show_help = self.show_help;
         let has_map = self.map_disk().is_some();
@@ -1639,6 +1670,8 @@ impl eframe::App for App {
                         // out first, so the title is shortened to the space
                         // left beside it instead of running underneath.
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.selectable_value(&mut preview_mode, PreviewMode::Gfx, "GFX")
+                                .on_hover_text("draw the bytes as sprites or characters");
                             ui.selectable_value(&mut preview_mode, PreviewMode::Basic, "BASIC")
                                 .on_hover_text("list a BASIC program, like LIST on a C64");
                             ui.selectable_value(&mut preview_mode, PreviewMode::Text, "TEXT")
@@ -1675,6 +1708,19 @@ impl eframe::App for App {
                             }
                         });
                     }
+                    if preview_mode == PreviewMode::Gfx {
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(&mut gfx_kind, GfxKind::Sprites, "SPRITES")
+                                .on_hover_text("24×21 sprites, 64 bytes each");
+                            ui.selectable_value(&mut gfx_kind, GfxKind::Chars, "CHARS")
+                                .on_hover_text("8×8 characters, 8 bytes each");
+                            ui.separator();
+                            ui.selectable_value(&mut gfx_multi, false, "HIRES")
+                                .on_hover_text("one bit per pixel");
+                            ui.selectable_value(&mut gfx_multi, true, "MULTI")
+                                .on_hover_text("multicolour: two bits per double-wide pixel");
+                        });
+                    }
                     // Hex lines never wrap (the pane is sized to fit them, with
                     // a horizontal scrollbar if the window is too narrow);
                     // PETSCII text and BASIC listings wrap at the pane's 40
@@ -1688,6 +1734,13 @@ impl eframe::App for App {
                                     egui::RichText::new("Select a file to preview its bytes.")
                                         .color(c64::TEXT_DIM),
                                 );
+                            } else if let (PreviewMode::Gfx, Some((i, Ok(data), badge))) = (
+                                preview_mode,
+                                self.selected.and_then(|i| {
+                                    self.nodes.get(i).map(|n| (i, n.data.as_ref(), &n.badge))
+                                }),
+                            ) {
+                                gfx_ui(ui, &mut gfx_cache, i, data, badge, gfx_kind, gfx_multi);
                             } else if preview_mode == PreviewMode::Basic {
                                 let job = basic_layout(
                                     &preview,
@@ -2112,6 +2165,9 @@ impl eframe::App for App {
         self.rename_focus = rename_focus;
         self.preview_mode = preview_mode;
         self.basic_dialect = basic_dialect;
+        self.gfx_kind = gfx_kind;
+        self.gfx_multi = gfx_multi;
+        self.gfx_cache = gfx_cache;
         self.show_preview = show_preview;
         self.show_help = show_help;
         self.show_map = show_map;
@@ -2738,10 +2794,10 @@ fn preview_width(
             .map(|l| l.chars().count())
             .max()
             .unwrap_or(0),
-        PreviewMode::Text | PreviewMode::Basic => TEXT_PREVIEW_COLS,
+        PreviewMode::Text | PreviewMode::Basic | PreviewMode::Gfx => TEXT_PREVIEW_COLS,
     };
-    // "PREVIEW — NAME" plus the HEX / TEXT / BASIC toggle.
-    let header_chars = "PREVIEW — ".chars().count() + name.map_or(0, |n| n.chars().count()) + 18;
+    // "PREVIEW — NAME" plus the HEX / TEXT / BASIC / GFX toggle.
+    let header_chars = "PREVIEW — ".chars().count() + name.map_or(0, |n| n.chars().count()) + 22;
     let want = content_chars.max(header_chars) as f32 * cw + chrome;
 
     // Leave the list beside it room for its longest name and all its
@@ -2809,6 +2865,133 @@ fn petscii_text(data: &[u8], cap: usize) -> String {
         s.push_str(&format!("\n… ({} of {} bytes shown)", n, data.len()));
     }
     s
+}
+
+/// Screen colours for the GFX preview's colour roles: black background,
+/// white for the cell's own colour, light red and yellow for the two shared
+/// multicolours, and the pane showing through the gutters.
+fn gfx_color(role: u8) -> Color32 {
+    match role {
+        sector64::gfx::BG => Color32::BLACK,
+        sector64::gfx::MC1 => Color32::from_rgb(0xb8, 0x69, 0x62),
+        sector64::gfx::MC2 => Color32::from_rgb(0xbf, 0xce, 0x72),
+        sector64::gfx::FG => Color32::WHITE,
+        _ => Color32::TRANSPARENT,
+    }
+}
+
+/// Draw `data` as a sheet of `kind` cells. A PRG's cells line up with the
+/// memory it loads to, like the VIC-II sees them; other files start at
+/// byte 0. At most `max_cells` are drawn.
+fn gfx_sheet(
+    data: &[u8],
+    is_prg: bool,
+    kind: GfxKind,
+    multi: bool,
+    cols: usize,
+    max_cells: usize,
+) -> (GfxSheet, Option<u16>, usize) {
+    use sector64::gfx;
+    let load = (is_prg && data.len() >= 2).then(|| u16::from_le_bytes([data[0], data[1]]));
+    let start = gfx::first_cell(load, kind);
+    let total = gfx::cell_count(data.len(), start, kind);
+    (
+        gfx::render(data, kind, multi, start, cols, max_cells),
+        load,
+        total,
+    )
+}
+
+/// Hover text for cell `i`: its number, file offset and, for a PRG, the
+/// address it loads to with the sprite pointer or character code that shows
+/// it (within its 16K VIC bank or 2K character set).
+fn gfx_cell_info(sheet: &GfxSheet, load: Option<u16>, i: usize) -> String {
+    let off = sheet.offset_of(i);
+    let mut s = format!("{} {i} · offset ${off:04X}", sheet.kind.noun());
+    if let Some(load) = load {
+        let addr = (load as usize + off - 2) & 0xffff;
+        s.push_str(&format!("\nloads at ${addr:04X}"));
+        match sheet.kind {
+            GfxKind::Sprites => {
+                s.push_str(&format!(" · sprite pointer ${:02X}", (addr % 0x4000) / 64))
+            }
+            GfxKind::Chars => s.push_str(&format!(" · screen code ${:02X}", (addr % 0x800) / 8)),
+        }
+    }
+    s
+}
+
+/// The GFX preview: the sheet scaled up to fill the pane, a summary line, and
+/// each cell's details on hover. `cache` keeps the texture between frames.
+#[allow(clippy::too_many_arguments)]
+fn gfx_ui(
+    ui: &mut egui::Ui,
+    cache: &mut Option<GfxView>,
+    node: usize,
+    data: &[u8],
+    badge: &str,
+    kind: GfxKind,
+    multi: bool,
+) {
+    let avail = ui.available_width().max(1.0);
+    let (cw, ch) = kind.cell_size();
+    // Sprites fill the pane at 2× (or more); characters sit 16 to a row like
+    // a character set, when the pane is wide enough.
+    let cols = match kind {
+        GfxKind::Sprites => ((avail + 1.0) / (2.0 * (cw + 1) as f32)).floor().max(1.0) as usize,
+        GfxKind::Chars => (((avail + 1.0) / (ch + 1) as f32).floor() as usize).clamp(1, 16),
+    };
+    let key = (node, kind, multi, cols);
+    if cache.as_ref().map(|c| c.key) != Some(key) {
+        // Keep the texture within what the GPU accepts.
+        let max_side = ui.ctx().input(|i| i.max_texture_side).max(256);
+        let max_cells = (max_side / (ch + 1)) * cols;
+        let (sheet, load, total) = gfx_sheet(data, badge == "prg", kind, multi, cols, max_cells);
+        let img = egui::ColorImage {
+            size: [sheet.width, sheet.height],
+            pixels: sheet.pixels.iter().map(|&r| gfx_color(r)).collect(),
+        };
+        let tex = ui
+            .ctx()
+            .load_texture("gfx-preview", img, egui::TextureOptions::NEAREST);
+        *cache = Some(GfxView {
+            key,
+            sheet,
+            tex,
+            load,
+            total,
+        });
+    }
+    let view = cache.as_ref().unwrap();
+    let sheet = &view.sheet;
+    let noun = kind.noun();
+    let mut summary = match (view.total, view.load) {
+        (0, _) => format!("(too short for a {noun})"),
+        (n, Some(load)) => format!(
+            "{n} {noun}{} from ${:04X}",
+            if n == 1 { "" } else { "s" },
+            (load as usize + sheet.start - 2) & 0xffff
+        ),
+        (n, None) => format!("{n} {noun}{}", if n == 1 { "" } else { "s" }),
+    };
+    if sheet.count < view.total {
+        summary.push_str(&format!(" (first {} shown)", sheet.count));
+    }
+    ui.label(egui::RichText::new(summary).color(c64::TEXT_DIM));
+    if sheet.count == 0 {
+        return;
+    }
+    let scale = ((avail + 1.0) / (sheet.width + 1) as f32)
+        .floor()
+        .clamp(1.0, 4.0);
+    let size = egui::vec2(sheet.width as f32, sheet.height as f32) * scale;
+    let resp = ui.add(egui::Image::new((view.tex.id(), size)).sense(egui::Sense::hover()));
+    if let Some(pos) = resp.hover_pos() {
+        let p = (pos - resp.rect.min) / scale;
+        if let Some(i) = sheet.cell_at(p.x.max(0.0) as usize, p.y.max(0.0) as usize) {
+            resp.on_hover_text_at_pointer(gfx_cell_info(sheet, view.load, i));
+        }
+    }
 }
 
 /// The BASIC preview: the program listed as `LIST` shows it, or a note when
@@ -3389,6 +3572,33 @@ mod tests {
             ["disk.d64  (games)", "disk.d64  (tools)", "demo.lnx"]
         );
         assert_eq!(recent_labels(&list)[1].1, "/a/tools/disk.d64");
+    }
+
+    #[test]
+    fn gfx_preview_aligns_prg_cells_to_memory() {
+        // A PRG loading at $2FFF: the first sprite boundary is $3000, one
+        // byte in, which is sprite pointer $C0 in its VIC bank.
+        let mut prg = vec![0xff, 0x2f, 0xaa];
+        prg.extend(std::iter::repeat_n(0x80, 64 * 2));
+        let (sheet, load, total) = gfx_sheet(&prg, true, GfxKind::Sprites, false, 8, 100);
+        assert_eq!(
+            (load, sheet.start, total, sheet.count),
+            (Some(0x2fff), 3, 2, 2)
+        );
+        assert_eq!(
+            gfx_cell_info(&sheet, load, 1),
+            "sprite 1 · offset $0043\nloads at $3040 · sprite pointer $C1"
+        );
+        // The same bytes as a SEQ file start at byte 0 and have no address.
+        let (seq, load, _) = gfx_sheet(&prg, false, GfxKind::Chars, true, 16, 3);
+        assert_eq!((load, seq.start, seq.count), (None, 0, 3));
+        assert_eq!(gfx_cell_info(&seq, None, 2), "char 2 · offset $0010");
+        let (chars, load, _) = gfx_sheet(&prg, true, GfxKind::Chars, false, 16, 100);
+        assert_eq!(
+            gfx_cell_info(&chars, load, 0),
+            "char 0 · offset $0003\nloads at $3000 · screen code $00"
+        );
+        assert_eq!(gfx_color(sector64::gfx::GAP), Color32::TRANSPARENT);
     }
 
     #[test]

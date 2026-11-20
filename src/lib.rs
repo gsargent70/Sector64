@@ -29,6 +29,7 @@ pub mod directory;
 pub mod error;
 pub mod g64;
 pub mod geometry;
+pub mod gfx;
 pub mod lha;
 pub mod lzhuf;
 pub mod tap;
@@ -50,6 +51,7 @@ pub use container::{
 };
 pub use directory::{Entry, FileType};
 pub use g64::to_d64 as g64_to_d64;
+pub use gfx::{GfxKind, GfxSheet};
 pub use lha::{parse_lha, LhaEntry};
 pub use tap::{parse_tap, TapImage};
 pub use wr3::{decompress_wr3, parse_wr3, Wr3Entry, Wr3File};
