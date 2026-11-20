@@ -114,6 +114,9 @@ fn no_panics_on_arbitrary_input() {
             let mut prg = vec![0x01, 0x08];
             prg.extend_from_slice(&buf);
             let _ = sector64::detokenize_basic(&prg);
+            for dialect in [sector64::BasicDialect::V7, sector64::BasicDialect::Simons] {
+                let _ = sector64::detokenize_basic_as(&prg, dialect);
+            }
             let _ = sector64::parse_tap(&buf);
             let _ = sector64::parse_wr3(&buf);
             let _ = parse_zipcode([&buf, &buf, &buf, &buf]);

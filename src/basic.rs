@@ -12,6 +12,12 @@
 //! Like `LIST`, the text after `REM` is expanded too (only quotes switch
 //! tokenizing off). Every read is bounds-checked; malformed input gives
 //! `None`, never a panic.
+//!
+//! Two other dialects are understood (see [`Dialect`]): the C128's BASIC 7.0,
+//! which adds single-byte tokens `$CC`–`$FD` and two-byte ones behind the
+//! prefixes `$CE` and `$FE`, and Simons' BASIC for the C64, whose keywords are
+//! two bytes, `$64` followed by `$01`–`$7F`. Their keyword tables were checked
+//! token by token against VICE's `petcat` tokenizer.
 
 /// BASIC V2 keywords for tokens `$80`–`$CB`, in token order.
 const KEYWORDS: [&str; 76] = [
@@ -26,6 +32,110 @@ const KEYWORDS: [&str; 76] = [
     "TAN", "ATN", "PEEK", "LEN", "STR$", "VAL", "ASC", "CHR$", // $C0
     "LEFT$", "RIGHT$", "MID$", "GO", // $C8
 ];
+
+/// BASIC 7.0's single-byte tokens `$CC`–`$FD` (`$CE` is a prefix, below).
+#[rustfmt::skip]
+const V7_KEYWORDS: [&str; 50] = [
+    "RGR", "RCLR", "", "JOY", "RDOT", "DEC", "HEX$", "ERR$", // $CC
+    "INSTR", "ELSE", "RESUME", "TRAP", "TRON", "TROFF", "SOUND", "VOL", // $D4
+    "AUTO", "PUDEF", "GRAPHIC", "PAINT", "CHAR", "BOX", "CIRCLE", "GSHAPE", // $DC
+    "SSHAPE", "DRAW", "LOCATE", "COLOR", "SCNCLR", "SCALE", "HELP", "DO", // $E4
+    "LOOP", "EXIT", "DIRECTORY", "DSAVE", "DLOAD", "HEADER", "SCRATCH", "COLLECT", // $EC
+    "COPY", "RENAME", "BACKUP", "DELETE", "RENUMBER", "KEY", "MONITOR", "USING", // $F4
+    "UNTIL", "WHILE", // $FC
+];
+
+/// BASIC 7.0 functions behind the `$CE` prefix, from `$CE $02`.
+const V7_CE: [&str; 9] = [
+    "POT", "BUMP", "PEN", "RSPPOS", "RSPRITE", "RSPCOLOR", "XOR", "RWINDOW", "POINTER",
+];
+
+/// BASIC 7.0 statements behind the `$FE` prefix, from `$FE $02`; `$FE $20`
+/// and `$FE $22` are unused.
+#[rustfmt::skip]
+const V7_FE: [&str; 37] = [
+    "BANK",
+    "FILTER",
+    "PLAY",
+    "TEMPO",
+    "MOVSPR",
+    "SPRITE",
+    "SPRCOLOR",
+    "RREG", // $02
+    "ENVELOPE",
+    "SLEEP",
+    "CATALOG",
+    "DOPEN",
+    "APPEND",
+    "DCLOSE",
+    "BSAVE",
+    "BLOAD", // $0A
+    "RECORD",
+    "CONCAT",
+    "DVERIFY",
+    "DCLEAR",
+    "SPRSAV",
+    "COLLISION",
+    "BEGIN",
+    "BEND", // $12
+    "WINDOW",
+    "BOOT",
+    "WIDTH",
+    "SPRDEF",
+    "QUIT",
+    "STASH",
+    "",
+    "FETCH", // $1A
+    "",
+    "SWAP",
+    "OFF",
+    "FAST",
+    "SLOW", // $22
+];
+
+/// Simons' BASIC keywords `$64 $01`–`$64 $7F`; empty slots are unassigned
+/// and listed as `{$64xx}`.
+#[rustfmt::skip]
+const SIMONS: [&str; 127] = [
+    "HIRES", "PLOT", "LINE", "BLOCK", "FCHR", "FCOL", "FILL", // $01
+    "REC", "ROT", "DRAW", "CHAR", "HI COL", "INV", "FRAC", "MOVE", // $08
+    "PLACE", "UPB", "UPW", "LEFTW", "LEFTB", "DOWNB", "DOWNW", "RIGHTB", // $10
+    "RIGHTW", "MULTI", "COLOUR", "MMOB", "BFLASH", "MOB SET", "MUSIC", "FLASH", // $18
+    "REPEAT", "PLAY", "", "CENTRE", "ENVELOPE", "CGOTO", "WAVE", "FETCH", // $20
+    "AT(", "UNTIL", "", "", "USE", "", "GLOBAL", "", // $28
+    "RESET", "PROC", "CALL", "EXEC", "END PROC", "EXIT", "END LOOP", "ON KEY", // $30
+    "DISABLE", "RESUME", "LOOP", "DELAY", "", "", "", "", // $38
+    "SECURE", "DISAPA", "CIRCLE", "ON ERROR", "NO ERROR", "LOCAL", "RCOMP", "ELSE", // $40
+    "RETRACE", "TRACE", "DIR", "PAGE", "DUMP", "FIND", "OPTION", "AUTO", // $48
+    "OLD", "JOY", "MOD", "DIV", "", "DUP", "INKEY", "INST", // $50
+    "TEST", "LIN", "EXOR", "INSERT", "POT", "PENX", "", "PENY", // $58
+    "SOUND", "GRAPHICS", "DESIGN", "RLOCMOB", "CMOB", "BCKGNDS", "PAUSE", "NRM", // $60
+    "MOB OFF", "OFF", "ANGL", "ARC", "COLD", "SCRSV", "SCRLD", "TEXT", // $68
+    "CSET", "VOL", "DISK", "HRDCPY", "KEY", "PAINT", "LOW COL", "COPY", // $70
+    "MERGE", "RENUMBER", "MEM", "DETECT", "CHECK", "DISPLAY", "ERR", "OUT", // $78
+];
+
+/// Which BASIC a program is written in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dialect {
+    /// Commodore BASIC V2 (C64, VIC-20; also what PET BASIC 2 and 4 share).
+    V2,
+    /// The C128's BASIC 7.0 (a superset of V2).
+    V7,
+    /// Simons' BASIC, the C64 cartridge (V2 plus `$64`-prefixed keywords).
+    Simons,
+}
+
+impl Dialect {
+    /// The dialect's usual name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Dialect::V2 => "BASIC V2",
+            Dialect::V7 => "BASIC 7.0",
+            Dialect::Simons => "Simons' BASIC",
+        }
+    }
+}
 
 /// Load addresses where BASIC programs start on Commodore machines: PET and
 /// VIC-20 +3K ($0401), C64 ($0801), unexpanded VIC-20 and Plus/4 ($1001),
@@ -51,24 +161,76 @@ pub struct BasicListing {
     /// Bytes after the end-of-program marker (often machine code started by a
     /// `SYS` line).
     pub trailing_bytes: usize,
+    /// The dialect the listing was expanded as.
+    pub dialect: Dialect,
 }
 
-/// Detokenize `prg` (a PRG file including its load address). Returns `None`
-/// when it isn't a well-formed BASIC program.
+/// Detokenize `prg` (a PRG file including its load address), guessing its
+/// dialect: BASIC 7.0 when it loads where a C128 puts BASIC ($1C01, or $4001
+/// with a graphics screen), Simons' BASIC when it uses Simons' `$64` tokens
+/// (which typed V2 text can't contain), otherwise V2. Returns `None` when it
+/// isn't a well-formed BASIC program.
 pub fn detokenize(prg: &[u8]) -> Option<BasicListing> {
+    let program = parse(prg)?;
+    let dialect = if matches!(program.load, 0x1C01 | 0x4001) {
+        Dialect::V7
+    } else if program
+        .lines
+        .iter()
+        .any(|(_, body)| has_simons_tokens(body))
+    {
+        Dialect::Simons
+    } else {
+        Dialect::V2
+    };
+    Some(program.list(dialect))
+}
+
+/// Detokenize `prg` as a given dialect.
+pub fn detokenize_as(prg: &[u8], dialect: Dialect) -> Option<BasicListing> {
+    Some(parse(prg)?.list(dialect))
+}
+
+/// A program split into lines, not yet expanded.
+struct Program<'a> {
+    load: u16,
+    lines: Vec<(u16, &'a [u8])>,
+    trailing_bytes: usize,
+}
+
+impl Program<'_> {
+    fn list(&self, dialect: Dialect) -> BasicListing {
+        let mut text = String::new();
+        for (number, body) in &self.lines {
+            text.push_str(&number.to_string());
+            text.push(' ');
+            list_line(body, dialect, &mut text);
+            text.push('\n');
+        }
+        BasicListing {
+            load_address: self.load,
+            lines: self.lines.len(),
+            text,
+            trailing_bytes: self.trailing_bytes,
+            dialect,
+        }
+    }
+}
+
+/// Split `prg` into its lines, or `None` when it isn't BASIC.
+fn parse(prg: &[u8]) -> Option<Program<'_>> {
     let word =
         |i: usize| -> Option<u16> { Some(u16::from_le_bytes([*prg.get(i)?, *prg.get(i + 1)?])) };
     let load = word(0)?;
     let mut pos = 2;
-    let mut text = String::new();
-    let mut lines = 0usize;
+    let mut lines = Vec::new();
     let mut links_ok = true;
     loop {
         let link = match word(pos) {
             Some(l) => l,
             // Some files stop without the final $0000; accept that once at
             // least one line has been read.
-            None if lines > 0 && pos >= prg.len() => break,
+            None if !lines.is_empty() && pos >= prg.len() => break,
             None => return None,
         };
         if link == 0 {
@@ -85,7 +247,6 @@ pub fn detokenize(prg: &[u8]) -> Option<BasicListing> {
             .iter()
             .take(MAX_LINE_BYTES + 1)
             .position(|&b| b == 0)?;
-        let body = &prg[body_start..body_start + len];
         let next = body_start + len + 1;
         // The link should be the next line's address; files moved between
         // machines can be off (LOAD relinks them), so it only counts as a
@@ -93,28 +254,34 @@ pub fn detokenize(prg: &[u8]) -> Option<BasicListing> {
         if usize::from(link) != usize::from(load) + next - 2 {
             links_ok = false;
         }
-        text.push_str(&number.to_string());
-        text.push(' ');
-        list_line(body, &mut text);
-        text.push('\n');
-        lines += 1;
+        lines.push((number, &prg[body_start..body_start + len]));
         pos = next;
     }
     // Plenty of non-BASIC data happens to parse for a line or two; insist on
     // either a correct link chain or a usual BASIC start address.
-    if lines == 0 || !(links_ok || BASIC_STARTS.contains(&load)) {
+    if lines.is_empty() || !(links_ok || BASIC_STARTS.contains(&load)) {
         return None;
     }
-    Some(BasicListing {
-        load_address: load,
+    Some(Program {
+        load,
         lines,
-        text,
         trailing_bytes: prg.len().saturating_sub(pos),
     })
 }
 
+/// Whether a line uses a Simons' BASIC keyword outside quotes.
+fn has_simons_tokens(body: &[u8]) -> bool {
+    let mut quoted = false;
+    body.windows(2).any(|w| {
+        if w[0] == b'"' {
+            quoted = !quoted;
+        }
+        !quoted && w[0] == 0x64 && (0x01..=0x7F).contains(&w[1])
+    })
+}
+
 /// Append one line's tokenized body, expanded, to `out`.
-fn list_line(body: &[u8], out: &mut String) {
+fn list_line(body: &[u8], dialect: Dialect, out: &mut String) {
     let mut quoted = false;
     let mut i = 0;
     while i < body.len() {
@@ -139,12 +306,31 @@ fn list_line(body: &[u8], out: &mut String) {
             }
             push_char(b, out);
         } else {
-            match b {
-                0x80..=0xCB => out.push_str(KEYWORDS[usize::from(b - 0x80)]),
-                0xFF => out.push('π'),
-                // Tokens BASIC V2 doesn't have (BASIC 7.0 and extensions
-                // such as Simons' BASIC use these).
-                0xCC..=0xFE => out.push_str(&format!("{{${b:02X}}}")),
+            let next = body.get(i + 1).copied();
+            match (dialect, b, next) {
+                (_, 0x80..=0xCB, _) => out.push_str(KEYWORDS[usize::from(b - 0x80)]),
+                (_, 0xFF, _) => out.push('π'),
+                (Dialect::V7, 0xCE | 0xFE, Some(n)) => {
+                    let table: &[&str] = if b == 0xCE { &V7_CE } else { &V7_FE };
+                    match table.get(usize::from(n).wrapping_sub(2)) {
+                        Some(k) if !k.is_empty() => out.push_str(k),
+                        _ => out.push_str(&format!("{{${b:02X}{n:02X}}}")),
+                    }
+                    i += 1;
+                }
+                (Dialect::V7, 0xCC..=0xFD, _) => match V7_KEYWORDS[usize::from(b - 0xCC)] {
+                    "" => out.push_str(&format!("{{${b:02X}}}")),
+                    k => out.push_str(k),
+                },
+                (Dialect::Simons, 0x64, Some(n @ 0x01..=0x7F)) => {
+                    match SIMONS[usize::from(n - 1)] {
+                        "" => out.push_str(&format!("{{$64{n:02X}}}")),
+                        k => out.push_str(k),
+                    }
+                    i += 1;
+                }
+                // Tokens the dialect doesn't have.
+                (_, 0xCC..=0xFE, _) => out.push_str(&format!("{{${b:02X}}}")),
                 _ => push_char(b, out),
             }
         }
@@ -314,6 +500,72 @@ mod tests {
         let mut moved = prg(0x0801, &[(10, b"\x80")]);
         moved[2] ^= 0x40;
         assert!(detokenize(&moved).is_some());
+    }
+
+    #[test]
+    fn dialect_tables_have_their_token_ranges() {
+        assert_eq!(V7_KEYWORDS.len(), 0xFD - 0xCC + 1);
+        assert_eq!(V7_KEYWORDS[0xD5 - 0xCC], "ELSE");
+        assert_eq!(V7_KEYWORDS[0xFD - 0xCC], "WHILE");
+        assert_eq!(V7_CE[0x0A - 2], "POINTER");
+        assert_eq!(V7_FE[0x26 - 2], "SLOW");
+        assert_eq!(SIMONS.len(), 0x7F);
+        assert_eq!(SIMONS[0x01 - 1], "HIRES");
+        assert_eq!(SIMONS[0x7F - 1], "OUT");
+    }
+
+    #[test]
+    fn c128_programs_list_as_basic_7() {
+        // 10 GRAPHIC 1,1:DO:LOOP UNTIL JOY(1)
+        // 20 BANK 0:FAST:X=POT(1)
+        let p = prg(
+            0x1C01,
+            &[
+                (10, b"\xde 1,1:\xeb:\xec \xfc \xcf(1)"),
+                (20, b"\xfe\x02 0:\xfe\x25:X=\xce\x02(1)"),
+            ],
+        );
+        let l = detokenize(&p).unwrap();
+        assert_eq!(l.dialect, Dialect::V7);
+        assert_eq!(
+            l.text,
+            "10 GRAPHIC 1,1:DO:LOOP UNTIL JOY(1)\n20 BANK 0:FAST:X=POT(1)\n"
+        );
+        // Unused two-byte tokens show their bytes.
+        let p = prg(0x1C01, &[(1, b"\xfe\x20:\xce\x7f")]);
+        assert_eq!(detokenize(&p).unwrap().text, "1 {$FE20}:{$CE7F}\n");
+        // The same bytes as V2: tokens it doesn't have.
+        let p = prg(0x0801, &[(10, b"\xde 1")]);
+        assert_eq!(detokenize(&p).unwrap().text, "10 {$DE} 1\n");
+        let as7 = detokenize_as(&p, Dialect::V7).unwrap();
+        assert_eq!(
+            (as7.text.as_str(), as7.dialect),
+            ("10 GRAPHIC 1\n", Dialect::V7)
+        );
+    }
+
+    #[test]
+    fn simons_tokens_are_detected_outside_quotes_only() {
+        // 10 HIRES 0,1:PRINT AT(1,2)"X":CIRCLE 160,100,50,50,1
+        let p = prg(
+            0x0801,
+            &[(
+                10,
+                b"\x64\x01 0,1:\x99\x64\x28 1,2)\"X\":\x64\x42 160,100,50,50,1",
+            )],
+        );
+        let l = detokenize(&p).unwrap();
+        assert_eq!(l.dialect, Dialect::Simons);
+        assert_eq!(
+            l.text,
+            "10 HIRES 0,1:PRINTAT( 1,2)\"X\":CIRCLE 160,100,50,50,1\n"
+        );
+        // $64 followed by a token byte inside quotes is just text.
+        let p = prg(0x0801, &[(10, b"\x99\"\x64\x01\"")]);
+        assert_eq!(detokenize(&p).unwrap().dialect, Dialect::V2);
+        // Unassigned Simons slots show their bytes.
+        let p = prg(0x0801, &[(10, b"\x64\x22")]);
+        assert_eq!(detokenize(&p).unwrap().text, "10 {$6422}\n");
     }
 
     #[test]
