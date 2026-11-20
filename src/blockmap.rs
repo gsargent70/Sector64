@@ -149,9 +149,6 @@ impl BlockMap {
     }
 }
 
-/// "GEOS format" signature in the header block, at `$AD`.
-const GEOS_SIGNATURE: &[u8] = b"GEOS format";
-
 impl Disk {
     /// Map every block of the disk to its owner and BAM state. Never fails:
     /// damage is mapped as far as it can be and listed in
@@ -204,9 +201,7 @@ impl Disk {
         }
 
         let header = self.block(dir, geom.header_sector()).ok();
-        let geos = !matches!(geom, Geometry::CmdNative { .. })
-            && header
-                .is_some_and(|h| h.get(0xAD..0xAD + GEOS_SIGNATURE.len()) == Some(GEOS_SIGNATURE));
+        let geos = self.is_geos();
         if geos {
             // The GEOS border block holds files dragged off the desktop. Some
             // disks leave it free in the BAM (seen on a 1581 GEOS disk whose

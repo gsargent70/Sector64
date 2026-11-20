@@ -220,7 +220,9 @@ multicolour, lined up with the memory a PRG loads to); for an open D64/D71/D81, 
 disk** cross-checks every file chain against the BAM. The **disk map** draws
 every block of any disk image as a track-by-sector grid, coloured by the file
 (or DOS structure) that owns it, with free, orphaned and conflicting blocks
-marked; hover a block to see its file, click to select it. Members that need a
+marked; hover a block to see its file, click to select it. The **Copy** window holds a second disk image and
+copies files between the two, from any disk or archive onto a D64/D71/D81/D2M
+and back. Members that need a
 not-yet-implemented decoder are listed with the reason instead of bytes.
 
 For the writable formats (`.d64/.d71/.d81` and CMD-native `.d2m`) it is also an

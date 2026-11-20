@@ -338,6 +338,18 @@ struct EditDisk {
     dirty: bool,
 }
 
+/// The second disk in the Copy window: files are copied onto it from the
+/// main listing, and back from it onto the open disk.
+struct OtherDisk {
+    disk: Disk,
+    path: Option<PathBuf>,
+    dirty: bool,
+    /// Earlier states for the window's Undo (disk, dirty), newest last.
+    undo: Vec<(Disk, bool)>,
+    /// Rows selected in its list.
+    marked: std::collections::BTreeSet<usize>,
+}
+
 /// How many edits Undo can step back through.
 const UNDO_MAX: usize = 32;
 
@@ -503,6 +515,9 @@ struct App {
     ro_disk: Option<Disk>,
     /// Whether the Disk Map window is open.
     show_map: bool,
+    /// Whether the Copy window is open, and the disk it copies to and from.
+    show_copy: bool,
+    other: Option<OtherDisk>,
     /// The disk map, built when the window opens and dropped on every change.
     map_cache: Option<BlockMap>,
     // staging list when building a new archive
@@ -569,6 +584,21 @@ enum Act {
     Validate,
     NewArchive,
     SaveArchiveAs,
+    /// Copy window: open a disk to copy to, or make a blank one (0 D64,
+    /// 1 D71, 2 D81).
+    OtherOpen,
+    OtherNew(u8),
+    /// Save the other disk (true: Save As).
+    OtherSave(bool),
+    /// Drop the other disk and its unsaved changes.
+    OtherDiscard,
+    OtherUndo,
+    /// Click a row of the other disk's list (true: Ctrl-click toggles it).
+    OtherMark(usize, bool),
+    /// Copy the main listing's selected files onto the other disk.
+    CopyToOther,
+    /// Copy the other disk's selected files onto the open disk or archive.
+    CopyFromOther,
 }
 
 impl App {
@@ -865,7 +895,220 @@ impl App {
                 self.status = "New archive — add files, then Save archive as…".into();
             }
             Act::SaveArchiveAs => self.save_archive(),
+            Act::OtherOpen => {
+                let dlg = rfd::FileDialog::new()
+                    .add_filter("disk image", &["d64", "d71", "d81", "d2m"])
+                    .add_filter("All files", &["*"]);
+                if let Some(p) = dlg.pick_file() {
+                    self.open_other(&p);
+                }
+            }
+            Act::OtherNew(fmt) => {
+                let disk = match fmt {
+                    1 => Disk::format_d71(&self.new_name, &self.new_id),
+                    2 => Disk::format_d81(&self.new_name, &self.new_id),
+                    _ => Disk::format(&self.new_name, &self.new_id),
+                };
+                self.other = Some(OtherDisk {
+                    disk,
+                    path: None,
+                    dirty: true,
+                    undo: Vec::new(),
+                    marked: Default::default(),
+                });
+                self.status = "Made a blank disk to copy to (unsaved)".into();
+            }
+            Act::OtherSave(save_as) => self.save_other(save_as),
+            Act::OtherDiscard => {
+                self.other = None;
+                self.status = "Closed the other disk".into();
+            }
+            Act::OtherUndo => {
+                if let Some(o) = &mut self.other {
+                    if let Some((disk, dirty)) = o.undo.pop() {
+                        o.disk = disk;
+                        o.dirty = dirty;
+                        o.marked.clear();
+                        self.status = "Undone the last copy onto the other disk".into();
+                    }
+                }
+            }
+            Act::OtherMark(i, toggle) => {
+                if let Some(o) = &mut self.other {
+                    if !toggle {
+                        o.marked.clear();
+                        o.marked.insert(i);
+                    } else if !o.marked.insert(i) {
+                        o.marked.remove(&i);
+                    }
+                }
+            }
+            Act::CopyToOther => self.copy_to_other(),
+            Act::CopyFromOther => self.copy_from_other(),
         }
+    }
+
+    /// Open `path` as the Copy window's disk. Only disks that can be written
+    /// (D64, D71, D81, CMD-native D2M) qualify.
+    fn open_other(&mut self, path: &Path) {
+        match open_path(path) {
+            Ok(Opened::Disk(disk)) => {
+                self.other = Some(OtherDisk {
+                    disk,
+                    path: Some(path.to_path_buf()),
+                    dirty: false,
+                    undo: Vec::new(),
+                    marked: Default::default(),
+                });
+                self.status = format!("Opened {} to copy to", path.display());
+            }
+            Ok(_) => {
+                self.status =
+                    "Copy to a D64, D71, D81 or CMD-native D2M disk; this one is read-only".into()
+            }
+            Err(e) => self.status = format!("Error: {e}"),
+        }
+    }
+
+    fn save_other(&mut self, save_as: bool) {
+        let Some(o) = &mut self.other else { return };
+        let path = match (&o.path, save_as) {
+            (Some(p), false) => p.clone(),
+            _ => {
+                let dlg = rfd::FileDialog::new()
+                    .add_filter("disk image", &["d64", "d71", "d81", "d2m"])
+                    .set_file_name(default_disk_name(&o.disk));
+                match dlg.save_file() {
+                    Some(p) => p,
+                    None => return,
+                }
+            }
+        };
+        match std::fs::write(&path, o.disk.as_bytes()) {
+            Ok(()) => {
+                o.path = Some(path.clone());
+                o.dirty = false;
+                for (_, dirty) in &mut o.undo {
+                    *dirty = true;
+                }
+                remember_recent(&mut self.recent, &path);
+                self.status = format!("Saved {}", path.display());
+            }
+            Err(e) => self.status = format!("Save failed: {e}"),
+        }
+    }
+
+    /// The main listing's chosen rows: the multi-select set if any, else the
+    /// active row.
+    fn chosen_rows(&self) -> Vec<usize> {
+        let mut rows: Vec<usize> = if self.marked.is_empty() {
+            self.selected.into_iter().collect()
+        } else {
+            self.marked.iter().copied().collect()
+        };
+        rows.retain(|&i| i < self.nodes.len());
+        rows
+    }
+
+    /// Copy the main listing's chosen files onto the other disk, as one
+    /// step of its Undo.
+    fn copy_to_other(&mut self) {
+        let rows = self.chosen_rows();
+        let Some(o) = &mut self.other else { return };
+        if rows.is_empty() {
+            self.status = "Select files in the list to copy".into();
+            return;
+        }
+        let before = o.disk.clone();
+        // From a disk, copy directory entries (exact names, lock flags);
+        // from an archive, the extracted bytes under the listed name.
+        let src = self
+            .disk
+            .as_ref()
+            .map(|e| &e.disk)
+            .or(self.ro_disk.as_ref());
+        let entries = src.map(|d| d.directory().unwrap_or_default());
+        let mut done = Vec::new();
+        let mut failed = Vec::new();
+        for i in rows {
+            let node = &self.nodes[i];
+            let r = match (src, entries.as_ref().and_then(|e| e.get(i))) {
+                (Some(src), Some(entry)) => {
+                    o.disk.copy_file_from(src, entry).map_err(|e| e.to_string())
+                }
+                _ => copy_bytes(&mut o.disk, node),
+            };
+            match r {
+                Ok(()) => done.push(node.name.clone()),
+                Err(e) => failed.push(format!("\"{}\": {e}", node.name)),
+            }
+        }
+        if !done.is_empty() {
+            o.undo.push((before, o.dirty));
+            if o.undo.len() > UNDO_MAX {
+                o.undo.remove(0);
+            }
+            o.dirty = true;
+            o.marked.clear();
+        }
+        self.status = copy_report(&done, &failed, "the other disk");
+    }
+
+    /// Copy the other disk's selected files onto the open disk (or into a
+    /// new archive), as one step of the main Undo.
+    fn copy_from_other(&mut self) {
+        let Some(o) = &self.other else { return };
+        let entries = o.disk.directory().unwrap_or_default();
+        let picked: Vec<&sector64::Entry> =
+            o.marked.iter().filter_map(|&i| entries.get(i)).collect();
+        if picked.is_empty() {
+            self.status = "Select files on the other disk to copy".into();
+            return;
+        }
+        let before = self.snapshot();
+        let mut done = Vec::new();
+        let mut failed = Vec::new();
+        for e in picked {
+            let r = if let Some(ed) = &mut self.disk {
+                ed.disk
+                    .copy_file_from(&o.disk, e)
+                    .map_err(|x| x.to_string())
+            } else if let Some(stage) = &mut self.archive {
+                match (e.file_type, o.disk.read_entry(e)) {
+                    (FileType::Rel, _) => Err(sector64::Error::CannotCopy("REL files").to_string()),
+                    (_, Err(x)) => Err(x.to_string()),
+                    (file_type, Ok(data)) => {
+                        stage.push(ImportFile {
+                            name: e.name.clone(),
+                            file_type,
+                            data,
+                        });
+                        Ok(())
+                    }
+                }
+            } else {
+                self.status = "Open a disk or start a new archive to copy into".into();
+                return;
+            };
+            match r {
+                Ok(()) => done.push(e.name.clone()),
+                Err(x) => failed.push(format!("\"{}\": {x}", e.name)),
+            }
+        }
+        let status = copy_report(&done, &failed, "the open disk");
+        if !done.is_empty() {
+            if let Some(ed) = &mut self.disk {
+                ed.dirty = true;
+            }
+            self.record(
+                before,
+                &format!("Copied {} file(s) from the other disk", done.len()),
+            );
+            self.hex_cache = None;
+            self.gfx_cache = None;
+            self.refresh();
+        }
+        self.status = status;
     }
 
     fn save_archive(&mut self) {
@@ -1302,7 +1545,8 @@ impl eframe::App for App {
         let ic = self.icons.clone().unwrap();
 
         // Guard the window close against unsaved disk edits.
-        if ctx.input(|i| i.viewport().close_requested()) && self.is_dirty() {
+        let other_dirty = self.other.as_ref().is_some_and(|o| o.dirty);
+        if ctx.input(|i| i.viewport().close_requested()) && (self.is_dirty() || other_dirty) {
             if self.confirm.is_none() {
                 self.confirm = Some(Confirm::Quit);
             }
@@ -1382,6 +1626,7 @@ impl eframe::App for App {
         let mut show_help = self.show_help;
         let has_map = self.map_disk().is_some();
         let mut show_map = self.show_map && has_map;
+        let mut show_copy = self.show_copy;
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(2.0);
@@ -1567,6 +1812,14 @@ impl eframe::App for App {
                     {
                         show_map = !show_map;
                     }
+                }
+                ui.separator();
+                if ui
+                    .selectable_label(show_copy, "Copy")
+                    .on_hover_text("copy files to and from a second disk (Ctrl+K)")
+                    .clicked()
+                {
+                    show_copy = !show_copy;
                 }
                 ui.separator();
                 if ui
@@ -2023,6 +2276,34 @@ impl eframe::App for App {
             }
         }
 
+        // Copy window: a second disk to copy files to and from.
+        if show_copy {
+            if !show_help && !show_map && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                show_copy = false;
+            }
+            let screen = ctx.screen_rect();
+            let chosen = self.chosen_rows().len();
+            let can_receive = self.editable();
+            egui::Window::new(egui::RichText::new("COPY").color(c64::ACCENT).strong())
+                .collapsible(false)
+                .resizable(true)
+                .default_width(620.0_f32.min(screen.width() - 40.0))
+                .min_width(560.0_f32.min(screen.width() - 40.0))
+                .max_height(screen.height() - 60.0)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .default_pos(screen.center())
+                .show(ctx, |ui| {
+                    copy_window_ui(
+                        ui,
+                        self.other.as_ref(),
+                        chosen,
+                        can_receive,
+                        &mut show_copy,
+                        &mut acts,
+                    );
+                });
+        }
+
         // Unsaved-changes confirmation (before opening another file or quitting).
         if self.confirm.is_some() {
             let mut action: Option<u8> = None; // 0 discard, 1 cancel, 2 save
@@ -2035,10 +2316,19 @@ impl eframe::App for App {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.label("The open disk has unsaved changes.");
+                let quitting = matches!(self.confirm, Some(Confirm::Quit));
+                let main_dirty = self.is_dirty();
+                ui.label(match (main_dirty, quitting && other_dirty) {
+                    (true, true) => {
+                        "The open disk and the Copy window's disk have unsaved changes."
+                    }
+                    (false, true) => "The Copy window's disk has unsaved changes.",
+                    _ => "The open disk has unsaved changes.",
+                });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if is_disk && ui.button("💾 Save first").clicked() {
+                    if (is_disk || quitting && other_dirty) && ui.button("💾 Save first").clicked()
+                    {
                         action = Some(2);
                     }
                     if ui.button("Discard").clicked() {
@@ -2056,14 +2346,24 @@ impl eframe::App for App {
                         if let Some(ed) = &mut self.disk {
                             ed.dirty = false;
                         }
+                        if let Some(o) = &mut self.other {
+                            o.dirty = false;
+                        }
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     None => {}
                 },
                 Some(1) => self.confirm = None,
                 Some(2) => {
-                    self.save(false);
-                    if !self.is_dirty() {
+                    if self.is_dirty() {
+                        self.save(false);
+                    }
+                    let quitting = matches!(self.confirm, Some(Confirm::Quit));
+                    if quitting && self.other.as_ref().is_some_and(|o| o.dirty) {
+                        self.save_other(false);
+                    }
+                    let other_dirty = quitting && self.other.as_ref().is_some_and(|o| o.dirty);
+                    if !self.is_dirty() && !other_dirty {
                         match self.confirm.take() {
                             Some(Confirm::OpenFile(p)) => self.open(&p),
                             Some(Confirm::Quit) => {
@@ -2115,6 +2415,9 @@ impl eframe::App for App {
             }
             if i.modifiers.command && i.key_pressed(egui::Key::M) && has_map {
                 show_map = !show_map;
+            }
+            if i.modifiers.command && i.key_pressed(egui::Key::K) {
+                show_copy = !show_copy;
             }
             if !typing {
                 // Undo / redo (text fields keep Ctrl+Z for their own text).
@@ -2171,6 +2474,7 @@ impl eframe::App for App {
         self.show_preview = show_preview;
         self.show_help = show_help;
         self.show_map = show_map;
+        self.show_copy = show_copy;
         for act in acts {
             self.apply(act);
         }
@@ -3111,15 +3415,227 @@ fn disk_nodes(disk: &Disk) -> (String, Vec<Node>) {
             data: disk.read_entry(e).map_err(|x| x.to_string()),
         });
     }
+    (disk_title(disk, header), nodes)
+}
+
+/// A disk's header line, as the listing's title shows it.
+fn disk_title(disk: &Disk, header: sector64::Result<sector64::Header>) -> String {
     let free = disk
         .blocks_free()
         .map(|f| format!("{f} free"))
         .unwrap_or_default();
-    let title = match header {
+    match header {
         Ok(h) => format!("Disk  0 \"{}\" {} {}   {}", h.name, h.id, h.dos_type, free),
         Err(e) => format!("Disk (header error: {e})"),
+    }
+}
+
+/// The Copy window's contents: the other disk's header, its files, and the
+/// buttons that open, make, save it and copy files across.
+fn copy_window_ui(
+    ui: &mut egui::Ui,
+    other: Option<&OtherDisk>,
+    chosen: usize,
+    can_receive: bool,
+    show: &mut bool,
+    acts: &mut Vec<Act>,
+) {
+    let dirty = other.is_some_and(|o| o.dirty);
+    ui.horizontal(|ui| {
+        let open_tip = if dirty {
+            "save or discard this disk's changes first"
+        } else {
+            "open a D64, D71, D81 or CMD-native D2M to copy to"
+        };
+        if ui
+            .add_enabled(!dirty, egui::Button::new("Open…"))
+            .on_hover_text(open_tip)
+            .on_disabled_hover_text(open_tip)
+            .clicked()
+        {
+            acts.push(Act::OtherOpen);
+        }
+        ui.add_enabled_ui(!dirty, |ui| {
+            ui.menu_button("New ▸", |ui| {
+                for (fmt, label) in [(0u8, "D64 (1541)"), (1, "D71 (1571)"), (2, "D81 (1581)")] {
+                    if ui.button(label).clicked() {
+                        acts.push(Act::OtherNew(fmt));
+                        ui.close_menu();
+                    }
+                }
+            })
+            .response
+            .on_hover_text("a blank disk, named like File ▸ New")
+            .on_disabled_hover_text(open_tip);
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .button("Close")
+                .on_hover_text("hide this window (Esc); the disk stays open")
+                .clicked()
+            {
+                *show = false;
+            }
+        });
+    });
+    let Some(o) = other else {
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new(
+                "Open a disk, or make a new one, to copy files to and from.\n\
+                 Then select files in the main list and press Copy Here.",
+            )
+            .color(c64::TEXT_DIM),
+        );
+        return;
     };
-    (title, nodes)
+    ui.separator();
+    let title = disk_title(&o.disk, o.disk.header());
+    let entries = o.disk.directory().unwrap_or_default();
+    ui.add(egui::Label::new(egui::RichText::new(title).color(c64::BRIGHT).strong()).truncate());
+    // Unsaved changes are flagged first, so a long path can't hide it.
+    let where_ = match (&o.path, dirty) {
+        (None, _) => "(not saved yet)".to_string(),
+        (Some(p), true) => format!("•modified  {}", p.display()),
+        (Some(p), false) => p.display().to_string(),
+    };
+    ui.add(egui::Label::new(egui::RichText::new(where_).color(c64::TEXT_DIM)).truncate());
+    ui.horizontal(|ui| {
+        if ui.add_enabled(dirty, egui::Button::new("Save")).clicked() {
+            acts.push(Act::OtherSave(false));
+        }
+        if ui.button("Save As…").clicked() {
+            acts.push(Act::OtherSave(true));
+        }
+        if ui
+            .add_enabled(!o.undo.is_empty(), egui::Button::new("Undo"))
+            .on_hover_text("undo the last copy onto this disk")
+            .clicked()
+        {
+            acts.push(Act::OtherUndo);
+        }
+        let close = if dirty { "Discard" } else { "Close Disk" };
+        if ui
+            .button(close)
+            .on_hover_text(if dirty {
+                "close this disk and lose its unsaved changes"
+            } else {
+                "close this disk"
+            })
+            .clicked()
+        {
+            acts.push(Act::OtherDiscard);
+        }
+    });
+    ui.separator();
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let list_h = (ui.available_height() - 60.0).max(120.0);
+    egui::ScrollArea::vertical()
+        .id_salt("other_list")
+        .max_height(list_h)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            if entries.is_empty() {
+                ui.label(egui::RichText::new("(no files)").color(c64::TEXT_DIM));
+            }
+            for (i, e) in entries.iter().enumerate() {
+                // A directory line, as LIST "$" shows it.
+                let badge = e.file_type.mnemonic();
+                let text = format!(
+                    "{:<5}{:<19}{}",
+                    e.blocks,
+                    format!("\"{}\"", e.name),
+                    badge.to_uppercase()
+                );
+                let r = ui.add(egui::SelectableLabel::new(
+                    o.marked.contains(&i),
+                    egui::RichText::new(text)
+                        .font(font.clone())
+                        .color(badge_color(badge)),
+                ));
+                if r.clicked() {
+                    let toggle = ui.input(|i| i.modifiers.command);
+                    acts.push(Act::OtherMark(i, toggle));
+                }
+            }
+        });
+    ui.separator();
+    ui.horizontal(|ui| {
+        let here = match chosen {
+            0 => "Copy Here".to_string(),
+            n => format!("Copy Here ({n})"),
+        };
+        if ui
+            .add_enabled(chosen > 0, egui::Button::new(here))
+            .on_hover_text("copy the files selected in the main list onto this disk")
+            .on_disabled_hover_text("select files in the main list first")
+            .clicked()
+        {
+            acts.push(Act::CopyToOther);
+        }
+        let n = o.marked.len();
+        let back = match n {
+            0 => "Copy to Open Disk".to_string(),
+            n => format!("Copy to Open Disk ({n})"),
+        };
+        let tip = if !can_receive {
+            "open an editable disk (or start a new archive) in the main window first"
+        } else {
+            "select files above first (Ctrl-click for several)"
+        };
+        if ui
+            .add_enabled(n > 0 && can_receive, egui::Button::new(back))
+            .on_hover_text("copy the files selected above onto the disk open in the main window")
+            .on_disabled_hover_text(tip)
+            .clicked()
+        {
+            acts.push(Act::CopyFromOther);
+        }
+    });
+}
+
+/// Write an archive member (or any listed file without a directory entry)
+/// onto `disk` under its listed name, refusing names already there and REL
+/// files.
+fn copy_bytes(disk: &mut Disk, node: &Node) -> Result<(), String> {
+    let data = node.data.as_ref().map_err(|e| e.clone())?;
+    let file_type = match node.badge.as_str() {
+        "rel" => return Err(sector64::Error::CannotCopy("REL files").to_string()),
+        "seq" => FileType::Seq,
+        "usr" => FileType::Usr,
+        "del" => FileType::Del,
+        _ => FileType::Prg,
+    };
+    if disk.find_entry(&node.name).ok().flatten().is_some() {
+        return Err(sector64::Error::FileExists.to_string());
+    }
+    disk.write_file(&node.name, file_type, data)
+        .map_err(|e| e.to_string())
+}
+
+/// The status line after a copy: how many went to `dest`, and why any
+/// didn't.
+fn copy_report(done: &[String], failed: &[String], dest: &str) -> String {
+    let mut s = match done {
+        [] => "Nothing copied".to_string(),
+        [one] => format!("Copied \"{one}\" to {dest}"),
+        many => format!("Copied {} files to {dest}", many.len()),
+    };
+    if !failed.is_empty() {
+        s.push_str(&format!("; skipped {}", failed.join(", ")));
+    }
+    s
+}
+
+/// A file name for saving `disk`, with the extension for its format.
+fn default_disk_name(disk: &Disk) -> &'static str {
+    use sector64::geometry::Geometry;
+    match disk.geometry() {
+        Geometry::Cbm1571 => "disk.d71",
+        Geometry::Cbm1581 => "disk.d81",
+        Geometry::CmdNative { .. } => "disk.d2m",
+        Geometry::Cbm1541 { .. } => "disk.d64",
+    }
 }
 
 /// If `path` names one part of a Zip-Code set (`1!NAME` to `4!NAME`), read
@@ -3685,6 +4201,112 @@ mod tests {
         app.redo();
         assert_eq!(app.status, "Nothing to redo");
         assert_eq!(names(&app), ["ONE", "TWO", "NEW"]);
+    }
+
+    fn other_names(app: &App) -> Vec<String> {
+        let o = app.other.as_ref().unwrap();
+        o.disk
+            .directory()
+            .unwrap()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn copy_window_copies_both_ways_with_undo() {
+        let mut app = app_with_disk();
+        app.add("ONE".into(), b"\x01\x08\x60");
+        app.add("TWO".into(), &[7u8; 600]);
+        app.add("THREE".into(), b"\x01\x08");
+        // Nothing to copy to yet.
+        app.marked.extend([0, 2]);
+        app.apply(Act::CopyToOther);
+        assert!(app.other.is_none());
+
+        app.apply(Act::OtherNew(2));
+        assert!(app.other.as_ref().unwrap().dirty);
+        app.apply(Act::CopyToOther);
+        assert_eq!(other_names(&app), ["ONE", "THREE"]);
+        assert_eq!(app.status, "Copied 2 files to the other disk");
+        // Copying one again is refused, and nothing changes.
+        app.marked.clear();
+        app.selected = Some(0);
+        app.apply(Act::CopyToOther);
+        assert_eq!(
+            app.status,
+            "Nothing copied; skipped \"ONE\": a file with that name already exists"
+        );
+        assert_eq!(app.other.as_ref().unwrap().undo.len(), 1);
+
+        // Back the other way: delete ONE here, copy it back from the other
+        // disk; the main Undo takes it away again.
+        app.selected = Some(0);
+        app.delete();
+        assert_eq!(names(&app), ["TWO", "THREE"]);
+        app.apply(Act::OtherMark(0, false));
+        app.apply(Act::OtherMark(1, true));
+        app.apply(Act::CopyFromOther);
+        assert_eq!(
+            app.status,
+            "Copied \"ONE\" to the open disk; skipped \"THREE\": a file with that name already exists"
+        );
+        assert_eq!(names(&app), ["ONE", "TWO", "THREE"]);
+        assert_eq!(app.nodes[0].data.as_deref().unwrap(), b"\x01\x08\x60");
+        app.undo();
+        assert_eq!(names(&app), ["TWO", "THREE"]);
+
+        // The other disk's own Undo.
+        app.apply(Act::OtherUndo);
+        assert!(other_names(&app).is_empty());
+        app.apply(Act::OtherDiscard);
+        assert!(app.other.is_none());
+    }
+
+    #[test]
+    fn copy_window_copies_archive_members_and_into_new_archives() {
+        let mut app = App {
+            nodes: vec![
+                Node {
+                    name: "DOC".into(),
+                    badge: "seq".into(),
+                    detail: String::new(),
+                    blocks: 0,
+                    data: Ok(b"TEXT".to_vec()),
+                },
+                Node {
+                    name: "DATA".into(),
+                    badge: "rel".into(),
+                    detail: String::new(),
+                    blocks: 0,
+                    data: Ok(vec![1; 10]),
+                },
+            ],
+            ..Default::default()
+        };
+        app.apply(Act::OtherNew(0));
+        app.marked.extend([0, 1]);
+        app.apply(Act::CopyToOther);
+        assert_eq!(other_names(&app), ["DOC"]);
+        assert!(app
+            .status
+            .ends_with("skipped \"DATA\": can't copy REL files"));
+        let o = app.other.as_ref().unwrap();
+        let e = &o.disk.directory().unwrap()[0];
+        assert_eq!(e.file_type, FileType::Seq);
+        assert_eq!(o.disk.read_entry(e).unwrap(), b"TEXT");
+
+        // A read-only listing can't receive; a new archive can.
+        app.apply(Act::OtherMark(0, false));
+        app.apply(Act::CopyFromOther);
+        assert_eq!(
+            app.status,
+            "Open a disk or start a new archive to copy into"
+        );
+        app.apply(Act::NewArchive);
+        app.apply(Act::CopyFromOther);
+        assert_eq!(names(&app), ["DOC"]);
+        assert_eq!(app.archive.as_ref().unwrap()[0].file_type, FileType::Seq);
     }
 
     #[test]

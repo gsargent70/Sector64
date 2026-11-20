@@ -51,6 +51,11 @@ pub enum Error {
     /// An operation isn't supported for this disk geometry (e.g. the CMD-native
     /// block-availability map, which this crate does not decode).
     UnsupportedGeometry,
+    /// A file with this name is already on the disk.
+    FileExists,
+    /// This kind of file can't be copied to another disk (the reason says
+    /// which: REL and GEOS files need structure a plain copy would lose).
+    CannotCopy(&'static str),
 }
 
 impl fmt::Display for Error {
@@ -87,6 +92,8 @@ impl fmt::Display for Error {
             Error::InvalidRecordLength => write!(f, "REL record length is zero"),
             Error::MissingSideSectors => write!(f, "REL file has no side-sector pointer"),
             Error::DiskFull => write!(f, "not enough free blocks on the disk"),
+            Error::FileExists => write!(f, "a file with that name already exists"),
+            Error::CannotCopy(why) => write!(f, "can't copy {why}"),
             Error::DirectoryFull => write!(f, "directory is full"),
             Error::FileNotFound => write!(f, "file not found"),
             Error::InvalidContainer => write!(f, "malformed or unrecognized container archive"),
