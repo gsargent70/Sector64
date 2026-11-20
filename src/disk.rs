@@ -714,7 +714,7 @@ impl Disk {
                 Some((base, base + 1, 5))
             }
             // CMD-native (DNP): a 32-byte bitmap per track (bit set = free,
-            // LSB-first), with no per-track free-count byte. The map lives on
+            // MSB-first; see `bam_bit`), with no per-track free-count byte. The map lives on
             // track 1 — sector 2 covers tracks 1-7 from offset $20, and each
             // later sector covers 8 tracks from offset 0.
             Geometry::CmdNative { .. } => {
@@ -731,12 +731,23 @@ impl Disk {
         }
     }
 
+    /// The mask for `sector`'s bit within its BAM byte. CBM formats number
+    /// sectors from the least significant bit; CMD native (DNP) from the most
+    /// significant, so bit 7 of a track's first byte is sector 0.
+    fn bam_bit(&self, sector: usize) -> u8 {
+        if matches!(self.geom, Geometry::CmdNative { .. }) {
+            0x80 >> (sector % 8)
+        } else {
+            1 << (sector % 8)
+        }
+    }
+
     /// Whether (track, sector) is currently free in the BAM.
     fn bam_is_free(&self, track: u8, sector: u8) -> bool {
         match self.bam_cell(track) {
             Some((_, bitmap, _)) => {
                 let byte = self.data[bitmap + (sector / 8) as usize];
-                byte & (1 << (sector % 8)) != 0
+                byte & self.bam_bit(sector as usize) != 0
             }
             None => false,
         }
@@ -756,7 +767,7 @@ impl Disk {
             .bam_cell(track)
             .ok_or(Error::InvalidTrackSector { track, sector })?;
         let byte = self.data[bitmap + (sector / 8) as usize];
-        Ok(byte & (1 << (sector % 8)) == 0)
+        Ok(byte & self.bam_bit(sector as usize) == 0)
     }
 
     /// Mark (track, sector) allocated (`true`) or free (`false`) in the BAM,
@@ -768,7 +779,7 @@ impl Disk {
         // CMD-native has no per-track free-count byte — only the bitmap.
         let has_count = !matches!(self.geom, Geometry::CmdNative { .. });
         let byte_idx = bitmap + (sector / 8) as usize;
-        let bit = 1u8 << (sector % 8);
+        let bit = self.bam_bit(sector as usize);
         let currently_free = self.data[byte_idx] & bit != 0;
         if allocated && currently_free {
             self.data[byte_idx] &= !bit;
@@ -805,7 +816,11 @@ impl Disk {
                     continue;
                 };
                 for s in 0..spt as usize {
-                    if self.data.get(bitmap + s / 8).is_some_and(|b| b & (1 << (s % 8)) != 0) {
+                    if self
+                        .data
+                        .get(bitmap + s / 8)
+                        .is_some_and(|b| b & self.bam_bit(s) != 0)
+                    {
                         n += 1;
                     }
                 }
@@ -1464,5 +1479,61 @@ mod tests {
         assert!(disk.block(70, 16).is_ok()); // last track, 17 sectors (0..16)
         assert!(disk.block(70, 17).is_err());
         assert!(disk.block(71, 0).is_err());
+    }
+
+    /// A minimal 25-track CMD-native D2M: header 1/1, BAM from 1/2, an empty
+    /// directory at 1/34. `alloc` lists the blocks the BAM marks in use.
+    fn dnp_image(alloc: &[(u8, u8)]) -> Disk {
+        let mut d = vec![0u8; 1_658_880];
+        let at = |t: usize, s: usize| ((t - 1) * 256 + s) * 256;
+        d[at(1, 1)..at(1, 1) + 3].copy_from_slice(&[1, 34, b'H']);
+        d[at(1, 2) + 8] = 25; // last track
+        d[at(1, 34) + 1] = 0xFF; // directory: end of chain
+        for t in 1..=25usize {
+            let bitmap = if t <= 7 {
+                at(1, 2) + 0x20 + (t - 1) * 32
+            } else {
+                at(1, 3 + (t - 8) / 8) + ((t - 8) % 8) * 32
+            };
+            d[bitmap..bitmap + 32].fill(0xFF);
+            for &(at_t, s) in alloc {
+                if at_t as usize == t {
+                    // DNP numbers sectors from bit 7.
+                    d[bitmap + s as usize / 8] &= !(0x80 >> (s % 8));
+                }
+            }
+        }
+        Disk::load(d).unwrap()
+    }
+
+    #[test]
+    fn dnp_bam_numbers_sectors_from_bit_7() {
+        // Track 1 blocks 0-34 (boot, header, BAM, directory) plus a file's
+        // worth of blocks at the start of track 2.
+        let used: Vec<(u8, u8)> = (0..35)
+            .map(|s| (1, s))
+            .chain((0..10).map(|s| (2, s)))
+            .collect();
+        let mut disk = dnp_image(&used);
+        assert_eq!(disk.bam_is_allocated(1, 34), Ok(true));
+        assert_eq!(disk.bam_is_allocated(1, 35), Ok(false));
+        assert_eq!(disk.bam_is_allocated(2, 9), Ok(true));
+        assert_eq!(disk.bam_is_allocated(2, 10), Ok(false));
+        // Directory track excluded: 24 tracks of 256, less the 10 used.
+        assert_eq!(disk.blocks_free().unwrap(), 24 * 256 - 10);
+
+        disk.write_file("NEW", FileType::Prg, &[7u8; 254 * 20])
+            .unwrap();
+        let e = disk.find_entry("NEW").unwrap().unwrap();
+        let chain = disk
+            .file_block_chain(e.first_track, e.first_sector)
+            .unwrap();
+        assert_eq!(chain.len(), 20);
+        for b in &chain {
+            assert!(!used.contains(b), "new file took in-use block {b:?}");
+            assert_eq!(disk.bam_is_allocated(b.0, b.1), Ok(true));
+        }
+        assert_eq!(disk.blocks_free().unwrap(), 24 * 256 - 30);
+        assert!(disk.validate().unwrap().is_clean());
     }
 }
