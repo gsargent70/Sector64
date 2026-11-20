@@ -258,9 +258,21 @@ file. Use the toggle in its header to switch views:
          and control codes inside quotes are shown by name, as
          in printed magazine listings ({CLR}, {RVS ON}, {RED},
          {5 DOWN} for five in a row). π shows as π. Codes with no
-         usual name show as {$xx}, and so do keywords from other
-         BASICs (C128 BASIC 7.0, Simons' BASIC), which this view
-         does not spell out.
+         usual name show as {$xx}.
+         Three dialects are understood. The row under the
+         buttons picks one:
+           AUTO    guess (the default): BASIC 7.0 for programs
+                   saved on a C128, Simons' BASIC when its
+                   keywords are used, otherwise V2. A guess
+                   other than V2 is noted on the first line,
+                   e.g. "(listed as BASIC 7.0)".
+           V2      Commodore BASIC V2 (C64, VIC-20).
+           7.0     the C128's BASIC 7.0 (DO, LOOP, GRAPHIC...).
+           SIMONS  Simons' BASIC for the C64 (HIRES, PROC...).
+         Pick one by hand when the guess is wrong, e.g. a
+         BASIC 7.0 program saved in C64 mode. Keywords a
+         dialect doesn't have show as {$xx} (or {$xxxx} for
+         two-byte tokens).
          A program that ends with a SYS line and machine code
          lists the BASIC part, then says how many bytes follow.
          A file that isn't a BASIC program says so; use HEX or

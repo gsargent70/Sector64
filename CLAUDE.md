@@ -62,8 +62,11 @@ It runs on Linux and Windows. Releases are on GitHub
 - `*_samples.rs` (and a GUI Zip-Code test) read real-world files from
   `$SECTOR64_SAMPLES`, defaulting to `~/Downloads/Sector64 Test Files`.
 - `tests/petcat_basic.rs` checks the BASIC detokenizer (`src/basic.rs`)
-  against programs tokenized by VICE's **`petcat`** (installed with VICE).
-  Note: in petcat source π is `~`; `{pi}` is literal text.
+  against programs tokenized by VICE's **`petcat`** (installed with VICE):
+  `-w2` BASIC V2, `-w70` C128 BASIC 7.0, `-wsimon` Simons' BASIC, every
+  keyword of each. Note: in petcat source π is `~`; `{pi}` is literal text.
+  Simons' slots `$6422 $642A $642B $642D $642F $643C-$643F $6454 $645E` are
+  unassigned even in petcat; they list as `{$64xx}`.
 - `arc_samples.rs`'s squeeze plaintext check needs `ARC_PLAINTEXT` pointing at
   the plaintext directory. **Not** the samples dir; that trips the
   `checked > 0` assert.

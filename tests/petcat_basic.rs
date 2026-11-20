@@ -1,13 +1,14 @@
 //! BASIC detokenizer differential against VICE's `petcat`.
 //!
-//! `petcat -w2` tokenizes BASIC source text into a C64 PRG independently of
-//! this crate; `detokenize_basic` must list it back as the same program.
-//! Skipped when `petcat` is absent.
+//! `petcat` tokenizes BASIC source text into a PRG independently of this
+//! crate (`-w2` for BASIC V2, `-w70` for the C128's BASIC 7.0, `-wsimon` for
+//! Simons' BASIC); `detokenize_basic` must list it back as the same program,
+//! recognising the dialect by itself. Skipped when `petcat` is absent.
 
 use std::fs;
 use std::process::Command;
 
-use sector64::detokenize_basic;
+use sector64::{detokenize_basic, BasicDialect};
 
 fn petcat_available() -> bool {
     Command::new("petcat")
@@ -17,15 +18,21 @@ fn petcat_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Tokenize `source` (petcat syntax) into a PRG with petcat.
+/// Tokenize `source` (petcat syntax) into a C64 BASIC V2 PRG with petcat.
 fn tokenize(name: &str, source: &str) -> Vec<u8> {
+    tokenize_as("2", name, source)
+}
+
+/// Tokenize `source` with petcat's `-w<version>`.
+fn tokenize_as(version: &str, name: &str, source: &str) -> Vec<u8> {
     let dir = std::env::temp_dir().join(format!("s64-petcat-{}-{name}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
     let txt = dir.join("prog.txt");
     let prg = dir.join("prog.prg");
     fs::write(&txt, source).unwrap();
     let out = Command::new("petcat")
-        .args(["-w2", "-o"])
+        .arg(format!("-w{version}"))
+        .arg("-o")
         .arg(&prg)
         .arg("--")
         .arg(&txt)
@@ -109,4 +116,188 @@ fn every_keyword_round_trips_through_petcat() {
         2 + 76 * 6 + 2,
         "every keyword should be one token"
     );
+}
+
+/// List `keywords` one per line through petcat and back, and check each
+/// became a token of `token_len` bytes.
+fn round_trip(version: &str, dialect: BasicDialect, keywords: &[(&str, usize)]) {
+    let source: String = keywords
+        .iter()
+        .enumerate()
+        .map(|(i, (k, _))| format!("{} {}\n", i + 1, k.to_lowercase()))
+        .collect();
+    let prg = tokenize_as(version, version, &source);
+    let listing = detokenize_basic(&prg).expect("a BASIC program");
+    assert_eq!(listing.dialect, dialect);
+    let expected: String = keywords
+        .iter()
+        .enumerate()
+        .map(|(i, (k, _))| format!("{} {k}\n", i + 1))
+        .collect();
+    assert_eq!(listing.text, expected);
+    // Link, line number and terminator: 5 bytes a line, plus the token.
+    let tokens: usize = keywords.iter().map(|(_, n)| 5 + n).sum();
+    assert_eq!(
+        prg.len(),
+        2 + tokens + 2,
+        "every keyword should be one token"
+    );
+}
+
+#[test]
+fn basic_7_keywords_round_trip_through_petcat() {
+    if !petcat_available() {
+        eprintln!("petcat not found; skipping");
+        return;
+    }
+    let one = [
+        "RGR",
+        "RCLR",
+        "JOY",
+        "RDOT",
+        "DEC",
+        "HEX$",
+        "ERR$",
+        "INSTR",
+        "ELSE",
+        "RESUME",
+        "TRAP",
+        "TRON",
+        "TROFF",
+        "SOUND",
+        "VOL",
+        "AUTO",
+        "PUDEF",
+        "GRAPHIC",
+        "PAINT",
+        "CHAR",
+        "BOX",
+        "CIRCLE",
+        "GSHAPE",
+        "SSHAPE",
+        "DRAW",
+        "LOCATE",
+        "COLOR",
+        "SCNCLR",
+        "SCALE",
+        "HELP",
+        "DO",
+        "LOOP",
+        "EXIT",
+        "DIRECTORY",
+        "DSAVE",
+        "DLOAD",
+        "HEADER",
+        "SCRATCH",
+        "COLLECT",
+        "COPY",
+        "RENAME",
+        "BACKUP",
+        "DELETE",
+        "RENUMBER",
+        "KEY",
+        "MONITOR",
+        "USING",
+        "UNTIL",
+        "WHILE",
+        // V2 keywords are still single bytes.
+        "PRINT",
+        "GOTO",
+    ];
+    let two = [
+        "POT",
+        "BUMP",
+        "PEN",
+        "RSPPOS",
+        "RSPRITE",
+        "RSPCOLOR",
+        "XOR",
+        "RWINDOW",
+        "POINTER",
+        "BANK",
+        "FILTER",
+        "PLAY",
+        "TEMPO",
+        "MOVSPR",
+        "SPRITE",
+        "SPRCOLOR",
+        "RREG",
+        "ENVELOPE",
+        "SLEEP",
+        "CATALOG",
+        "DOPEN",
+        "APPEND",
+        "DCLOSE",
+        "BSAVE",
+        "BLOAD",
+        "RECORD",
+        "CONCAT",
+        "DVERIFY",
+        "DCLEAR",
+        "SPRSAV",
+        "COLLISION",
+        "BEGIN",
+        "BEND",
+        "WINDOW",
+        "BOOT",
+        "WIDTH",
+        "SPRDEF",
+        "QUIT",
+        "STASH",
+        "FETCH",
+        "SWAP",
+        "OFF",
+        "FAST",
+        "SLOW",
+    ];
+    let keywords: Vec<(&str, usize)> = one
+        .iter()
+        .map(|&k| (k, 1))
+        .chain(two.iter().map(|&k| (k, 2)))
+        .collect();
+    round_trip("70", BasicDialect::V7, &keywords);
+}
+
+#[test]
+fn simons_keywords_round_trip_through_petcat() {
+    if !petcat_available() {
+        eprintln!("petcat not found; skipping");
+        return;
+    }
+    let simons = [
+        "HIRES", "PLOT", "LINE", "BLOCK", "FCHR", "FCOL", "FILL", "REC", "ROT", "DRAW", "CHAR",
+        "HI COL", "INV", "FRAC", "MOVE", "PLACE", "UPB", "UPW", "LEFTW", "LEFTB", "DOWNB", "DOWNW",
+        "RIGHTB", "RIGHTW", "MULTI", "COLOUR", "MMOB", "BFLASH", "MOB SET", "MUSIC", "FLASH",
+        "REPEAT", "PLAY", "CENTRE", "ENVELOPE", "CGOTO", "WAVE", "FETCH", "AT(", "UNTIL", "USE",
+        "GLOBAL", "RESET", "PROC", "CALL", "EXEC", "END PROC", "EXIT", "END LOOP", "ON KEY",
+        "DISABLE", "RESUME", "LOOP", "DELAY", "SECURE", "DISAPA", "CIRCLE", "ON ERROR", "NO ERROR",
+        "LOCAL", "RCOMP", "ELSE", "RETRACE", "TRACE", "DIR", "PAGE", "DUMP", "FIND", "OPTION",
+        "AUTO", "OLD", "JOY", "MOD", "DIV", "DUP", "INKEY", "INST", "TEST", "LIN", "EXOR",
+        "INSERT", "POT", "PENX", "PENY", "SOUND", "GRAPHICS", "DESIGN", "RLOCMOB", "CMOB",
+        "BCKGNDS", "PAUSE", "NRM", "MOB OFF", "OFF", "ANGL", "ARC", "COLD", "SCRSV", "SCRLD",
+        "TEXT", "CSET", "VOL", "DISK", "HRDCPY", "KEY", "PAINT", "LOW COL", "COPY", "MERGE",
+        "RENUMBER", "MEM", "DETECT", "CHECK", "DISPLAY", "ERR", "OUT",
+    ];
+    let mut keywords: Vec<(&str, usize)> = simons.iter().map(|&k| (k, 2)).collect();
+    keywords.push(("PRINT", 1));
+    round_trip("simon", BasicDialect::Simons, &keywords);
+}
+
+#[test]
+fn dialect_programs_list_like_their_source() {
+    if !petcat_available() {
+        eprintln!("petcat not found; skipping");
+        return;
+    }
+    let c128 = "10 graphic 1,1:color 1,2\n20 do:x=pot(1):loop until joy(2)\n30 if x then begin:print hex$(x):bend:else fast\n";
+    let listing = detokenize_basic(&tokenize_as("70", "c128", c128)).unwrap();
+    assert_eq!(listing.load_address, 0x1C01);
+    assert_eq!(listing.dialect, BasicDialect::V7);
+    assert_eq!(listing.text, c128.to_uppercase());
+
+    let simons = "10 hires 0,1:circle 160,100,50,50,1\n20 repeat:get a$:until a$<>\"\"\n30 proc done:print \"bye\":end proc\n";
+    let listing = detokenize_basic(&tokenize_as("simon", "simons", simons)).unwrap();
+    assert_eq!(listing.load_address, 0x0801);
+    assert_eq!(listing.dialect, BasicDialect::Simons);
+    assert_eq!(listing.text, simons.to_uppercase());
 }

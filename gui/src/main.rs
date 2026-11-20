@@ -16,8 +16,8 @@ use eframe::egui;
 use egui::Color32;
 use sector64::{
     parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64, write_lbr,
-    write_lnx, write_p00, write_t64, BamState, BlockMap, BlockStatus, Disk, FileType, ImportFile,
-    Owner,
+    write_lnx, write_p00, write_t64, BamState, BasicDialect, BlockMap, BlockStatus, Disk, FileType,
+    ImportFile, Owner,
 };
 
 /// The Commodore 64 palette this UI is themed around (Pepto values).
@@ -499,9 +499,11 @@ struct App {
     redo: Vec<UndoStep>,
     // preview/validation pane
     /// Cached rendered preview: (node index, mode it was rendered in, text).
-    hex_cache: Option<(usize, PreviewMode, String)>,
+    hex_cache: Option<(usize, PreviewMode, Option<BasicDialect>, String)>,
     /// How the preview pane renders bytes (hex or PETSCII text).
     preview_mode: PreviewMode,
+    /// The BASIC dialect the BASIC preview lists in; `None` detects it.
+    basic_dialect: Option<BasicDialect>,
     validation: String,
     // whether the validation-result popover is showing
     show_validation: bool,
@@ -1293,21 +1295,22 @@ impl eframe::App for App {
         match self.selected {
             Some(i) if i < self.nodes.len() => {
                 let mode = self.preview_mode;
+                let dialect = self.basic_dialect;
                 let stale = self
                     .hex_cache
                     .as_ref()
-                    .map(|(ci, cm, _)| *ci != i || *cm != mode)
+                    .map(|(ci, cm, cd, _)| *ci != i || *cm != mode || *cd != dialect)
                     .unwrap_or(true);
                 if stale {
                     let text = match &self.nodes[i].data {
                         Ok(d) => match mode {
                             PreviewMode::Hex => hexdump(d, 16 * 1024),
                             PreviewMode::Text => petscii_text(d, 64 * 1024),
-                            PreviewMode::Basic => basic_preview(d),
+                            PreviewMode::Basic => basic_preview(d, dialect),
                         },
                         Err(e) => format!("(not extractable: {e})"),
                     };
-                    self.hex_cache = Some((i, mode, text));
+                    self.hex_cache = Some((i, mode, dialect, text));
                 }
             }
             _ => self.hex_cache = None,
@@ -1315,7 +1318,7 @@ impl eframe::App for App {
         let preview = self
             .hex_cache
             .as_ref()
-            .map(|(_, _, s)| s.clone())
+            .map(|(_, _, _, s)| s.clone())
             .unwrap_or_default();
         let preview_name = self
             .selected
@@ -1343,6 +1346,7 @@ impl eframe::App for App {
         let mut rename_focus = self.rename_focus;
         let mut filter = std::mem::take(&mut self.filter);
         let mut preview_mode = self.preview_mode;
+        let mut basic_dialect = self.basic_dialect;
         let mut show_preview = self.show_preview;
         let mut show_help = self.show_help;
         let has_map = self.map_disk().is_some();
@@ -1654,6 +1658,23 @@ impl eframe::App for App {
                             );
                         });
                     });
+                    if preview_mode == PreviewMode::Basic {
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(&mut basic_dialect, None, "AUTO")
+                                .on_hover_text(
+                                    "guess: BASIC 7.0 for C128 programs, Simons' BASIC when its \
+                                 keywords are used, otherwise V2",
+                                );
+                            for (d, label, tip) in [
+                                (BasicDialect::V2, "V2", "Commodore BASIC V2 (C64, VIC-20)"),
+                                (BasicDialect::V7, "7.0", "the C128's BASIC 7.0"),
+                                (BasicDialect::Simons, "SIMONS", "Simons' BASIC (C64)"),
+                            ] {
+                                ui.selectable_value(&mut basic_dialect, Some(d), label)
+                                    .on_hover_text(tip);
+                            }
+                        });
+                    }
                     // Hex lines never wrap (the pane is sized to fit them, with
                     // a horizontal scrollbar if the window is too narrow);
                     // PETSCII text and BASIC listings wrap at the pane's 40
@@ -2090,6 +2111,7 @@ impl eframe::App for App {
         self.renaming = renaming;
         self.rename_focus = rename_focus;
         self.preview_mode = preview_mode;
+        self.basic_dialect = basic_dialect;
         self.show_preview = show_preview;
         self.show_help = show_help;
         self.show_map = show_map;
@@ -2789,17 +2811,30 @@ fn petscii_text(data: &[u8], cap: usize) -> String {
     s
 }
 
-/// The BASIC preview: the program listed as on a C64, or a note when the
-/// file isn't BASIC. `data` is the whole file, load address included.
-fn basic_preview(data: &[u8]) -> String {
-    match sector64::detokenize_basic(data) {
-        Some(l) if l.trailing_bytes > 0 => format!(
-            "{}\n(followed by {} bytes of machine code or data)",
-            l.text, l.trailing_bytes
-        ),
-        Some(l) => l.text,
-        None => "(not a BASIC program; try HEX or TEXT)".into(),
+/// The BASIC preview: the program listed as `LIST` shows it, or a note when
+/// the file isn't BASIC. `data` is the whole file, load address included;
+/// `dialect` is the one to list in, or `None` to detect it (a detected
+/// BASIC 7.0 or Simons' BASIC program says so on its first line).
+fn basic_preview(data: &[u8], dialect: Option<BasicDialect>) -> String {
+    let listing = match dialect {
+        Some(d) => sector64::detokenize_basic_as(data, d),
+        None => sector64::detokenize_basic(data),
+    };
+    let Some(l) = listing else {
+        return "(not a BASIC program; try HEX or TEXT)".into();
+    };
+    let mut out = String::new();
+    if dialect.is_none() && l.dialect != BasicDialect::V2 {
+        out.push_str(&format!("(listed as {})\n", l.dialect.name()));
     }
+    out.push_str(&l.text);
+    if l.trailing_bytes > 0 {
+        out.push_str(&format!(
+            "\n(followed by {} bytes of machine code or data)",
+            l.trailing_bytes
+        ));
+    }
+    out
 }
 
 /// Lay out a BASIC listing: line numbers in the accent colour so each line's
@@ -3364,11 +3399,29 @@ mod tests {
             0x00, 0xEA, 0x60,
         ];
         assert_eq!(
-            basic_preview(&prg),
+            basic_preview(&prg, None),
             "10 PRINT \"HI\"\n\n(followed by 2 bytes of machine code or data)"
         );
-        assert_eq!(basic_preview(&prg[..15]), "10 PRINT \"HI\"\n");
-        assert!(basic_preview(b"\x00\xc0\xa9\x00\x60").starts_with("(not a BASIC program"));
+        assert_eq!(basic_preview(&prg[..15], None), "10 PRINT \"HI\"\n");
+        assert!(basic_preview(b"\x00\xc0\xa9\x00\x60", None).starts_with("(not a BASIC program"));
+
+        // 10 HIRES 0 in Simons' BASIC: detected and labelled, or listed as
+        // chosen.
+        let simons = [
+            0x01, 0x08, 0x0C, 0x08, 0x0A, 0x00, 0x64, 0x01, 0x20, 0x30, 0x00, 0x00, 0x00,
+        ];
+        assert_eq!(
+            basic_preview(&simons, None),
+            "(listed as Simons' BASIC)\n10 HIRES 0\n"
+        );
+        assert_eq!(
+            basic_preview(&simons, Some(BasicDialect::Simons)),
+            "10 HIRES 0\n"
+        );
+        assert_eq!(
+            basic_preview(&simons, Some(BasicDialect::V2)),
+            "10 {$64}{$01} 0\n"
+        );
     }
 
     /// An app with a blank, saved D64 open (as if loaded from a file).
