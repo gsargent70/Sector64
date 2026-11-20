@@ -755,7 +755,7 @@ impl Disk {
 
     /// Whether (track, sector) is allocated, bounds-checked. Errors for an
     /// out-of-range track/sector or a track the BAM does not cover.
-    fn bam_is_allocated(&self, track: u8, sector: u8) -> Result<bool> {
+    pub(crate) fn bam_is_allocated(&self, track: u8, sector: u8) -> Result<bool> {
         let spt = self
             .geom
             .sector_count(track)
@@ -772,7 +772,7 @@ impl Disk {
 
     /// Mark (track, sector) allocated (`true`) or free (`false`) in the BAM,
     /// keeping the per-track free count in step.
-    fn bam_set(&mut self, track: u8, sector: u8, allocated: bool) {
+    pub(crate) fn bam_set(&mut self, track: u8, sector: u8, allocated: bool) {
         let Some((count, bitmap, _)) = self.bam_cell(track) else {
             return;
         };

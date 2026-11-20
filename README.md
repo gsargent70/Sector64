@@ -215,7 +215,10 @@ Open a `.d64/.d71/.d81/.g64/.d2m` disk or an `.arc/.sda/.lha/.lzh/.sfx/.lbr/
 **Extract all**) to the chosen output directory. The side pane **previews** the
 selected file as a hex dump, PETSCII text, or a BASIC program listed as the
 C64's `LIST` shows it; for an open D64/D71/D81, **Validate
-disk** cross-checks every file chain against the BAM. Members that need a
+disk** cross-checks every file chain against the BAM. The **disk map** draws
+every block of any disk image as a track-by-sector grid, coloured by the file
+(or DOS structure) that owns it, with free, orphaned and conflicting blocks
+marked; hover a block to see its file, click to select it. Members that need a
 not-yet-implemented decoder are listed with the reason instead of bytes.
 
 For the writable formats (`.d64/.d71/.d81` and CMD-native `.d2m`) it is also an

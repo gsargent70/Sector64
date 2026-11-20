@@ -16,7 +16,8 @@ use eframe::egui;
 use egui::Color32;
 use sector64::{
     parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64, write_lbr,
-    write_lnx, write_p00, write_t64, Disk, FileType, ImportFile,
+    write_lnx, write_p00, write_t64, BamState, BlockMap, BlockStatus, Disk, FileType, ImportFile,
+    Owner,
 };
 
 /// The Commodore 64 palette this UI is themed around (Pepto values).
@@ -45,6 +46,8 @@ mod c64 {
     pub const DEL: Color32 = Color32::from_rgb(0xa8, 0xa8, 0xa8);
     pub const REL: Color32 = Color32::from_rgb(0xc8, 0xc0, 0x60);
     pub const WARN: Color32 = Color32::from_rgb(0xd8, 0x80, 0x70);
+    /// Disk map: allocated blocks nothing uses.
+    pub const ORPHAN: Color32 = Color32::from_rgb(0xd8, 0xb0, 0x50);
     pub const OK: Color32 = Color32::from_rgb(0x8c, 0xc0, 0x70);
 }
 
@@ -482,6 +485,12 @@ struct App {
     /// The listing is a read-only disk (G64, a 1581-partition D2M, a Zip-Code
     /// set): its rows carry block counts, so the BLK column applies.
     read_only_disk: bool,
+    /// The read-only disk itself, kept for the disk map.
+    ro_disk: Option<Disk>,
+    /// Whether the Disk Map window is open.
+    show_map: bool,
+    /// The disk map, built when the window opens and dropped on every change.
+    map_cache: Option<BlockMap>,
     // staging list when building a new archive
     archive: Option<Vec<ImportFile>>,
     /// Edits that Undo steps back through, newest last.
@@ -570,6 +579,14 @@ impl App {
         self.disk.is_some() || self.archive.is_some()
     }
 
+    /// The disk the map shows: the editable one or a read-only one.
+    fn map_disk(&self) -> Option<&Disk> {
+        self.disk
+            .as_ref()
+            .map(|e| &e.disk)
+            .or(self.ro_disk.as_ref())
+    }
+
     /// Whether the open disk has unsaved edits.
     fn is_dirty(&self) -> bool {
         self.disk.as_ref().is_some_and(|e| e.dirty)
@@ -620,6 +637,8 @@ impl App {
         self.disk = None;
         self.archive = None;
         self.read_only_disk = false;
+        self.ro_disk = None;
+        self.map_cache = None;
         self.title.clear();
         self.hex_cache = None;
         self.validation.clear();
@@ -639,10 +658,11 @@ impl App {
                 self.nodes = nodes;
                 self.after_open(path);
             }
-            Ok(Opened::ReadOnlyDisk(title, nodes)) => {
+            Ok(Opened::ReadOnlyDisk(title, nodes, disk)) => {
                 self.title = title;
                 self.nodes = nodes;
                 self.read_only_disk = true;
+                self.ro_disk = Some(disk);
                 self.after_open(path);
             }
             Err(e) => self.status = format!("Error: {e}"),
@@ -688,7 +708,8 @@ impl App {
             }
         }
         // The list was rebuilt; any in-place rename is finished and marks are
-        // dropped (indices may have shifted).
+        // dropped (indices may have shifted). The disk may have changed too.
+        self.map_cache = None;
         self.renaming = None;
         self.marked.clear();
     }
@@ -1324,6 +1345,8 @@ impl eframe::App for App {
         let mut preview_mode = self.preview_mode;
         let mut show_preview = self.show_preview;
         let mut show_help = self.show_help;
+        let has_map = self.map_disk().is_some();
+        let mut show_map = self.show_map && has_map;
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(2.0);
@@ -1498,6 +1521,16 @@ impl eframe::App for App {
                     ui.separator();
                     if ui.button("Validate Disk").clicked() {
                         acts.push(Act::Validate);
+                    }
+                }
+                if has_map {
+                    ui.separator();
+                    if ui
+                        .selectable_label(show_map, "Disk Map")
+                        .on_hover_text("show which file owns each block (Ctrl+M)")
+                        .clicked()
+                    {
+                        show_map = !show_map;
                     }
                 }
                 ui.separator();
@@ -1867,6 +1900,55 @@ impl eframe::App for App {
             });
         }
 
+        // Disk map window: every block, coloured by owner. Clicking a file's
+        // block selects it in the listing.
+        if show_map {
+            if self.map_cache.is_none() {
+                self.map_cache = self.map_disk().map(Disk::block_map);
+            }
+            if !show_help && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                show_map = false;
+            }
+            if let Some(map) = &self.map_cache {
+                let screen = ctx.screen_rect();
+                egui::Window::new(egui::RichText::new("DISK MAP").color(c64::ACCENT).strong())
+                    .collapsible(false)
+                    .resizable(true)
+                    .default_width((screen.width() * 0.8).min(760.0))
+                    .max_height(screen.height() - 60.0)
+                    .pivot(egui::Align2::CENTER_CENTER)
+                    .default_pos(screen.center())
+                    .show(ctx, |ui| {
+                        ui.horizontal_top(|ui| {
+                            // The summary wraps in the space left of the button.
+                            let w = (ui.available_width() - 90.0).max(100.0);
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(w, 0.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(map_summary(map))
+                                                .color(c64::TEXT_DIM),
+                                        )
+                                        .wrap(),
+                                    );
+                                },
+                            );
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                                if ui.button("Close").clicked() {
+                                    show_map = false;
+                                }
+                            });
+                        });
+                        ui.separator();
+                        if let Some(i) = disk_map_ui(ui, map, sel_now) {
+                            acts.push(Act::Select(i));
+                        }
+                    });
+            }
+        }
+
         // Unsaved-changes confirmation (before opening another file or quitting).
         if self.confirm.is_some() {
             let mut action: Option<u8> = None; // 0 discard, 1 cancel, 2 save
@@ -1957,6 +2039,9 @@ impl eframe::App for App {
             if i.modifiers.command && i.key_pressed(egui::Key::S) && is_disk {
                 acts.push(Act::Save);
             }
+            if i.modifiers.command && i.key_pressed(egui::Key::M) && has_map {
+                show_map = !show_map;
+            }
             if !typing {
                 // Undo / redo (text fields keep Ctrl+Z for their own text).
                 if i.modifiers.command && i.key_pressed(egui::Key::Z) {
@@ -2007,6 +2092,7 @@ impl eframe::App for App {
         self.preview_mode = preview_mode;
         self.show_preview = show_preview;
         self.show_help = show_help;
+        self.show_map = show_map;
         for act in acts {
             self.apply(act);
         }
@@ -2387,6 +2473,224 @@ fn file_row(
 /// Columns of PETSCII text the preview shows per line: a C64 screen's 40.
 const TEXT_PREVIEW_COLS: usize = 40;
 
+/// One-line totals for the disk map's header.
+fn map_summary(map: &BlockMap) -> String {
+    let (free, file, sys, orphan, conflict) = map.counts();
+    let total = free + file + sys + orphan + conflict;
+    let mut s = format!("{total} blocks · {file} in files · {sys} DOS · {free} free");
+    if orphan > 0 {
+        s += &format!(" · {orphan} allocated but unused");
+    }
+    if conflict > 0 {
+        s += &format!(" · {conflict} in conflict");
+    }
+    s
+}
+
+/// A disk-map block's fill colour: files by type (the selected one bright),
+/// the DOS's blocks in the accent, free blocks dark.
+fn block_color(map: &BlockMap, block: &sector64::MapBlock, selected: Option<usize>) -> Color32 {
+    match block.status() {
+        BlockStatus::Free if block.bam == BamState::Unknown => c64::STRIPE,
+        BlockStatus::Free => c64::WELL,
+        BlockStatus::File(i) if Some(i) == selected => c64::BRIGHT,
+        BlockStatus::File(i) => badge_color(map.files[i].file_type.mnemonic()),
+        BlockStatus::System => c64::ACCENT,
+        BlockStatus::Orphan => c64::ORPHAN,
+        BlockStatus::Conflict => c64::WARN,
+    }
+}
+
+/// The hover text for one block of the disk map.
+fn block_tooltip(map: &BlockMap, track: u8, sector: u8) -> String {
+    let Some(b) = map.get(track, sector) else {
+        return String::new();
+    };
+    let mut lines = vec![format!("Track {track}, sector {sector}")];
+    let describe = |i: usize| {
+        let e = &map.files[i];
+        let chain = &map.chains[i];
+        let pos = chain
+            .iter()
+            .position(|&x| x == (track, sector))
+            .map_or(0, |p| p + 1);
+        format!(
+            "\"{}\" {} · block {pos} of {}",
+            e.name,
+            e.file_type.mnemonic().to_uppercase(),
+            chain.len()
+        )
+    };
+    match b.owner {
+        Owner::File(i) => lines.push(describe(i)),
+        Owner::System => lines.push("DOS: header, BAM or directory".into()),
+        Owner::None => lines.push(
+            match b.bam {
+                BamState::Allocated => "Allocated in the BAM, but nothing uses it",
+                BamState::Free => "Free",
+                BamState::Unknown => "Unused (the BAM doesn't cover this track)",
+            }
+            .into(),
+        ),
+    }
+    if b.shared {
+        for (i, chain) in map.chains.iter().enumerate() {
+            if b.owner != Owner::File(i) && chain.contains(&(track, sector)) {
+                lines.push(format!("⚠ also used by {}", describe(i)));
+            }
+        }
+    } else if b.owner != Owner::None && b.bam == BamState::Free {
+        lines.push("⚠ in use, but free in the BAM: a new file could overwrite it".into());
+    }
+    lines.join("\n")
+}
+
+/// Draw the disk map: a legend, any chain faults, then a grid with a column
+/// per track and a row per sector. Returns the file whose block was clicked.
+fn disk_map_ui(ui: &mut egui::Ui, map: &BlockMap, selected: Option<usize>) -> Option<usize> {
+    let tracks = map.tracks.len();
+    let rows = map.tracks.iter().map(Vec::len).max().unwrap_or(0);
+    if tracks == 0 || rows == 0 {
+        ui.label("(this disk has no blocks to map)");
+        return None;
+    }
+
+    // Legend.
+    // Each swatch stays on the same line as its label when the legend wraps.
+    let swatch = |ui: &mut egui::Ui, colors: &[Color32], text: &str| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            for &c in colors {
+                let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                ui.painter().rect_filled(r, 1.0, c);
+            }
+            ui.label(egui::RichText::new(text).color(c64::TEXT_DIM));
+        });
+    };
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 14.0;
+        swatch(
+            ui,
+            &[c64::PRG, c64::SEQ, c64::USR, c64::REL],
+            "files by type",
+        );
+        swatch(ui, &[c64::BRIGHT], "selected");
+        swatch(ui, &[c64::ACCENT], "DOS");
+        swatch(ui, &[c64::WELL], "free");
+        swatch(ui, &[c64::ORPHAN], "allocated, unused");
+        swatch(ui, &[c64::WARN], "conflict");
+    });
+    for p in map.problems.iter().take(8) {
+        ui.label(egui::RichText::new(format!("⚠ {p}")).color(c64::WARN));
+    }
+    if map.problems.len() > 8 {
+        ui.label(
+            egui::RichText::new(format!("… and {} more", map.problems.len() - 8)).color(c64::WARN),
+        );
+    }
+    ui.add_space(4.0);
+
+    // Cell size: fit the tracks across, within reason; tall CMD-native tracks
+    // (256 sectors) get short rows and scroll.
+    let font = egui::FontId::monospace(10.0);
+    let (label_w, head_h) = (24.0, 14.0);
+    let fit = ((ui.available_width() - label_w - 16.0) / tracks as f32).floor();
+    let cell_w = fit.clamp(6.0, 18.0);
+    let cell_h = if rows > 64 { 6.0 } else { cell_w.min(14.0) };
+    let gap = if cell_w >= 8.0 { 1.0 } else { 0.0 };
+    // Label every track when the widest number fits, else every 2nd, 5th or
+    // 10th (the C64 font is wide).
+    let label_px = ui.fonts(|f| f.glyph_width(&font, '0')) * tracks.to_string().len() as f32 + 4.0;
+    let every = [1usize, 2, 5, 10]
+        .into_iter()
+        .find(|&k| cell_w * k as f32 >= label_px)
+        .unwrap_or(10);
+    let row_every = if rows > 64 { 16 } else { 5 };
+
+    let mut clicked = None;
+    egui::ScrollArea::both()
+        .id_salt("disk_map_scroll")
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            // Room on the right for half of the last track's label.
+            let size = egui::vec2(
+                label_w + tracks as f32 * cell_w + label_px / 2.0,
+                head_h + rows as f32 * cell_h,
+            );
+            let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+            let painter = ui.painter_at(rect);
+            let origin = rect.min + egui::vec2(label_w, head_h);
+            let cell_at = |t: usize, s: usize| {
+                egui::Rect::from_min_size(
+                    origin + egui::vec2(t as f32 * cell_w, s as f32 * cell_h),
+                    egui::vec2(cell_w - gap, cell_h - gap),
+                )
+            };
+
+            // Track 1 is labelled too, unless it would crowd track 2's label.
+            for t in (1..=tracks).filter(|&t| t % every == 0 || (t == 1 && every != 2)) {
+                let x = origin.x + (t as f32 - 0.5) * cell_w;
+                painter.text(
+                    egui::pos2(x, rect.min.y),
+                    egui::Align2::CENTER_TOP,
+                    t.to_string(),
+                    font.clone(),
+                    c64::TEXT_DIM,
+                );
+            }
+            for s in (0..rows).step_by(row_every) {
+                let y = origin.y + (s as f32 + 0.5) * cell_h;
+                painter.text(
+                    egui::pos2(origin.x - 4.0, y),
+                    egui::Align2::RIGHT_CENTER,
+                    s.to_string(),
+                    font.clone(),
+                    c64::TEXT_DIM,
+                );
+            }
+
+            let hovered = resp.hover_pos().and_then(|p| {
+                let (dx, dy) = (p.x - origin.x, p.y - origin.y);
+                if dx < 0.0 || dy < 0.0 {
+                    return None;
+                }
+                let (t, s) = ((dx / cell_w) as usize, (dy / cell_h) as usize);
+                map.tracks.get(t)?.get(s)?;
+                Some((t as u8 + 1, s as u8))
+            });
+            let owner_of = |(t, s): (u8, u8)| match map.get(t, s).map(|b| b.owner) {
+                Some(Owner::File(i)) => Some(i),
+                _ => None,
+            };
+            let hovered_file = hovered.and_then(owner_of);
+
+            for (t, row) in map.tracks.iter().enumerate() {
+                for (s, b) in row.iter().enumerate() {
+                    painter.rect_filled(cell_at(t, s), 1.0, block_color(map, b, selected));
+                }
+            }
+            // Outline the hovered file's whole chain, so its spread shows.
+            if let Some(i) = hovered_file {
+                for &(t, s) in &map.chains[i] {
+                    let r = cell_at(t as usize - 1, s as usize).expand(0.5);
+                    painter.rect_stroke(r, 1.0, egui::Stroke::new(1.5, c64::BRIGHT));
+                }
+            }
+            if let Some((t, s)) = hovered {
+                let r = cell_at(t as usize - 1, s as usize).expand(1.0);
+                painter.rect_stroke(r, 1.0, egui::Stroke::new(2.0, c64::BRIGHT));
+            }
+
+            if resp.clicked() {
+                clicked = hovered_file;
+            }
+            if let Some((t, s)) = hovered {
+                resp.on_hover_text_at_pointer(block_tooltip(map, t, s));
+            }
+        });
+    clicked
+}
+
 /// Width of the preview pane: wide enough for its content (a full hex line,
 /// or 40 columns of text) and its header, but never so wide that the file
 /// list loses columns it would otherwise show. If the window is too narrow
@@ -2553,8 +2857,9 @@ fn sanitize(name: &str) -> String {
 
 enum Opened {
     Disk(Disk),
-    /// A disk shown as a listing only (title, rows with block counts).
-    ReadOnlyDisk(String, Vec<Node>),
+    /// A disk shown as a listing only (title, rows with block counts, and the
+    /// disk itself for the map).
+    ReadOnlyDisk(String, Vec<Node>, Disk),
     /// An archive or container listing (title, rows).
     List(String, Vec<Node>),
 }
@@ -2645,6 +2950,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
         return Ok(Opened::ReadOnlyDisk(
             format!("{title}   (Zip-Code, read-only)"),
             nodes,
+            disk,
         ));
     }
 
@@ -2659,6 +2965,7 @@ fn open_path(path: &Path) -> Result<Opened, String> {
         return Ok(Opened::ReadOnlyDisk(
             format!("{title}   (read-only)"),
             nodes,
+            disk,
         ));
     }
 
@@ -3203,6 +3510,78 @@ mod tests {
     }
 
     #[test]
+    fn disk_map_is_rebuilt_after_edits_and_covers_read_only_disks() {
+        let mut app = app_with_disk();
+        app.map_cache = app.map_disk().map(Disk::block_map);
+        assert_eq!(app.map_cache.as_ref().unwrap().files.len(), 0);
+        app.add("NEW".into(), &[1u8; 600]);
+        assert!(app.map_cache.is_none(), "an edit drops the stale map");
+        let map = app.map_disk().unwrap().block_map();
+        assert_eq!(map.blocks_of(0).len(), 3);
+        app.map_cache = Some(map);
+        app.undo();
+        assert!(app.map_cache.is_none(), "undo drops it too");
+
+        // A Zip-Code set opens read-only but still has a map.
+        let dir = scratch("map");
+        for (i, part) in sector64::write_zipcode(&sample_d64())
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
+            std::fs::write(dir.join(format!("{}!GAME", i + 1)), part).unwrap();
+        }
+        app.open(&dir.join("1!GAME"));
+        assert!(app.disk.is_none() && app.read_only_disk);
+        let map = app
+            .map_disk()
+            .expect("read-only disk is mapped")
+            .block_map();
+        assert_eq!(map.files[0].name, "HELLO");
+        // Opening a plain archive leaves nothing to map.
+        app.archive = Some(Vec::new());
+        app.open(&dir.join("missing.d64"));
+        assert!(app.map_disk().is_none());
+    }
+
+    #[test]
+    fn disk_map_tooltips_and_summary() {
+        let mut disk = Disk::format("TIPS", "01");
+        disk.write_file("GAME", FileType::Prg, &[1u8; 600]).unwrap();
+        let map = disk.block_map();
+        let (t, s) = map.chains[0][1];
+        assert_eq!(
+            block_tooltip(&map, t, s),
+            format!("Track {t}, sector {s}\n\"GAME\" PRG · block 2 of 3")
+        );
+        assert_eq!(
+            block_tooltip(&map, 18, 0),
+            "Track 18, sector 0\nDOS: header, BAM or directory"
+        );
+        assert_eq!(block_tooltip(&map, 35, 0), "Track 35, sector 0\nFree");
+        assert_eq!(block_tooltip(&map, 99, 0), "");
+        assert_eq!(
+            map_summary(&map),
+            "683 blocks · 3 in files · 2 DOS · 678 free"
+        );
+
+        // Point a second file's start at GAME's last block: both claim it.
+        disk.write_file("COPY", FileType::Seq, &[2u8; 10]).unwrap();
+        let mut bytes = disk.as_bytes().to_vec();
+        let dir_off = (17 * 21 + 1) * 256; // track 18, sector 1
+        let (lt, ls) = map.chains[0][2];
+        bytes[dir_off + 32 + 3] = lt;
+        bytes[dir_off + 32 + 4] = ls;
+        let map = Disk::load(bytes).unwrap().block_map();
+        let tip = block_tooltip(&map, lt, ls);
+        assert!(
+            tip.contains("⚠ also used by \"COPY\" SEQ · block 1 of 1"),
+            "{tip}"
+        );
+        assert!(map_summary(&map).ends_with("· 1 allocated but unused · 1 in conflict"));
+    }
+
+    #[test]
     fn zipcode_set_opens_from_any_part() {
         let d64 = sample_d64();
         let dir = scratch("zip");
@@ -3214,7 +3593,7 @@ mod tests {
             assert_eq!(got.unwrap(), d64, "opened via part {n}");
         }
         match open_path(&dir.join("3!GAME")).unwrap() {
-            Opened::ReadOnlyDisk(title, nodes) => {
+            Opened::ReadOnlyDisk(title, nodes, _) => {
                 assert!(
                     title.contains("ZIP TEST") && title.contains("read-only"),
                     "{title}"
@@ -3261,7 +3640,7 @@ mod tests {
             return;
         }
         match open_path(&first).unwrap() {
-            Opened::ReadOnlyDisk(title, nodes) => {
+            Opened::ReadOnlyDisk(title, nodes, _) => {
                 assert!(title.contains("Zip-Code"), "{title}");
                 assert!(!nodes.is_empty());
             }

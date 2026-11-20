@@ -47,3 +47,34 @@ fn dnp_bam_blocks_free_matches_c1541() {
         report.used_but_free.len()
     );
 }
+
+/// The disk map on both sample D2Ms: the 1581 one is a GEOS disk (VLIR files
+/// and info blocks), the DNP one has a file whose first block is zeroed.
+#[test]
+fn d2m_block_maps() {
+    let Some(dir) = samples_dir() else {
+        eprintln!("skipping: no samples directory");
+        return;
+    };
+    if let Ok(bytes) = std::fs::read(dir.join("cbm-prog_lharc-c-source-port.d2m")) {
+        let disk = Disk::load(bytes).expect("load");
+        let map = disk.block_map();
+        assert!(map.problems.is_empty(), "{:?}", map.problems);
+        assert_eq!(map.counts().4, 0, "no conflicts");
+        // Every file, GEOS VLIR ones included, owns exactly its block count.
+        for (i, e) in map.files.iter().enumerate() {
+            assert_eq!(map.blocks_of(i).len(), e.blocks as usize, "{}", e.name);
+        }
+    }
+    if let Ok(bytes) = std::fs::read(dir.join("cbm-prog_fd-copy-test-disk.d2m")) {
+        let disk = Disk::load(bytes).expect("load");
+        let map = disk.block_map();
+        let (_, _, system, orphan, conflict) = map.counts();
+        assert_eq!(system, 35, "track 1 blocks 0-34");
+        assert_eq!(conflict, 0);
+        // "128 BASIC ODER" lists 130 blocks from 1/64, but that block is
+        // zeroed (end of chain), so the other 129 are allocated and unowned.
+        assert_eq!(map.blocks_of(0), vec![(1, 64)]);
+        assert_eq!(orphan, 129);
+    }
+}
