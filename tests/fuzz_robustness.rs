@@ -117,6 +117,20 @@ fn no_panics_on_arbitrary_input() {
             for dialect in [sector64::BasicDialect::V7, sector64::BasicDialect::Simons] {
                 let _ = sector64::detokenize_basic_as(&prg, dialect);
             }
+            for kind in [sector64::GfxKind::Sprites, sector64::GfxKind::Chars] {
+                let load = (buf.len() >= 2).then(|| u16::from_le_bytes([buf[0], buf[1]]));
+                for start in [0, sector64::gfx::first_cell(load, kind), buf.len() + 3] {
+                    let s = sector64::gfx::render(
+                        &buf,
+                        kind,
+                        buf.len().is_multiple_of(2),
+                        start,
+                        7,
+                        500,
+                    );
+                    assert_eq!(s.pixels.len(), s.width * s.height);
+                }
+            }
             let _ = sector64::parse_tap(&buf);
             let _ = sector64::parse_wr3(&buf);
             let _ = parse_zipcode([&buf, &buf, &buf, &buf]);

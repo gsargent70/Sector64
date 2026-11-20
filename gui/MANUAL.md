@@ -23,7 +23,7 @@ This manual describes every feature of the graphical browser
        - Filtering
        - Selecting files
        - Keyboard navigation
-  6. The preview pane (HEX / TEXT / BASIC)
+  6. The preview pane (HEX / TEXT / BASIC / GFX)
   7. Extracting files
   8. Editing a disk image
        - Creating a new disk
@@ -231,7 +231,7 @@ KEYBOARD NAVIGATION
 
 
 ----------------------------------------------------------------
- 6. THE PREVIEW PANE (HEX / TEXT / BASIC)
+ 6. THE PREVIEW PANE (HEX / TEXT / BASIC / GFX)
 ----------------------------------------------------------------
 
 The preview pane is hidden by default. Click Preview in the menu
@@ -278,8 +278,30 @@ file. Use the toggle in its header to switch views:
          A file that isn't a BASIC program says so; use HEX or
          TEXT for it.
 
+  GFX    The bytes drawn as graphics, the way the C64's video
+         chip would show them. The row under the buttons picks
+         what to draw:
+           SPRITES  24x21 sprites, 64 bytes each.
+           CHARS    8x8 characters, 8 bytes each, 16 to a row
+                    like a character set.
+           HIRES    one bit per pixel: white on black.
+           MULTI    multicolour: each pair of bits is one
+                    double-wide pixel, in black, white and the
+                    two shared colours (light red, yellow).
+         A PRG's graphics are lined up with the memory it loads
+         to, as the C64 sees them: sprites start on a 64-byte
+         boundary and characters on an 8-byte one, so a few
+         bytes may be skipped at the start. Other files start
+         at their first byte. The line above the picture says
+         how many there are and where they start.
+         Hover over a sprite or character to see its number and
+         file offset; for a PRG also the address it loads to
+         and the sprite pointer (or screen code) that shows it.
+         Very large files show as many as the screen can hold
+         and say so.
+
 The pane sizes itself: wide enough for a whole hex line, or for
-40 columns of text or BASIC (a C64 screen's width), whichever
+40 columns of text, BASIC or graphics (a C64 screen's width), whichever
 mode is on. Long BASIC lines wrap at any character, as they do on
 a C64 screen.
 If the window is too narrow for that and the listing, the pane
