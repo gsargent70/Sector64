@@ -144,6 +144,18 @@ fn no_panics_on_arbitrary_input() {
                 lines.iter().map(|l| l.bytes.len()).sum::<usize>(),
                 buf.len()
             );
+            // Pictures, detected and forced, behind each format's address.
+            for f in sector64::PicFormat::ALL {
+                let mut pic = f.load_address().to_le_bytes().to_vec();
+                pic.extend_from_slice(&buf);
+                for p in [&buf, &pic] {
+                    let _ = sector64::picture::decode(p);
+                    if let Some(d) = sector64::picture::decode_as(p, f) {
+                        assert_eq!(d.pixels.len(), 320 * 200);
+                        assert!(d.pixels.iter().all(|&c| c < 16));
+                    }
+                }
+            }
             let _ = sector64::parse_tap(&buf);
             let _ = sector64::parse_wr3(&buf);
             let _ = parse_zipcode([&buf, &buf, &buf, &buf]);

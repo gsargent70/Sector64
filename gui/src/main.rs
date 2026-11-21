@@ -17,7 +17,7 @@ use egui::Color32;
 use sector64::{
     parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64, write_lbr,
     write_lnx, write_p00, write_t64, BamState, BasicDialect, BlockMap, BlockStatus, Disk, FileType,
-    GfxKind, GfxSheet, ImportFile, Owner,
+    GfxKind, GfxSheet, ImportFile, Owner, PicFormat,
 };
 
 /// The Commodore 64 palette this UI is themed around (Pepto values).
@@ -402,6 +402,8 @@ enum PreviewMode {
     Gfx,
     /// The bytes disassembled as 6502 machine code.
     Dis,
+    /// A paint program's bitmap picture.
+    Pic,
 }
 
 /// The sprite/character sheet the GFX preview shows, and what it was drawn
@@ -414,6 +416,14 @@ struct GfxView {
     load: Option<u16>,
     /// Whole cells in the file; the sheet may show fewer.
     total: usize,
+}
+
+/// The picture the PIC preview shows, decoded when the selection or the
+/// chosen format changes.
+struct PicView {
+    key: (usize, Option<PicFormat>),
+    /// The decoded picture and its texture, or why there's none.
+    pic: Result<(sector64::Picture, egui::TextureHandle), String>,
 }
 
 /// A pending action blocked by unsaved changes.
@@ -552,6 +562,9 @@ struct App {
     gfx_multi: bool,
     /// The GFX preview's sheet, redrawn when the selection or options change.
     gfx_cache: Option<GfxView>,
+    /// The PIC preview's format (`None` detects it) and its decoded picture.
+    pic_format: Option<PicFormat>,
+    pic_cache: Option<PicView>,
     validation: String,
     // whether the validation-result popover is showing
     show_validation: bool,
@@ -717,6 +730,7 @@ impl App {
         self.title.clear();
         self.hex_cache = None;
         self.gfx_cache = None;
+        self.pic_cache = None;
         self.validation.clear();
         self.renaming = None;
         match open_path(path) {
@@ -914,6 +928,7 @@ impl App {
                 self.selected = None;
                 self.hex_cache = None;
                 self.gfx_cache = None;
+                self.pic_cache = None;
                 self.refresh();
                 self.opened_path = None;
                 self.status = "New archive — add files, then Save archive as…".into();
@@ -1267,6 +1282,7 @@ impl App {
             );
             self.hex_cache = None;
             self.gfx_cache = None;
+            self.pic_cache = None;
             self.refresh();
         }
         self.status = status;
@@ -1447,6 +1463,7 @@ impl App {
         }
         self.hex_cache = None;
         self.gfx_cache = None;
+        self.pic_cache = None;
         self.refresh();
     }
 
@@ -1748,7 +1765,7 @@ impl eframe::App for App {
                             PreviewMode::Dis => dis_preview(d, self.nodes[i].badge == "prg"),
                             // Drawn from the bytes by the pane itself; this
                             // only marks that there is something to show.
-                            PreviewMode::Gfx => "gfx".into(),
+                            PreviewMode::Gfx | PreviewMode::Pic => "gfx".into(),
                         },
                         Err(e) => format!("(not extractable: {e})"),
                     };
@@ -1758,6 +1775,7 @@ impl eframe::App for App {
             _ => {
                 self.hex_cache = None;
                 self.gfx_cache = None;
+                self.pic_cache = None;
             }
         }
         let preview = self
@@ -1795,6 +1813,8 @@ impl eframe::App for App {
         let mut gfx_kind = self.gfx_kind;
         let mut gfx_multi = self.gfx_multi;
         let mut gfx_cache = self.gfx_cache.take();
+        let mut pic_format = self.pic_format;
+        let mut pic_cache = self.pic_cache.take();
         let mut show_preview = self.show_preview;
         let mut show_help = self.show_help;
         let has_map = self.map_disk().is_some();
@@ -2153,6 +2173,10 @@ impl eframe::App for App {
                         // out first, so the title is shortened to the space
                         // left beside it instead of running underneath.
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.selectable_value(&mut preview_mode, PreviewMode::Pic, "PIC")
+                                .on_hover_text(
+                                    "show a Koala Painter, Art Studio or Doodle! picture",
+                                );
                             ui.selectable_value(&mut preview_mode, PreviewMode::Gfx, "GFX")
                                 .on_hover_text("draw the bytes as sprites or characters");
                             ui.selectable_value(&mut preview_mode, PreviewMode::Dis, "DIS")
@@ -2193,6 +2217,21 @@ impl eframe::App for App {
                             }
                         });
                     }
+                    if preview_mode == PreviewMode::Pic {
+                        ui.horizontal(|ui| {
+                            ui.label("format");
+                            let name = pic_format.map_or("AUTO", |f| f.name());
+                            egui::ComboBox::from_id_salt("pic_format")
+                                .selected_text(name)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut pic_format, None, "AUTO")
+                                        .on_hover_text("go by the file's load address and size");
+                                    for f in PicFormat::ALL {
+                                        ui.selectable_value(&mut pic_format, Some(f), f.name());
+                                    }
+                                });
+                        });
+                    }
                     if preview_mode == PreviewMode::Gfx {
                         ui.horizontal(|ui| {
                             ui.selectable_value(&mut gfx_kind, GfxKind::Sprites, "SPRITES")
@@ -2226,6 +2265,12 @@ impl eframe::App for App {
                                 }),
                             ) {
                                 gfx_ui(ui, &mut gfx_cache, i, data, badge, gfx_kind, gfx_multi);
+                            } else if let (PreviewMode::Pic, Some((i, Ok(data)))) = (
+                                preview_mode,
+                                self.selected
+                                    .and_then(|i| self.nodes.get(i).map(|n| (i, n.data.as_ref()))),
+                            ) {
+                                pic_ui(ui, &mut pic_cache, i, data, pic_format);
                             } else if preview_mode == PreviewMode::Dis {
                                 let job = dis_layout(
                                     &preview,
@@ -2716,6 +2761,8 @@ impl eframe::App for App {
         self.gfx_kind = gfx_kind;
         self.gfx_multi = gfx_multi;
         self.gfx_cache = gfx_cache;
+        self.pic_format = pic_format;
+        self.pic_cache = pic_cache;
         self.show_preview = show_preview;
         self.show_help = show_help;
         self.show_map = show_map;
@@ -3343,12 +3390,14 @@ fn preview_width(
             .map(|l| l.chars().count())
             .max()
             .unwrap_or(0),
-        PreviewMode::Text | PreviewMode::Basic | PreviewMode::Gfx | PreviewMode::Dis => {
-            TEXT_PREVIEW_COLS
-        }
+        PreviewMode::Text
+        | PreviewMode::Basic
+        | PreviewMode::Gfx
+        | PreviewMode::Dis
+        | PreviewMode::Pic => TEXT_PREVIEW_COLS,
     };
-    // "PREVIEW — NAME" plus the HEX / TEXT / BASIC / DIS / GFX toggle.
-    let header_chars = "PREVIEW — ".chars().count() + name.map_or(0, |n| n.chars().count()) + 26;
+    // "PREVIEW — NAME" plus the HEX / TEXT / BASIC / DIS / GFX / PIC toggle.
+    let header_chars = "PREVIEW — ".chars().count() + name.map_or(0, |n| n.chars().count()) + 30;
     let want = content_chars.max(header_chars) as f32 * cw + chrome;
 
     // Leave the list beside it room for its longest name and all its
@@ -3542,6 +3591,144 @@ fn gfx_ui(
         if let Some(i) = sheet.cell_at(p.x.max(0.0) as usize, p.y.max(0.0) as usize) {
             resp.on_hover_text_at_pointer(gfx_cell_info(sheet, view.load, i));
         }
+    }
+}
+
+/// The C64's 16 colours (Pepto's measured PAL values), by colour number.
+const C64_PALETTE: [(u8, u8, u8, &str); 16] = [
+    (0x00, 0x00, 0x00, "black"),
+    (0xFF, 0xFF, 0xFF, "white"),
+    (0x68, 0x37, 0x2B, "red"),
+    (0x70, 0xA4, 0xB2, "cyan"),
+    (0x6F, 0x3D, 0x86, "purple"),
+    (0x58, 0x8D, 0x43, "green"),
+    (0x35, 0x28, 0x79, "blue"),
+    (0xB8, 0xC7, 0x6F, "yellow"),
+    (0x6F, 0x4F, 0x25, "orange"),
+    (0x43, 0x39, 0x00, "brown"),
+    (0x9A, 0x67, 0x59, "light red"),
+    (0x44, 0x44, 0x44, "dark grey"),
+    (0x6C, 0x6C, 0x6C, "grey"),
+    (0x9A, 0xD2, 0x84, "light green"),
+    (0x6C, 0x5E, 0xB5, "light blue"),
+    (0x95, 0x95, 0x95, "light grey"),
+];
+
+/// C64 colour number `c` (0–15) as an egui colour.
+fn c64_color(c: u8) -> Color32 {
+    let (r, g, b, _) = C64_PALETTE[(c & 15) as usize];
+    Color32::from_rgb(r, g, b)
+}
+
+/// Why a file didn't decode as a picture, for the PIC preview.
+fn pic_failure(data: &[u8], format: Option<PicFormat>) -> String {
+    match format {
+        Some(f) => format!("(too short for a {} picture)", f.name()),
+        None => {
+            let load = match data {
+                [lo, hi, ..] => format!(
+                    ", and this file loads at ${:04X}",
+                    u16::from_le_bytes([*lo, *hi])
+                ),
+                _ => String::new(),
+            };
+            format!(
+                "(not a picture this preview knows: Koala Painter pictures load at $6000, \
+                 Art Studio and Advanced Art Studio at $2000, Doodle! at $5C00{load}. \
+                 Choose a format above to show it as one anyway, or try GFX.)"
+            )
+        }
+    }
+}
+
+/// The PIC preview: the selected file decoded as a paint program's picture,
+/// framed in its border colour where the format saves one, scaled to fit the
+/// pane. Hovering shows the pixel's position and colour.
+fn pic_ui(
+    ui: &mut egui::Ui,
+    cache: &mut Option<PicView>,
+    node: usize,
+    data: &[u8],
+    format: Option<PicFormat>,
+) {
+    use sector64::picture::{self, HEIGHT, WIDTH};
+    let key = (node, format);
+    if cache.as_ref().map(|c| c.key) != Some(key) {
+        let decoded = match format {
+            Some(f) => picture::decode_as(data, f),
+            None => picture::decode(data),
+        };
+        let pic = decoded
+            .map(|p| {
+                let img = egui::ColorImage {
+                    size: [WIDTH, HEIGHT],
+                    pixels: p.pixels.iter().map(|&c| c64_color(c)).collect(),
+                };
+                let tex = ui
+                    .ctx()
+                    .load_texture("pic-preview", img, egui::TextureOptions::NEAREST);
+                (p, tex)
+            })
+            .ok_or_else(|| pic_failure(data, format));
+        *cache = Some(PicView { key, pic });
+    }
+    let view = cache.as_ref().unwrap();
+    let (pic, tex) = match &view.pic {
+        Ok(p) => p,
+        Err(why) => {
+            ui.add(egui::Label::new(egui::RichText::new(why).color(c64::TEXT_DIM)).wrap());
+            return;
+        }
+    };
+    let mode = if pic.format.multicolor() {
+        "multicolour"
+    } else {
+        "hires"
+    };
+    ui.label(
+        egui::RichText::new(format!("{} picture, {mode}, 320×200", pic.format.name()))
+            .color(c64::TEXT_DIM),
+    );
+    // Whole-number scales stay crisp; a pane narrower than the picture
+    // shrinks it to fit.
+    let border = if pic.border.is_some() { 8.0 } else { 0.0 };
+    let avail = (ui.available_width() - 2.0 * border).max(32.0);
+    let fit = avail / WIDTH as f32;
+    let scale = if fit >= 1.0 {
+        fit.floor().min(4.0)
+    } else {
+        fit
+    };
+    let size = egui::vec2(WIDTH as f32, HEIGHT as f32) * scale;
+    let frame = match pic.border {
+        Some(b) => egui::Frame::none()
+            .fill(c64_color(b))
+            .inner_margin(egui::Margin::same(border)),
+        None => egui::Frame::none(),
+    };
+    let resp = frame
+        .show(ui, |ui| {
+            ui.add(egui::Image::new((tex.id(), size)).sense(egui::Sense::hover()))
+        })
+        .inner;
+    if let Some(pos) = resp.hover_pos() {
+        let p = (pos - resp.rect.min) / scale;
+        let (x, y) = (p.x.max(0.0) as usize, p.y.max(0.0) as usize);
+        if x < WIDTH && y < HEIGHT {
+            let c = pic.pixels[y * WIDTH + x];
+            resp.on_hover_text_at_pointer(format!(
+                "x {x}, y {y} (cell {}, {})\ncolour {c}: {}",
+                x / 8,
+                y / 8,
+                C64_PALETTE[c as usize].3
+            ));
+        }
+    }
+    if let Some(b) = pic.border {
+        ui.label(
+            egui::RichText::new(format!("border: {}", C64_PALETTE[b as usize].3))
+                .color(c64::TEXT_DIM),
+        );
     }
 }
 
@@ -4520,6 +4707,21 @@ mod tests {
             "char 0 · offset $0003\nloads at $3000 · screen code $00"
         );
         assert_eq!(gfx_color(sector64::gfx::GAP), Color32::TRANSPARENT);
+    }
+
+    #[test]
+    fn pic_failures_say_what_was_expected() {
+        let why = pic_failure(&[0x01, 0x08, 0x00], None);
+        assert!(
+            why.contains("Koala Painter pictures load at $6000"),
+            "{why}"
+        );
+        assert!(why.contains("this file loads at $0801"), "{why}");
+        assert_eq!(
+            pic_failure(&[0x00, 0x60], Some(PicFormat::Doodle)),
+            "(too short for a Doodle! picture)"
+        );
+        assert_eq!(c64_color(6), c64::BG);
     }
 
     #[test]
