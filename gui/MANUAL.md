@@ -37,10 +37,11 @@ This manual describes every feature of the graphical browser
  10. Validating a disk
  11. The disk map
  12. Copying between disks
- 13. Status line and toast messages
- 14. Keyboard shortcuts
- 15. Settings that persist
- 16. Tips and troubleshooting
+ 13. Running in VICE
+ 14. Status line and toast messages
+ 15. Keyboard shortcuts
+ 16. Settings that persist
+ 17. Tips and troubleshooting
 
 
 ----------------------------------------------------------------
@@ -99,7 +100,7 @@ the whole archive.
 Default layout (the preview pane is hidden until you turn it on):
 
   +----------------------------------------------------------+
-  | ◆ SECTOR64  File  Extract | Validate Disk  Preview  Help |  <- menu bar
+  | ◆ SECTOR64  File | Disk | Preview | Help                  |  <- menu bar
   +----------------------------------------------------------+
   | Disk 0 "MY DISK" 1A                          664 free    |  <- header row
   | Filter: [ type to filter by name                       ] |  <- filter box
@@ -117,7 +118,7 @@ With the preview pane turned on (menu bar > Preview), it opens on
 the right and the listing makes room for it:
 
   +----------------------------------------------------------+
-  | ◆ SECTOR64  File  Extract | Validate Disk [Preview] Help |  <- Preview lit
+  | ◆ SECTOR64  File | Disk |[Preview]| Help                  |  <- Preview lit
   +----------------------------------------------------------+
   | Disk 0 "MY DISK" 1A   664 free |  PREVIEW — HELLO        |  <- header | preview
   | Filter: [ filter by name     ] |           HEX | TEXT    |     head + toggle
@@ -130,8 +131,13 @@ the right and the listing makes room for it:
   | 24 item(s) loaded                                        |
   +----------------------------------------------------------+
 
-- Menu bar (top): File, Extract, a Validate Disk button, a
-  Disk Map toggle (for disks), a Preview toggle, and Help.
+- Menu bar (top):
+    File     New, Open, Open Recent, Add file, Save, Save As,
+             Extract ▸, Copy..., Run in VICE, Undo, Redo,
+             Rename and Delete.
+    Disk     Validate Disk and Disk Map.
+    Preview  shows or hides the preview pane.
+    Help     this manual.
 - Header row: the disk/archive title and, for disks, blocks
   free. Shown as the first line of the listing.
 - Filter box: live name filter.
@@ -170,7 +176,7 @@ it instead (see 8). If you drop several files, the first is
 opened and the rest are ignored.
 
 On Linux, drag-and-drop works only when Sector64 runs on X11; see
-"Drag-and-drop on Linux (Wayland)" in section 16.
+"Drag-and-drop on Linux (Wayland)" in section 17.
 
 When a file opens, the first entry is selected automatically, so
 if you turn the preview pane on it has something to show at once.
@@ -325,11 +331,12 @@ runs.)
 
 Then extract:
 
-  - One file:   select it and choose Extract > Extract Selected,
+  - One file:   select it and choose File > Extract ▸ > Extract
+                Selected,
                 press Enter, or double-click the row.
   - Several:    Ctrl/Shift-click to mark them, then
-                Extract > Extract Selected.
-  - Everything: Extract > Extract All.
+                File > Extract ▸ > Extract Selected.
+  - Everything: File > Extract ▸ > Extract All.
   - From the right-click menu on a row: Extract.
 
 Each file is written into the output folder under a safe version
@@ -356,7 +363,7 @@ ADDING FILES
 
   With a disk open, either:
     - Drag host files onto the window (on Linux this needs X11;
-      see section 16), or
+      see section 17), or
     - File > Add file ▸, choose the type (prg / seq / usr), then
       Add file… and pick a file.
   The file is given a Commodore name derived from its host name
@@ -414,7 +421,7 @@ THE UNSAVED-CHANGES GUARD
 
   1. File > New ▸ > Empty archive.
   2. Add files by dragging them in (on Linux this needs X11; see
-     section 16), or File > Add file ▸.
+     section 17), or File > Add file ▸.
   3. File > Save archive as… and choose a container format by
      the extension you type:
          .t64   tape image
@@ -430,9 +437,9 @@ before you save.
  10. VALIDATING A DISK
 ----------------------------------------------------------------
 
-Click Validate Disk in the menu bar to check an open disk's
-integrity — the BAM against the directory chain, block links,
-and allocation. The result appears in a centred popover:
+Choose Disk > Validate Disk (or press Ctrl+L) to check an open
+disk's integrity — the BAM against the directory chain, block
+links, and allocation. The result appears in a centred popover:
 
     green   — the disk checks out.
     red (⚠) — problems were found, described in the report.
@@ -444,7 +451,7 @@ Click anywhere on the popover to dismiss it.
  11. THE DISK MAP
 ----------------------------------------------------------------
 
-Click Disk Map in the menu bar (or press Ctrl+M) to see every
+Choose Disk > Disk Map (or press Ctrl+M) to see every
 block of the open disk in one picture: a column per track, a row
 per sector, each cell coloured by what is stored there. It works
 for every disk image, including read-only ones (G64, D2M,
@@ -485,7 +492,7 @@ Esc or Close hides it.
  12. COPYING BETWEEN DISKS
 ----------------------------------------------------------------
 
-Click Copy in the menu bar (or press Ctrl+K) to open the Copy
+Choose File > Copy... (or press Ctrl+K) to open the Copy
 window. It holds a second disk, alongside the one in the main
 window, and copies files between the two.
 
@@ -524,7 +531,40 @@ Esc or Close hides the window without closing its disk.
 
 
 ----------------------------------------------------------------
- 13. STATUS LINE AND TOAST MESSAGES
+ 13. RUNNING IN VICE
+----------------------------------------------------------------
+
+Choose File > Run in VICE (or press Ctrl+R) to try a
+program in the VICE emulator, which you install separately
+(vice-emu.sourceforge.io, or your Linux distribution's "vice"
+package).
+
+  - With a disk open, VICE starts with that disk in drive 8 and
+    loads the selected program, or the disk's first program if
+    the selection isn't one. The program can load the rest of
+    its files from the disk, as on a real C64.
+  - From an archive or a single file (T64, ARC, P00, PRG...),
+    select a program and VICE runs just that program.
+
+VICE gets a copy, written to a temporary folder, so:
+  - unsaved edits are included: you can add a file and try it
+    before you save, and
+  - nothing VICE does, such as a game saving its high scores,
+    changes your own file.
+
+A program that loads where the C128 keeps BASIC ($1C01) runs in
+VICE's C128 emulator (x128); everything else runs on a C64
+(x64sc).
+
+Sector64 looks for VICE on your PATH. If it isn't there (usual on
+Windows), it asks for the folder VICE is in, and remembers it.
+VICE types the LOAD command for you; characters in a name that
+can't be typed are sent as the ? wildcard, so a disk with two
+names that differ only there may load the wrong one.
+
+
+----------------------------------------------------------------
+ 14. STATUS LINE AND TOAST MESSAGES
 ----------------------------------------------------------------
 
 The status line at the bottom always shows the result of your
@@ -540,15 +580,17 @@ early. The most recent few are shown at once.
 
 
 ----------------------------------------------------------------
- 14. KEYBOARD SHORTCUTS
+ 15. KEYBOARD SHORTCUTS
 ----------------------------------------------------------------
 
     Ctrl+O      Open a file
     Ctrl+S      Save the open disk
     Ctrl+Z      Undo the last edit
     Ctrl+Y      Redo (also Ctrl+Shift+Z)
+    Ctrl+L      Validate the open disk
     Ctrl+M      Show or hide the disk map
     Ctrl+K      Show or hide the Copy window
+    Ctrl+R      Run the disk or selected program in VICE
     Enter       Extract the selected file
     Delete      Delete / scratch the selected file(s)
     F2          Rename the selected file (in place)
@@ -561,14 +603,15 @@ field (the filter box or a rename).
 
 
 ----------------------------------------------------------------
- 15. SETTINGS THAT PERSIST
+ 16. SETTINGS THAT PERSIST
 ----------------------------------------------------------------
 
 Between runs Sector64 remembers:
     - the window size (and position, where the window manager
       allows it), and
     - the Output folder you last chose, and
-    - your recent files (see 4).
+    - your recent files (see 4), and
+    - the VICE folder, if you had to choose it (see 13).
 
 Note: under a tiling Wayland compositor the window manager
 controls window geometry, so the saved size may be overridden by
@@ -576,7 +619,7 @@ your layout. The output folder is always restored.
 
 
 ----------------------------------------------------------------
- 16. TIPS AND TROUBLESHOOTING
+ 17. TIPS AND TROUBLESHOOTING
 ----------------------------------------------------------------
 
 THE PETSCII FONT
