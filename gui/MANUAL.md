@@ -23,7 +23,7 @@ This manual describes every feature of the graphical browser
        - Filtering
        - Selecting files
        - Keyboard navigation
-  6. The preview pane (HEX / TEXT / BASIC / DIS / GFX)
+  6. The preview pane (HEX / TEXT / BASIC / DIS / GFX / PIC)
   7. Extracting files
   8. Editing a disk image
        - Creating a new disk
@@ -238,7 +238,7 @@ KEYBOARD NAVIGATION
 
 
 ----------------------------------------------------------------
- 6. THE PREVIEW PANE (HEX / TEXT / BASIC / DIS / GFX)
+ 6. THE PREVIEW PANE (HEX / TEXT / BASIC / DIS / GFX / PIC)
 ----------------------------------------------------------------
 
 The preview pane is hidden by default. Click Preview in the menu
@@ -327,8 +327,22 @@ file. Use the toggle in its header to switch views:
          Very large files show as many as the screen can hold
          and say so.
 
+  PIC    A picture saved by a C64 paint program, in its own
+         colours, scaled to fit the pane:
+           Koala Painter        multicolour, loads at $6000
+           Advanced Art Studio  multicolour, loads at $2000
+           Art Studio           hires, loads at $2000
+           Doodle!              hires, loads at $5C00
+         The format is worked out from the file's load address
+         and size (format: AUTO). If a picture isn't recognised,
+         choose its format from the menu above to show it as
+         that anyway. The line above the picture names the
+         format; formats that save a border colour are framed
+         in it. Hover over the picture to see a pixel's
+         position, its 8x8 cell, and its colour.
+
 The pane sizes itself: wide enough for a whole hex line, or for
-40 columns of text, BASIC, disassembly or graphics (a C64 screen's width), whichever
+40 columns of text, BASIC, disassembly, graphics or pictures (a C64 screen's width), whichever
 mode is on. Long BASIC lines wrap at any character, as they do on
 a C64 screen.
 If the window is too narrow for that and the listing, the pane

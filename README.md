@@ -216,7 +216,8 @@ Open a `.d64/.d71/.d81/.g64/.d2m` disk or an `.arc/.sda/.lha/.lzh/.sfx/.lbr/
 selected file as a hex dump, PETSCII text, or a BASIC program listed as
 `LIST` shows it, in BASIC V2, the C128's BASIC 7.0 or Simons' BASIC (detected
 automatically, or picked by hand), as 6502 machine code (disassembled from the
-address a BASIC `SYS` line jumps to), or as sprites and characters (hires or
+address a BASIC `SYS` line jumps to), as a Koala Painter, Art Studio, Advanced
+Art Studio or Doodle! picture, or as sprites and characters (hires or
 multicolour, lined up with the memory a PRG loads to); for an open D64/D71/D81, **Validate
 disk** cross-checks every file chain against the BAM. The **disk map** draws
 every block of any disk image as a track-by-sector grid, coloured by the file
