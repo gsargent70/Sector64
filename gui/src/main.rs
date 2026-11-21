@@ -400,6 +400,8 @@ enum PreviewMode {
     Basic,
     /// The bytes drawn as sprites or characters.
     Gfx,
+    /// The bytes disassembled as 6502 machine code.
+    Dis,
 }
 
 /// The sprite/character sheet the GFX preview shows, and what it was drawn
@@ -1743,6 +1745,7 @@ impl eframe::App for App {
                             PreviewMode::Hex => hexdump(d, 16 * 1024),
                             PreviewMode::Text => petscii_text(d, 64 * 1024),
                             PreviewMode::Basic => basic_preview(d, dialect),
+                            PreviewMode::Dis => dis_preview(d, self.nodes[i].badge == "prg"),
                             // Drawn from the bytes by the pane itself; this
                             // only marks that there is something to show.
                             PreviewMode::Gfx => "gfx".into(),
@@ -2152,6 +2155,8 @@ impl eframe::App for App {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.selectable_value(&mut preview_mode, PreviewMode::Gfx, "GFX")
                                 .on_hover_text("draw the bytes as sprites or characters");
+                            ui.selectable_value(&mut preview_mode, PreviewMode::Dis, "DIS")
+                                .on_hover_text("disassemble the bytes as 6502 machine code");
                             ui.selectable_value(&mut preview_mode, PreviewMode::Basic, "BASIC")
                                 .on_hover_text("list a BASIC program, like LIST on a C64");
                             ui.selectable_value(&mut preview_mode, PreviewMode::Text, "TEXT")
@@ -2221,6 +2226,13 @@ impl eframe::App for App {
                                 }),
                             ) {
                                 gfx_ui(ui, &mut gfx_cache, i, data, badge, gfx_kind, gfx_multi);
+                            } else if preview_mode == PreviewMode::Dis {
+                                let job = dis_layout(
+                                    &preview,
+                                    egui::TextStyle::Monospace.resolve(ui.style()),
+                                    ui.visuals().text_color(),
+                                );
+                                ui.add(egui::Label::new(job).extend());
                             } else if preview_mode == PreviewMode::Basic {
                                 let job = basic_layout(
                                     &preview,
@@ -3331,10 +3343,12 @@ fn preview_width(
             .map(|l| l.chars().count())
             .max()
             .unwrap_or(0),
-        PreviewMode::Text | PreviewMode::Basic | PreviewMode::Gfx => TEXT_PREVIEW_COLS,
+        PreviewMode::Text | PreviewMode::Basic | PreviewMode::Gfx | PreviewMode::Dis => {
+            TEXT_PREVIEW_COLS
+        }
     };
-    // "PREVIEW — NAME" plus the HEX / TEXT / BASIC / GFX toggle.
-    let header_chars = "PREVIEW — ".chars().count() + name.map_or(0, |n| n.chars().count()) + 22;
+    // "PREVIEW — NAME" plus the HEX / TEXT / BASIC / DIS / GFX toggle.
+    let header_chars = "PREVIEW — ".chars().count() + name.map_or(0, |n| n.chars().count()) + 26;
     let want = content_chars.max(header_chars) as f32 * cw + chrome;
 
     // Leave the list beside it room for its longest name and all its
@@ -3555,6 +3569,73 @@ fn basic_preview(data: &[u8], dialect: Option<BasicDialect>) -> String {
         ));
     }
     out
+}
+
+/// Most lines the DIS preview lists.
+const DIS_MAX_LINES: usize = 8192;
+
+/// The DIS preview: a note on where the listing starts, then one 6502
+/// instruction per line. A PRG starts at the address a BASIC `SYS` line jumps
+/// to, or else at its load address; any other file has no load address and
+/// is listed from $0000.
+fn dis_preview(data: &[u8], is_prg: bool) -> String {
+    use sector64::disasm;
+    let (addr, offset, note) = if is_prg {
+        let Some(s) = disasm::code_start(data) else {
+            return "(too short to hold any code)".into();
+        };
+        let note = if s.from_sys {
+            format!(
+                "; SYS {} → ${:04X} (loads at ${:04X})",
+                s.addr, s.addr, s.load
+            )
+        } else if sector64::detokenize_basic(data).is_some() {
+            format!(
+                "; a BASIC program with no SYS into it (try BASIC);\n; listed from its load address, ${:04X}",
+                s.load
+            )
+        } else {
+            format!("; loads at ${:04X}", s.load)
+        };
+        (s.addr, s.offset, note)
+    } else {
+        (0, 0, "; no load address: listed from $0000".to_string())
+    };
+    let code = &data[offset.min(data.len())..];
+    let lines = disasm::disassemble(code, addr, DIS_MAX_LINES);
+    let mut out = note;
+    out.push('\n');
+    for l in &lines {
+        out.push_str(&l.to_string());
+        out.push('\n');
+    }
+    let shown: usize = lines.iter().map(|l| l.bytes.len()).sum();
+    if shown < code.len() {
+        out.push_str(&format!(
+            "; … stopped after {DIS_MAX_LINES} instructions ({} more bytes)\n",
+            code.len() - shown
+        ));
+    }
+    out
+}
+
+/// Lay out a DIS listing: addresses in the accent colour, and notes and
+/// undocumented opcodes (often a sign the bytes are data) dimmed.
+fn dis_layout(text: &str, font: egui::FontId, color: egui::Color32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let fmt = |c| egui::TextFormat::simple(font.clone(), c);
+    for line in text.lines() {
+        let dim = line.starts_with(';') || line.get(15..16) == Some("*");
+        match line.split_at_checked(4) {
+            Some((addr, rest)) if !dim => {
+                job.append(addr, 0.0, fmt(c64::ACCENT));
+                job.append(rest, 0.0, fmt(color));
+            }
+            _ => job.append(line, 0.0, fmt(c64::TEXT_DIM)),
+        }
+        job.append("\n", 0.0, fmt(color));
+    }
+    job
 }
 
 /// Lay out a BASIC listing: line numbers in the accent colour so each line's
@@ -4439,6 +4520,32 @@ mod tests {
             "char 0 · offset $0003\nloads at $3000 · screen code $00"
         );
         assert_eq!(gfx_color(sector64::gfx::GAP), Color32::TRANSPARENT);
+    }
+
+    #[test]
+    fn dis_preview_starts_at_the_sys_target() {
+        // 10 SYS2061, then INC $D020 / RTS at $080D.
+        let prg = [
+            0x01, 0x08, 0x0B, 0x08, 0x0A, 0x00, 0x9E, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00,
+            0xEE, 0x20, 0xD0, 0x60,
+        ];
+        assert_eq!(
+            dis_preview(&prg, true),
+            "; SYS 2061 → $080D (loads at $0801)\n\
+             080D  EE 20 D0  INC $D020\n\
+             0810  60        RTS\n"
+        );
+        // Without a load address, everything from $0000.
+        assert_eq!(
+            dis_preview(&[0xA7, 0x10], false),
+            "; no load address: listed from $0000\n0000  A7 10    *LAX $10\n"
+        );
+        assert!(
+            dis_preview(&[0x01, 0x08, 0x0B, 0x08, 0x0A, 0x00, 0x99, 0, 0, 0], true)
+                .starts_with("; a BASIC program with no SYS")
+        );
+        let big = vec![0xEA; DIS_MAX_LINES + 5];
+        assert!(dis_preview(&big, false).ends_with("(5 more bytes)\n"));
     }
 
     #[test]
