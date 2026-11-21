@@ -242,6 +242,8 @@ struct Icons {
     doc: egui::TextureHandle,
     /// A transparent icon, so menu items without one line up with those with.
     blank: egui::TextureHandle,
+    /// The app's floppy-disk logo (the window icon), for the menu bar.
+    logo: egui::TextureHandle,
 }
 
 impl Icons {
@@ -262,6 +264,14 @@ impl Icons {
             pencil: mk("i_pencil", &art::PENCIL),
             doc: mk("i_doc", &art::DOC),
             blank: mk("i_blank", &["........"; 8]),
+            logo: {
+                let icon = make_icon();
+                let img = egui::ColorImage::from_rgba_unmultiplied(
+                    [icon.width as usize, icon.height as usize],
+                    &icon.rgba,
+                );
+                ctx.load_texture("i_logo", img, egui::TextureOptions::LINEAR)
+            },
         }
     }
 }
@@ -1825,8 +1835,11 @@ impl eframe::App for App {
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(2.0);
             egui::menu::bar(ui, |ui| {
+                // The floppy-disk logo, as tall as the title beside it.
+                let h = ui.text_style_height(&egui::TextStyle::Heading) + 4.0;
+                ui.add(egui::Image::new((ic.logo.id(), egui::vec2(h, h))));
                 ui.label(
-                    egui::RichText::new("◆ SECTOR64")
+                    egui::RichText::new("SECTOR64")
                         .heading()
                         .color(c64::ACCENT)
                         .strong(),
@@ -2297,16 +2310,36 @@ impl eframe::App for App {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.nodes.is_empty() {
-                let intro = "◆ SECTOR64\n\nOpen a disk or archive, or make a new image,\nthen drag files in to add them.";
+                // The logo, the name, and what to do first.
+                let logo = ic.logo.id();
+                let intro = |ui: &mut egui::Ui| {
+                    ui.add(egui::Image::new((logo, egui::vec2(48.0, 48.0))));
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("SECTOR64")
+                            .heading()
+                            .color(c64::ACCENT)
+                            .strong(),
+                    );
+                    ui.add_space(12.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "Open a disk or archive, or make a new image,\n\
+                             then drag files in to add them.",
+                        )
+                        .color(c64::TEXT_DIM),
+                    );
+                };
                 if self.recent.is_empty() || self.editable() || self.opened_path.is_some() {
-                    ui.centered_and_justified(|ui| {
-                        ui.label(egui::RichText::new(intro).color(c64::TEXT_DIM));
+                    ui.vertical_centered(|ui| {
+                        ui.add_space((ui.available_height() * 0.5 - 70.0).max(8.0));
+                        intro(ui);
                     });
                 } else {
                     // Start screen: the intro, then the recent files as links.
                     ui.vertical_centered(|ui| {
                         ui.add_space((ui.available_height() * 0.25).max(8.0));
-                        ui.label(egui::RichText::new(intro).color(c64::TEXT_DIM));
+                        intro(ui);
                         ui.add_space(16.0);
                         ui.label(egui::RichText::new("RECENT FILES").color(c64::ACCENT));
                         ui.add_space(4.0);
@@ -2416,14 +2449,22 @@ impl eframe::App for App {
                         }
                         if editable {
                             ui.separator();
-                            if ui.add(icon_button(&ic.pencil, "Rename").shortcut_text(key_hint("F2"))).clicked() {
+                            if ui
+                                .add(
+                                    icon_button(&ic.pencil, "Rename").shortcut_text(key_hint("F2")),
+                                )
+                                .clicked()
+                            {
                                 renaming = Some(i);
                                 rename_to = node.name.clone();
                                 rename_focus = true;
                                 ui.close_menu();
                             }
                             let del = if is_archive { "Remove" } else { "Delete" };
-                            if ui.add(icon_button(&ic.trash, del).shortcut_text(key_hint("Del"))).clicked() {
+                            if ui
+                                .add(icon_button(&ic.trash, del).shortcut_text(key_hint("Del")))
+                                .clicked()
+                            {
                                 acts.push(Act::Select(i)); // delete this row specifically
                                 acts.push(Act::Delete);
                                 ui.close_menu();
@@ -4413,13 +4454,17 @@ fn make_icon() -> egui::IconData {
     let shutter = [0xb8, 0xbe, 0xc8, 0xff];
     let label = [0xef, 0xef, 0xe6, 0xff];
     fill(5, 5, 43, 43, body); // disk body
-    fill(24, 7, 40, 19, shutter); // metal shutter
-    fill(30, 9, 34, 17, body); // shutter window
+    fill(16, 7, 32, 19, shutter); // metal shutter, centred on the top edge
+    fill(23, 9, 27, 17, body); // its window, off-centre as on a real disk
     fill(10, 24, 38, 40, label); // write-on label
-                                 // clip the top-right corner diagonally
-    for y in 5..14 {
-        for x in 34..43 {
-            if (x - 34) + (43 - y) > 9 {
+    let lines = [0x9a, 0x92, 0xc0, 0xff];
+    fill(12, 29, 36, 31, lines); // ruled lines on the label, as in the
+    fill(12, 32, 36, 34, lines); // launcher icon (packaging/sector64.svg)
+    fill(12, 36, 28, 38, lines);
+    // Bevel both top corners: 4 pixels cut at 45°.
+    for y in 5..9 {
+        for k in 0..9 - y {
+            for x in [5 + k, 42 - k] {
                 let i = (y * w + x) * 4;
                 rgba[i..i + 4].copy_from_slice(&[0, 0, 0, 0]);
             }

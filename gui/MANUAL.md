@@ -100,7 +100,7 @@ the whole archive.
 Default layout (the preview pane is hidden until you turn it on):
 
   +----------------------------------------------------------+
-  | ◆ SECTOR64  File | Disk | Preview | Help                  |  <- menu bar
+  | [=] SECTOR64  File | Disk | Preview | Help                 |  <- menu bar
   +----------------------------------------------------------+
   | Disk 0 "MY DISK" 1A                          664 free    |  <- header row
   | Filter: [ type to filter by name                       ] |  <- filter box
@@ -118,7 +118,7 @@ With the preview pane turned on (menu bar > Preview), it opens on
 the right and the listing makes room for it:
 
   +----------------------------------------------------------+
-  | ◆ SECTOR64  File | Disk |[Preview]| Help                  |  <- Preview lit
+  | [=] SECTOR64  File | Disk |[Preview]| Help                 |  <- Preview lit
   +----------------------------------------------------------+
   | Disk 0 "MY DISK" 1A   664 free |  PREVIEW — HELLO        |  <- header | preview
   | Filter: [ filter by name     ] |           HEX | TEXT    |     head + toggle
