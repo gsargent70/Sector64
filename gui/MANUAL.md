@@ -23,7 +23,7 @@ This manual describes every feature of the graphical browser
        - Filtering
        - Selecting files
        - Keyboard navigation
-  6. The preview pane (HEX / TEXT / BASIC / GFX)
+  6. The preview pane (HEX / TEXT / BASIC / DIS / GFX)
   7. Extracting files
   8. Editing a disk image
        - Creating a new disk
@@ -238,7 +238,7 @@ KEYBOARD NAVIGATION
 
 
 ----------------------------------------------------------------
- 6. THE PREVIEW PANE (HEX / TEXT / BASIC / GFX)
+ 6. THE PREVIEW PANE (HEX / TEXT / BASIC / DIS / GFX)
 ----------------------------------------------------------------
 
 The preview pane is hidden by default. Click Preview in the menu
@@ -285,6 +285,26 @@ file. Use the toggle in its header to switch views:
          A file that isn't a BASIC program says so; use HEX or
          TEXT for it.
 
+  DIS    The bytes disassembled as 6502 machine code, the way a
+         machine-code monitor lists it:
+             C000  A9 00     LDA #$00
+             C002  8D 20 D0  STA $D020
+         Each line is the address, the instruction's bytes, and
+         the instruction. Where the listing starts is noted on
+         the first line:
+           - a program with a BASIC line such as SYS 2061
+             starts at the address the SYS jumps to, so a
+             machine-code program with a BASIC starter lists
+             its code, not the BASIC line;
+           - any other PRG starts at the address it loads to;
+           - a file with no load address (SEQ, USR...) starts
+             at $0000.
+         Undocumented opcodes (LAX, SAX, DCP, JAM...) are marked
+         with * and dimmed. Real programs do use a few, but a
+         run of them usually means the bytes there are data,
+         such as graphics or text, rather than code.
+         The first 8192 instructions are listed.
+
   GFX    The bytes drawn as graphics, the way the C64's video
          chip would show them. The row under the buttons picks
          what to draw:
@@ -308,7 +328,7 @@ file. Use the toggle in its header to switch views:
          and say so.
 
 The pane sizes itself: wide enough for a whole hex line, or for
-40 columns of text, BASIC or graphics (a C64 screen's width), whichever
+40 columns of text, BASIC, disassembly or graphics (a C64 screen's width), whichever
 mode is on. Long BASIC lines wrap at any character, as they do on
 a C64 screen.
 If the window is too narrow for that and the listing, the pane

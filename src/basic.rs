@@ -191,6 +191,40 @@ pub fn detokenize_as(prg: &[u8], dialect: Dialect) -> Option<BasicListing> {
     Some(parse(prg)?.list(dialect))
 }
 
+/// Where a BASIC program's first `SYS` with a plain number jumps (`SYS 2061`,
+/// `SYS(49152)`): usually the machine code that follows the BASIC line.
+/// `None` when `prg` isn't BASIC or has no such `SYS`.
+pub fn sys_address(prg: &[u8]) -> Option<u16> {
+    parse(prg)?
+        .lines
+        .iter()
+        .find_map(|(_, body)| line_sys(body))
+}
+
+/// The number after the first `SYS` token outside quotes in a line, if it
+/// is one.
+fn line_sys(body: &[u8]) -> Option<u16> {
+    let mut quoted = false;
+    for (i, &b) in body.iter().enumerate() {
+        if b == b'"' {
+            quoted = !quoted;
+        }
+        // $9E is SYS, unless it's the second byte of a BASIC 7.0 two-byte
+        // token ($CE xx, $FE xx).
+        if quoted || b != 0x9E || (i > 0 && matches!(body[i - 1], 0xCE | 0xFE)) {
+            continue;
+        }
+        let digits: String = body[i + 1..]
+            .iter()
+            .skip_while(|&&c| c == b' ' || c == b'(')
+            .take_while(|c| c.is_ascii_digit())
+            .map(|&c| c as char)
+            .collect();
+        return digits.parse::<u16>().ok();
+    }
+    None
+}
+
 /// A program split into lines, not yet expanded.
 struct Program<'a> {
     load: u16,
@@ -396,7 +430,7 @@ fn control_name(b: u8) -> Option<&'static str> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Build a PRG at `load` from `(line number, tokenized body)` pairs, with
@@ -573,5 +607,22 @@ mod tests {
         let mut p = prg(0x0801, &[(10, b"\x80")]);
         p.truncate(p.len() - 2);
         assert_eq!(detokenize(&p).unwrap().text, "10 END\n");
+    }
+
+    #[test]
+    fn sys_address_finds_the_first_plain_sys() {
+        // 10 SYS 2061 (the usual one-line stub)
+        let stub = prg(0x0801, &[(10, b"\x9e 2061")]);
+        assert_eq!(sys_address(&stub), Some(2061));
+        // SYS(49152) after a quoted "\x9e" and a SYS with an expression.
+        let p = prg(
+            0x0801,
+            &[(10, b"\x99\"\x9e 1\":\x9e\xc2(1)"), (20, b"\x9e(49152)")],
+        );
+        assert_eq!(sys_address(&p), Some(49152));
+        // A BASIC 7.0 two-byte token ending in $9E isn't SYS.
+        assert_eq!(sys_address(&prg(0x1C01, &[(10, b"\xfe\x9e 5")])), None);
+        assert_eq!(sys_address(&prg(0x0801, &[(10, b"\x9e 70000")])), None);
+        assert_eq!(sys_address(&[0x00, 0xC0, 0xA9, 0x00]), None);
     }
 }

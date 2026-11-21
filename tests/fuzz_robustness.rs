@@ -131,6 +131,19 @@ fn no_panics_on_arbitrary_input() {
                     assert_eq!(s.pixels.len(), s.width * s.height);
                 }
             }
+            // Disassembly from wherever the code seems to start, and of every
+            // byte (each one lands in exactly one line).
+            let _ = sector64::sys_address(&prg);
+            for p in [&buf, &prg] {
+                if let Some(s) = sector64::disasm::code_start(p) {
+                    let _ = sector64::disasm::disassemble(&p[s.offset..], s.addr, 1000);
+                }
+            }
+            let lines = sector64::disasm::disassemble(&buf, 0xFFF0, usize::MAX);
+            assert_eq!(
+                lines.iter().map(|l| l.bytes.len()).sum::<usize>(),
+                buf.len()
+            );
             let _ = sector64::parse_tap(&buf);
             let _ = sector64::parse_wr3(&buf);
             let _ = parse_zipcode([&buf, &buf, &buf, &buf]);

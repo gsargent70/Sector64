@@ -26,6 +26,7 @@ pub mod bam;
 pub mod container;
 pub mod cvt;
 pub mod directory;
+pub mod disasm;
 pub mod error;
 pub mod g64;
 pub mod geometry;
@@ -39,8 +40,8 @@ pub mod disk;
 
 pub use arc::{parse_arc, parse_sda, ArcEntry, ArcMethod};
 pub use basic::{
-    detokenize as detokenize_basic, detokenize_as as detokenize_basic_as, BasicListing,
-    Dialect as BasicDialect,
+    detokenize as detokenize_basic, detokenize_as as detokenize_basic_as, sys_address,
+    BasicListing, Dialect as BasicDialect,
 };
 pub use blockmap::{BamState, BlockMap, BlockStatus, MapBlock, Owner};
 pub use cvt::{geos_type_name, parse_cvt, CvtInfo, GeosStructure};
