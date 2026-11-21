@@ -240,6 +240,8 @@ struct Icons {
     trash: egui::TextureHandle,
     pencil: egui::TextureHandle,
     doc: egui::TextureHandle,
+    /// A transparent icon, so menu items without one line up with those with.
+    blank: egui::TextureHandle,
 }
 
 impl Icons {
@@ -259,6 +261,7 @@ impl Icons {
             trash: mk("i_trash", &art::TRASH),
             pencil: mk("i_pencil", &art::PENCIL),
             doc: mk("i_doc", &art::DOC),
+            blank: mk("i_blank", &["........"; 8]),
         }
     }
 }
@@ -284,6 +287,14 @@ fn pixel_image(grid: &[&str; 8], ink: Color32) -> egui::ColorImage {
 }
 
 /// A 16×16-icon button carrying `label` text.
+/// A menu item's shortcut, set off from its name by a dash ("— Ctrl+K"). The
+/// leading spaces keep a gap before the dash on the menu's widest item, and
+/// the keys are padded to one width (the font is monospaced) so the dashes
+/// line up even though shortcuts are right-aligned.
+fn key_hint(keys: &str) -> String {
+    format!("    — {keys:<6}")
+}
+
 fn icon_button<'a>(tex: &egui::TextureHandle, label: &'a str) -> egui::Button<'a> {
     let img = egui::Image::new(egui::load::SizedTexture::new(
         tex.id(),
@@ -439,6 +450,7 @@ impl ToastKind {
             || l.contains("at least")
             || l.contains("nothing to")
             || l.contains("holds exactly")
+            || l.starts_with("run in vice: ")
         {
             ToastKind::Info
         } else {
@@ -547,6 +559,11 @@ struct App {
     show_help: bool,
     // button-icon textures, built lazily on the first frame
     icons: Option<Icons>,
+    /// Folder holding VICE's emulators, chosen when they weren't on the PATH.
+    vice_dir: String,
+    /// Emulators started by Run in VICE, with the temporary folder each runs
+    /// from (removed at exit once that emulator has closed).
+    vice_runs: Vec<(std::process::Child, PathBuf)>,
 }
 
 /// Actions collected from the UI and applied after the frame (keeps egui
@@ -599,6 +616,8 @@ enum Act {
     CopyToOther,
     /// Copy the other disk's selected files onto the open disk or archive.
     CopyFromOther,
+    /// Start the open disk, or the selected program, in VICE.
+    RunVice,
 }
 
 impl App {
@@ -613,6 +632,9 @@ impl App {
         if let Some(s) = storage {
             if let Some(dir) = eframe::get_value::<String>(s, "out_dir") {
                 app.out_dir = dir;
+            }
+            if let Some(dir) = eframe::get_value::<String>(s, "vice_dir") {
+                app.vice_dir = dir;
             }
             if let Some(list) = eframe::get_value::<Vec<String>>(s, "recent_files") {
                 app.recent = list;
@@ -945,6 +967,143 @@ impl App {
             }
             Act::CopyToOther => self.copy_to_other(),
             Act::CopyFromOther => self.copy_from_other(),
+            Act::RunVice => self.run_vice(),
+        }
+    }
+
+    /// What Run in VICE would start, or why there's nothing to run.
+    fn vice_plan(&self) -> Result<VicePlan, String> {
+        let stem = self
+            .opened_path
+            .as_deref()
+            .and_then(|p| Path::new(p).file_stem())
+            .and_then(|s| s.to_str())
+            .map(safe_file_name)
+            .unwrap_or_else(|| "disk".into());
+        if let Some(disk) = self.map_disk() {
+            let entries = disk.directory().unwrap_or_default();
+            let is_prg = |e: &sector64::Entry| e.file_type == sector64::FileType::Prg;
+            // The selected program, else the first one on the disk.
+            let i = self
+                .selected
+                .filter(|&i| entries.get(i).is_some_and(is_prg))
+                .or_else(|| entries.iter().position(is_prg))
+                .ok_or("there's no program on this disk to run")?;
+            let entry = &entries[i];
+            let load = self.nodes.get(i).and_then(|n| n.data.as_ref().ok());
+            use sector64::geometry::Geometry;
+            let ext = match disk.geometry() {
+                Geometry::Cbm1541 { .. } => "d64",
+                Geometry::Cbm1571 => "d71",
+                Geometry::Cbm1581 => "d81",
+                Geometry::CmdNative { .. } => "d2m",
+            };
+            return Ok(VicePlan {
+                file_name: format!("{stem}.{ext}"),
+                program: Some(vice_load_name(&entry.name_raw)),
+                c128: load.is_some_and(|d| is_c128_load(d)),
+                what: format!("\"{}\"", entry.name),
+            });
+        }
+        let node = self
+            .selected
+            .and_then(|i| self.nodes.get(i))
+            .filter(|n| n.badge == "prg")
+            .ok_or("select a program to run")?;
+        let data = node
+            .data
+            .as_ref()
+            .map_err(|e| format!("can't run it: {e}"))?;
+        if data.len() < 3 {
+            return Err("that program is empty".into());
+        }
+        Ok(VicePlan {
+            file_name: format!("{}.prg", safe_file_name(&node.name)),
+            program: None,
+            c128: is_c128_load(data),
+            what: format!("\"{}\"", node.name),
+        })
+    }
+
+    /// Run in VICE: write the disk (with any unsaved edits) or the program to
+    /// a temporary folder and autostart it, so VICE never touches the
+    /// user's own file.
+    fn run_vice(&mut self) {
+        // Reap emulators that have closed.
+        self.vice_runs
+            .retain_mut(|(child, dir)| match child.try_wait() {
+                Ok(None) => true,
+                _ => {
+                    let _ = std::fs::remove_dir_all(&*dir);
+                    false
+                }
+            });
+        let plan = match self.vice_plan() {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("Run in VICE: {e}");
+                return;
+            }
+        };
+        let names = vice_names(plan.c128);
+        let mut exe = find_vice(names, &self.vice_dir);
+        if exe.is_none() {
+            // Not on the PATH: ask where VICE is, once.
+            if let Some(d) = rfd::FileDialog::new()
+                .set_title(format!("Choose the folder that holds VICE's {}", names[0]))
+                .pick_folder()
+            {
+                exe = find_vice(names, &d.display().to_string());
+                if exe.is_some() {
+                    self.vice_dir = d.display().to_string();
+                }
+            }
+        }
+        let Some(exe) = exe else {
+            self.status = format!(
+                "Run in VICE failed: couldn't find VICE's {} (install VICE, or choose its folder)",
+                names[0]
+            );
+            return;
+        };
+        static RUN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = RUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("sector64-vice-{}-{n}", std::process::id()));
+        let file = dir.join(&plan.file_name);
+        let bytes = match (
+            self.map_disk(),
+            self.selected.and_then(|i| self.nodes.get(i)),
+        ) {
+            (Some(disk), _) => disk.as_bytes(),
+            (None, Some(Node { data: Ok(d), .. })) => d.as_slice(),
+            _ => return,
+        };
+        if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&file, bytes)) {
+            self.status = format!("Run in VICE failed: can't write {}: {e}", file.display());
+            return;
+        }
+        let mut target = file.into_os_string();
+        if let Some(p) = &plan.program {
+            target.push(":");
+            target.push(p);
+        }
+        match std::process::Command::new(&exe)
+            .arg("-autostart")
+            .arg(target)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(child) => {
+                self.vice_runs.push((child, dir));
+                let machine = if plan.c128 { "C128" } else { "C64" };
+                self.status = format!("Running {} in VICE ({machine})", plan.what);
+            }
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&dir);
+                self.status = format!("Run in VICE failed: can't start {}: {e}", exe.display());
+            }
         }
     }
 
@@ -1535,6 +1694,17 @@ impl eframe::App for App {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "out_dir", &self.out_dir);
         eframe::set_value(storage, "recent_files", &self.recent);
+        eframe::set_value(storage, "vice_dir", &self.vice_dir);
+    }
+
+    /// Remove the temporary folders of emulators that have already closed;
+    /// a running VICE keeps its disk.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        for (child, dir) in &mut self.vice_runs {
+            if !matches!(child.try_wait(), Ok(None)) {
+                let _ = std::fs::remove_dir_all(&*dir);
+            }
+        }
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1627,6 +1797,7 @@ impl eframe::App for App {
         let has_map = self.map_disk().is_some();
         let mut show_map = self.show_map && has_map;
         let mut show_copy = self.show_copy;
+        let can_run = self.vice_plan().is_ok();
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(2.0);
@@ -1641,6 +1812,8 @@ impl eframe::App for App {
 
                 ui.menu_button("File", |ui| {
                     ui.set_min_width(180.0);
+                    // Grow the menu to fit rather than wrap an item's name.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     // New ▸ (disk formats + empty archive)
                     egui::menu::menu_custom_button(ui, icon_button(&ic.doc, "New ▸"), |ui| {
                         ui.set_min_width(200.0);
@@ -1668,7 +1841,10 @@ impl eframe::App for App {
                             ui.close_menu();
                         }
                     });
-                    if ui.add(icon_button(&ic.folder, "Open…")).clicked() {
+                    if ui
+                        .add(icon_button(&ic.folder, "Open…").shortcut_text(key_hint("Ctrl+O")))
+                        .clicked()
+                    {
                         acts.push(Act::OpenDialog);
                         ui.close_menu();
                     }
@@ -1717,7 +1893,10 @@ impl eframe::App for App {
                     });
                     ui.separator();
                     ui.add_enabled_ui(is_disk, |ui| {
-                        if ui.add(icon_button(&ic.floppy, "Save")).clicked() {
+                        if ui
+                            .add(icon_button(&ic.floppy, "Save").shortcut_text(key_hint("Ctrl+S")))
+                            .clicked()
+                        {
                             acts.push(Act::Save);
                             ui.close_menu();
                         }
@@ -1735,13 +1914,66 @@ impl eframe::App for App {
                         ui.close_menu();
                     }
                     ui.separator();
+                    // Extract ▸ (the selected file(s), or everything).
+                    ui.add_enabled_ui(any_extractable, |ui| {
+                        egui::menu::menu_custom_button(
+                            ui,
+                            icon_button(&ic.down, "Extract ▸"),
+                            |ui| {
+                                ui.set_min_width(170.0);
+                                if ui
+                                    .add_enabled(
+                                        sel_extractable,
+                                        icon_button(&ic.down, "Extract Selected")
+                                            .shortcut_text(key_hint("Enter")),
+                                    )
+                                    .clicked()
+                                {
+                                    acts.push(Act::ExtractSelected);
+                                    ui.close_menu();
+                                }
+                                if ui.add(icon_button(&ic.down, "Extract All")).clicked() {
+                                    acts.push(Act::ExtractAll);
+                                    ui.close_menu();
+                                }
+                            },
+                        );
+                    });
+                    if ui
+                        .add(
+                            icon_button(&ic.blank, "Copy…")
+                                .selected(show_copy)
+                                .shortcut_text(key_hint("Ctrl+K")),
+                        )
+                        .on_hover_text("copy files to and from a second disk")
+                        .clicked()
+                    {
+                        show_copy = !show_copy;
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(
+                            can_run,
+                            icon_button(&ic.blank, "Run in VICE").shortcut_text(key_hint("Ctrl+R")),
+                        )
+                        .on_hover_text(
+                            "start this disk in the VICE emulator, loading the selected \
+                             program or else the first one",
+                        )
+                        .on_disabled_hover_text("open a disk or select a program to run it in VICE")
+                        .clicked()
+                    {
+                        acts.push(Act::RunVice);
+                        ui.close_menu();
+                    }
+                    ui.separator();
                     // Undo / Redo, with what they would undo or redo on hover.
                     let undo_next = self.undo.last().map(|s| s.label.clone());
                     let redo_next = self.redo.last().map(|s| s.label.clone());
                     let undo = ui
                         .add_enabled(
                             undo_next.is_some(),
-                            egui::Button::new("Undo").shortcut_text("Ctrl+Z"),
+                            icon_button(&ic.blank, "Undo").shortcut_text(key_hint("Ctrl+Z")),
                         )
                         .on_hover_text(undo_next.as_deref().unwrap_or("nothing to undo"));
                     if undo.clicked() {
@@ -1751,7 +1983,7 @@ impl eframe::App for App {
                     let redo = ui
                         .add_enabled(
                             redo_next.is_some(),
-                            egui::Button::new("Redo").shortcut_text("Ctrl+Y"),
+                            icon_button(&ic.blank, "Redo").shortcut_text(key_hint("Ctrl+Y")),
                         )
                         .on_hover_text(redo_next.as_deref().unwrap_or("nothing to redo"));
                     if redo.clicked() {
@@ -1761,7 +1993,10 @@ impl eframe::App for App {
                     ui.separator();
                     ui.add_enabled_ui(has_sel, |ui| {
                         // Rename the selected row in place.
-                        if ui.add(icon_button(&ic.pencil, "Rename")).clicked() {
+                        if ui
+                            .add(icon_button(&ic.pencil, "Rename").shortcut_text(key_hint("F2")))
+                            .clicked()
+                        {
                             if let Some(s) = sel_now {
                                 renaming = Some(s);
                                 rename_to = self.nodes[s].name.clone();
@@ -1770,7 +2005,10 @@ impl eframe::App for App {
                             ui.close_menu();
                         }
                         let del = if is_archive { "Remove" } else { "Delete" };
-                        if ui.add(icon_button(&ic.trash, del)).clicked() {
+                        if ui
+                            .add(icon_button(&ic.trash, del).shortcut_text(key_hint("Del")))
+                            .clicked()
+                        {
                             acts.push(Act::Delete);
                             ui.close_menu();
                         }
@@ -1779,48 +2017,37 @@ impl eframe::App for App {
 
                 ui.separator();
 
-                ui.menu_button("Extract", |ui| {
+                ui.menu_button("Disk", |ui| {
                     ui.set_min_width(170.0);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    let disk_tip = "open a D64, D71, D81 or CMD-native D2M to validate it";
                     if ui
-                        .add_enabled(sel_extractable, icon_button(&ic.down, "Extract Selected"))
+                        .add_enabled(
+                            is_disk,
+                            egui::Button::new("Validate Disk").shortcut_text(key_hint("Ctrl+L")),
+                        )
+                        .on_hover_text("check every file's block chain against the BAM")
+                        .on_disabled_hover_text(disk_tip)
                         .clicked()
                     {
-                        acts.push(Act::ExtractSelected);
-                        ui.close_menu();
-                    }
-                    if ui
-                        .add_enabled(any_extractable, icon_button(&ic.down, "Extract All"))
-                        .clicked()
-                    {
-                        acts.push(Act::ExtractAll);
-                        ui.close_menu();
-                    }
-                });
-
-                if is_disk {
-                    ui.separator();
-                    if ui.button("Validate Disk").clicked() {
                         acts.push(Act::Validate);
+                        ui.close_menu();
                     }
-                }
-                if has_map {
-                    ui.separator();
                     if ui
-                        .selectable_label(show_map, "Disk Map")
-                        .on_hover_text("show which file owns each block (Ctrl+M)")
+                        .add_enabled(
+                            has_map,
+                            egui::Button::new("Disk Map")
+                                .selected(show_map)
+                                .shortcut_text(key_hint("Ctrl+M")),
+                        )
+                        .on_hover_text("show which file owns each block")
+                        .on_disabled_hover_text("open a disk image to see its map")
                         .clicked()
                     {
                         show_map = !show_map;
+                        ui.close_menu();
                     }
-                }
-                ui.separator();
-                if ui
-                    .selectable_label(show_copy, "Copy")
-                    .on_hover_text("copy files to and from a second disk (Ctrl+K)")
-                    .clicked()
-                {
-                    show_copy = !show_copy;
-                }
+                });
                 ui.separator();
                 if ui
                     .selectable_label(show_preview, "Preview")
@@ -2132,14 +2359,14 @@ impl eframe::App for App {
                         }
                         if editable {
                             ui.separator();
-                            if ui.add(icon_button(&ic.pencil, "Rename")).clicked() {
+                            if ui.add(icon_button(&ic.pencil, "Rename").shortcut_text(key_hint("F2"))).clicked() {
                                 renaming = Some(i);
                                 rename_to = node.name.clone();
                                 rename_focus = true;
                                 ui.close_menu();
                             }
                             let del = if is_archive { "Remove" } else { "Delete" };
-                            if ui.add(icon_button(&ic.trash, del)).clicked() {
+                            if ui.add(icon_button(&ic.trash, del).shortcut_text(key_hint("Del"))).clicked() {
                                 acts.push(Act::Select(i)); // delete this row specifically
                                 acts.push(Act::Delete);
                                 ui.close_menu();
@@ -2418,6 +2645,12 @@ impl eframe::App for App {
             }
             if i.modifiers.command && i.key_pressed(egui::Key::K) {
                 show_copy = !show_copy;
+            }
+            if i.modifiers.command && i.key_pressed(egui::Key::L) && is_disk {
+                acts.push(Act::Validate);
+            }
+            if i.modifiers.command && i.key_pressed(egui::Key::R) && can_run {
+                acts.push(Act::RunVice);
             }
             if !typing {
                 // Undo / redo (text fields keep Ctrl+Z for their own text).
@@ -3386,6 +3619,97 @@ enum Opened {
     List(String, Vec<Node>),
 }
 
+/// What Run in VICE starts.
+struct VicePlan {
+    /// The file written to the temporary folder ("games.d64", "name.prg"):
+    /// the disk, or else the selected program.
+    file_name: String,
+    /// The program to load from a disk, as VICE's `-autostart image:name`
+    /// takes it.
+    program: Option<String>,
+    /// Run it on a C128 (it loads where C128 BASIC starts).
+    c128: bool,
+    /// The program, for the status line.
+    what: String,
+}
+
+/// Whether a program loads where a C128 keeps BASIC ($1C01, or $4001 with a
+/// graphics screen), so it should run on a C128.
+fn is_c128_load(data: &[u8]) -> bool {
+    matches!(data, [0x01, 0x1C, ..] | [0x01, 0x40, ..])
+}
+
+/// A directory name as VICE's autostart takes it. VICE types
+/// `LOAD"name",8,1` with lowercase ASCII becoming PETSCII capitals, so
+/// letters go in lowercase and plain characters as they are. Anything that
+/// can't be typed, or that would end the name early (`"`, `,`, `:`), becomes
+/// the `?` wildcard, which matches any one character.
+fn vice_load_name(raw: &[u8; 16]) -> String {
+    let name: String = raw
+        .iter()
+        .take_while(|&&b| b != 0xA0)
+        .map(|&b| match b {
+            b'A'..=b'Z' => b.to_ascii_lowercase() as char,
+            b'"' | b',' | b':' => '?',
+            0x20..=0x40 => b as char,
+            _ => '?',
+        })
+        .collect();
+    if name.is_empty() {
+        "*".into()
+    } else {
+        name
+    }
+}
+
+/// A listed name made safe as a file name (the emulator shows it).
+fn safe_file_name(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || " -_.".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let s = s.trim().trim_matches('.').to_string();
+    if s.is_empty() {
+        "program".into()
+    } else {
+        s
+    }
+}
+
+/// VICE's emulators to try, best first.
+fn vice_names(c128: bool) -> &'static [&'static str] {
+    if c128 {
+        &["x128"]
+    } else {
+        &["x64sc", "x64"]
+    }
+}
+
+/// Find a VICE emulator: in the chosen folder (or its `bin`, as VICE's
+/// Windows download has it), then on the PATH.
+fn find_vice(names: &[&str], dir: &str) -> Option<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if !dir.is_empty() {
+        dirs.push(PathBuf::from(dir));
+        dirs.push(Path::new(dir).join("bin"));
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path));
+    }
+    let ext = std::env::consts::EXE_SUFFIX;
+    names.iter().find_map(|n| {
+        dirs.iter()
+            .map(|d| d.join(format!("{n}{ext}")))
+            .find(|p| p.is_file())
+    })
+}
+
 /// Build the listing (title, items) from a disk.
 fn disk_nodes(disk: &Disk) -> (String, Vec<Node>) {
     let header = disk.header();
@@ -4166,6 +4490,84 @@ mod tests {
 
     fn names(app: &App) -> Vec<String> {
         app.nodes.iter().map(|n| n.name.clone()).collect()
+    }
+
+    #[test]
+    fn vice_load_names_are_typeable_with_wildcards_for_the_rest() {
+        let raw = |b: &[u8]| {
+            let mut r = [0xA0u8; 16];
+            r[..b.len()].copy_from_slice(b);
+            r
+        };
+        assert_eq!(vice_load_name(&raw(b"GAME V1.2")), "game v1.2");
+        assert_eq!(vice_load_name(&raw(b"A\"B,C:D")), "a?b?c?d");
+        // Shifted letters, graphics and control codes can't be typed.
+        assert_eq!(vice_load_name(&raw(&[b'X', 0xC1, 0x5C, 0x0D])), "x???");
+        assert_eq!(vice_load_name(&raw(b"")), "*");
+        assert_eq!(vice_load_name(&[b'Z'; 16]), "z".repeat(16));
+    }
+
+    #[test]
+    fn c128_programs_and_safe_file_names() {
+        assert!(is_c128_load(&[0x01, 0x1C, 0]));
+        assert!(is_c128_load(&[0x01, 0x40, 0]));
+        assert!(!is_c128_load(&[0x01, 0x08, 0]));
+        assert!(!is_c128_load(&[0x01]));
+        assert_eq!(safe_file_name("my game/v2*"), "my game_v2_");
+        assert_eq!(safe_file_name(".."), "program");
+    }
+
+    #[test]
+    fn vice_runs_the_selected_program_or_else_the_first() {
+        let mut app = app_with_disk();
+        assert_eq!(
+            app.vice_plan().err().as_deref(),
+            Some("there's no program on this disk to run")
+        );
+        app.add_type = 1; // SEQ
+        app.add("NOTES".into(), b"hello");
+        app.add_type = 0; // PRG
+        app.add("FIRST".into(), b"\x01\x08\x00\x00");
+        app.add("SECOND".into(), b"\x01\x1c\x00\x00");
+        let i = |app: &App, n: &str| app.nodes.iter().position(|x| x.name == n);
+        app.selected = i(&app, "NOTES");
+        let p = app.vice_plan().unwrap();
+        assert_eq!(p.program.as_deref(), Some("first"));
+        assert_eq!((p.file_name.as_str(), p.c128), ("disk.d64", false));
+        app.selected = i(&app, "SECOND");
+        let p = app.vice_plan().unwrap();
+        assert_eq!((p.program.as_deref(), p.c128), (Some("second"), true));
+
+        // From an archive listing, the selected program runs on its own.
+        let mut list = App {
+            nodes: vec![Node {
+                name: "DEMO/1".into(),
+                badge: "prg".into(),
+                detail: String::new(),
+                blocks: 0,
+                data: Ok(vec![0x01, 0x08, 0x00]),
+            }],
+            ..Default::default()
+        };
+        assert!(list.vice_plan().is_err());
+        list.selected = Some(0);
+        let p = list.vice_plan().unwrap();
+        assert_eq!((p.file_name.as_str(), p.program), ("DEMO_1.prg", None));
+    }
+
+    #[test]
+    fn vice_is_found_in_the_chosen_folder_or_its_bin() {
+        let d = std::env::temp_dir().join(format!("s64-vice-find-{}", std::process::id()));
+        let bin = d.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let exe = bin.join(format!("x128{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&exe, b"").unwrap();
+        assert_eq!(find_vice(&["x128"], &d.display().to_string()), Some(exe));
+        assert_eq!(
+            find_vice(&["no-such-emulator"], &d.display().to_string()),
+            None
+        );
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]
