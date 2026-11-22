@@ -505,31 +505,13 @@ struct Toast {
     born: f64,
 }
 
+/// One open disk or archive and everything about how it's listed: the
+/// files, the selection, sort and filter, undo history and preview caches.
 #[derive(Default)]
-struct App {
-    // new-image controls
-    new_fmt: usize, // 0=d64, 1=d71, 2=d81
-    new_name: String,
-    new_id: String,
-    // editing
-    rename_to: String,
-    add_type: usize, // 0=prg,1=seq,2=usr
-    // inline rename: index of the row whose name is being edited, and whether
-    // the edit field should grab focus this frame
-    renaming: Option<usize>,
-    rename_focus: bool,
-    // bottom bar
-    out_dir: String,
-    status: String,
-    /// Last status text turned into a toast, so each change toasts once.
-    last_status: String,
-    /// Active transient notifications (newest first in the stack).
-    toasts: Vec<Toast>,
-    /// Path of the currently-open file (shown on the "Open:" line).
+struct Pane {
+    /// Path of the open file (shown on the "Open:" line).
     opened_path: Option<String>,
-    /// Recently opened or saved files, newest first (File ▸ Open Recent).
-    recent: Vec<String>,
-    // state
+    /// The listing's heading (disk name and ID, or what kind of archive).
     title: String,
     nodes: Vec<Node>,
     selected: Option<usize>,
@@ -539,19 +521,17 @@ struct App {
     sort: Option<(SortKey, bool)>,
     /// Case-insensitive name filter; empty shows everything.
     filter: String,
-    /// A pending confirmation (unsaved changes before open/quit).
-    confirm: Option<Confirm>,
+    /// Inline rename: the row whose name is being edited, the text being
+    /// typed, and whether the edit field should grab focus this frame.
+    renaming: Option<usize>,
+    rename_to: String,
+    rename_focus: bool,
     disk: Option<EditDisk>,
     /// The listing is a read-only disk (G64, a 1581-partition D2M, a Zip-Code
     /// set): its rows carry block counts, so the BLK column applies.
     read_only_disk: bool,
     /// The read-only disk itself, kept for the disk map.
     ro_disk: Option<Disk>,
-    /// Whether the Disk Map window is open.
-    show_map: bool,
-    /// Whether the Copy window is open, and the disk it copies to and from.
-    show_copy: bool,
-    other: Option<OtherDisk>,
     /// The disk map, built when the window opens and dropped on every change.
     map_cache: Option<BlockMap>,
     // staging list when building a new archive
@@ -560,9 +540,41 @@ struct App {
     undo: Vec<UndoStep>,
     /// Edits that Redo re-applies, newest last; cleared by any new edit.
     redo: Vec<UndoStep>,
-    // preview/validation pane
     /// Cached rendered preview: (node index, mode it was rendered in, text).
     hex_cache: Option<(usize, PreviewMode, Option<BasicDialect>, String)>,
+    /// The GFX preview's sheet, redrawn when the selection or options change.
+    gfx_cache: Option<GfxView>,
+    /// The PIC preview's decoded picture.
+    pic_cache: Option<PicView>,
+}
+
+#[derive(Default)]
+struct App {
+    /// The open disk or archive.
+    pane: Pane,
+    // new-image controls
+    new_fmt: usize, // 0=d64, 1=d71, 2=d81
+    new_name: String,
+    new_id: String,
+    // editing
+    add_type: usize, // 0=prg,1=seq,2=usr
+    // bottom bar
+    out_dir: String,
+    status: String,
+    /// Last status text turned into a toast, so each change toasts once.
+    last_status: String,
+    /// Active transient notifications (newest first in the stack).
+    toasts: Vec<Toast>,
+    /// Recently opened or saved files, newest first (File ▸ Open Recent).
+    recent: Vec<String>,
+    /// A pending confirmation (unsaved changes before open/quit).
+    confirm: Option<Confirm>,
+    /// Whether the Disk Map window is open.
+    show_map: bool,
+    /// Whether the Copy window is open, and the disk it copies to and from.
+    show_copy: bool,
+    other: Option<OtherDisk>,
+    // preview/validation pane
     /// How the preview pane renders bytes (hex or PETSCII text).
     preview_mode: PreviewMode,
     /// The BASIC dialect the BASIC preview lists in; `None` detects it.
@@ -570,11 +582,8 @@ struct App {
     /// What the GFX preview draws the bytes as, and whether in multicolour.
     gfx_kind: GfxKind,
     gfx_multi: bool,
-    /// The GFX preview's sheet, redrawn when the selection or options change.
-    gfx_cache: Option<GfxView>,
-    /// The PIC preview's format (`None` detects it) and its decoded picture.
+    /// The PIC preview's format (`None` detects it).
     pic_format: Option<PicFormat>,
-    pic_cache: Option<PicView>,
     validation: String,
     // whether the validation-result popover is showing
     show_validation: bool,
@@ -645,33 +654,7 @@ enum Act {
     RunVice,
 }
 
-impl App {
-    fn new(initial: Option<String>, storage: Option<&dyn eframe::Storage>) -> Self {
-        let mut app = App {
-            new_name: "blank".into(),
-            new_id: "01".into(),
-            ..Default::default()
-        };
-        // Restore the remembered output folder (window geometry is restored by
-        // eframe itself).
-        if let Some(s) = storage {
-            if let Some(dir) = eframe::get_value::<String>(s, "out_dir") {
-                app.out_dir = dir;
-            }
-            if let Some(dir) = eframe::get_value::<String>(s, "vice_dir") {
-                app.vice_dir = dir;
-            }
-            if let Some(list) = eframe::get_value::<Vec<String>>(s, "recent_files") {
-                app.recent = list;
-                app.recent.truncate(RECENT_MAX);
-            }
-        }
-        if let Some(p) = initial {
-            app.open(Path::new(&p));
-        }
-        app
-    }
-
+impl Pane {
     /// Whether add/rename/delete apply (an editable disk or a new archive).
     fn editable(&self) -> bool {
         self.disk.is_some() || self.archive.is_some()
@@ -726,62 +709,6 @@ impl App {
         };
     }
 
-    fn open(&mut self, path: &Path) {
-        self.clear_history();
-        self.nodes.clear();
-        self.selected = None;
-        self.marked.clear();
-        self.filter.clear();
-        self.disk = None;
-        self.archive = None;
-        self.read_only_disk = false;
-        self.ro_disk = None;
-        self.map_cache = None;
-        self.title.clear();
-        self.hex_cache = None;
-        self.gfx_cache = None;
-        self.pic_cache = None;
-        self.validation.clear();
-        self.renaming = None;
-        match open_path(path) {
-            Ok(Opened::Disk(disk)) => {
-                self.disk = Some(EditDisk {
-                    disk,
-                    path: Some(path.to_path_buf()),
-                    dirty: false,
-                });
-                self.refresh();
-                self.after_open(path);
-            }
-            Ok(Opened::List(title, nodes)) => {
-                self.title = title;
-                self.nodes = nodes;
-                self.after_open(path);
-            }
-            Ok(Opened::ReadOnlyDisk(title, nodes, disk)) => {
-                self.title = title;
-                self.nodes = nodes;
-                self.read_only_disk = true;
-                self.ro_disk = Some(disk);
-                self.after_open(path);
-            }
-            Err(e) => self.status = format!("Error: {e}"),
-        }
-    }
-
-    fn after_open(&mut self, path: &Path) {
-        if self.out_dir.is_empty() {
-            if let Some(parent) = path.parent() {
-                self.out_dir = parent.display().to_string();
-            }
-        }
-        self.opened_path = Some(path.display().to_string());
-        remember_recent(&mut self.recent, path);
-        // Select the first entry so the preview pane shows something at once.
-        self.selected = (!self.nodes.is_empty()).then_some(0);
-        self.status = format!("{} item(s) loaded", self.nodes.len());
-    }
-
     /// Rebuild the listing from the editable disk or the archive staging list.
     fn refresh(&mut self) {
         if let Some(ed) = &self.disk {
@@ -814,6 +741,135 @@ impl App {
         self.marked.clear();
     }
 
+    /// The editable content as it is now, if a disk or new archive is open.
+    fn snapshot(&self) -> Option<Snapshot> {
+        if let Some(ed) = &self.disk {
+            Some(Snapshot::Disk(ed.disk.clone(), ed.dirty))
+        } else {
+            self.archive.as_ref().map(|a| Snapshot::Archive(a.clone()))
+        }
+    }
+
+    /// Put `snapshot` back as the editable content.
+    fn restore(&mut self, snapshot: Snapshot) {
+        match snapshot {
+            Snapshot::Disk(disk, dirty) => {
+                if let Some(ed) = &mut self.disk {
+                    ed.disk = disk;
+                    ed.dirty = dirty;
+                }
+            }
+            Snapshot::Archive(files) => self.archive = Some(files),
+        }
+        self.hex_cache = None;
+        self.gfx_cache = None;
+        self.pic_cache = None;
+        self.refresh();
+    }
+
+    /// Record a successful edit: `before` goes on the undo stack and the redo
+    /// stack is dropped (a new edit starts a new branch of history).
+    fn record(&mut self, before: Option<Snapshot>, label: &str) {
+        let Some(snapshot) = before else { return };
+        self.undo.push(UndoStep {
+            snapshot,
+            label: label.to_string(),
+        });
+        if self.undo.len() > UNDO_MAX {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+    }
+
+    fn clear_history(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+    }
+}
+
+impl App {
+    fn new(initial: Option<String>, storage: Option<&dyn eframe::Storage>) -> Self {
+        let mut app = App {
+            new_name: "blank".into(),
+            new_id: "01".into(),
+            ..Default::default()
+        };
+        // Restore the remembered output folder (window geometry is restored by
+        // eframe itself).
+        if let Some(s) = storage {
+            if let Some(dir) = eframe::get_value::<String>(s, "out_dir") {
+                app.out_dir = dir;
+            }
+            if let Some(dir) = eframe::get_value::<String>(s, "vice_dir") {
+                app.vice_dir = dir;
+            }
+            if let Some(list) = eframe::get_value::<Vec<String>>(s, "recent_files") {
+                app.recent = list;
+                app.recent.truncate(RECENT_MAX);
+            }
+        }
+        if let Some(p) = initial {
+            app.open(Path::new(&p));
+        }
+        app
+    }
+
+    fn open(&mut self, path: &Path) {
+        self.pane.clear_history();
+        self.pane.nodes.clear();
+        self.pane.selected = None;
+        self.pane.marked.clear();
+        self.pane.filter.clear();
+        self.pane.disk = None;
+        self.pane.archive = None;
+        self.pane.read_only_disk = false;
+        self.pane.ro_disk = None;
+        self.pane.map_cache = None;
+        self.pane.title.clear();
+        self.pane.hex_cache = None;
+        self.pane.gfx_cache = None;
+        self.pane.pic_cache = None;
+        self.validation.clear();
+        self.pane.renaming = None;
+        match open_path(path) {
+            Ok(Opened::Disk(disk)) => {
+                self.pane.disk = Some(EditDisk {
+                    disk,
+                    path: Some(path.to_path_buf()),
+                    dirty: false,
+                });
+                self.pane.refresh();
+                self.after_open(path);
+            }
+            Ok(Opened::List(title, nodes)) => {
+                self.pane.title = title;
+                self.pane.nodes = nodes;
+                self.after_open(path);
+            }
+            Ok(Opened::ReadOnlyDisk(title, nodes, disk)) => {
+                self.pane.title = title;
+                self.pane.nodes = nodes;
+                self.pane.read_only_disk = true;
+                self.pane.ro_disk = Some(disk);
+                self.after_open(path);
+            }
+            Err(e) => self.status = format!("Error: {e}"),
+        }
+    }
+
+    fn after_open(&mut self, path: &Path) {
+        if self.out_dir.is_empty() {
+            if let Some(parent) = path.parent() {
+                self.out_dir = parent.display().to_string();
+            }
+        }
+        self.pane.opened_path = Some(path.display().to_string());
+        remember_recent(&mut self.recent, path);
+        // Select the first entry so the preview pane shows something at once.
+        self.pane.selected = (!self.pane.nodes.is_empty()).then_some(0);
+        self.status = format!("{} item(s) loaded", self.pane.nodes.len());
+    }
+
     fn apply(&mut self, act: Act) {
         match act {
             Act::OpenDialog => {
@@ -827,7 +883,7 @@ impl App {
                     )
                     .add_filter("All files", &["*"]);
                 if let Some(p) = dlg.pick_file() {
-                    if self.is_dirty() {
+                    if self.pane.is_dirty() {
                         self.confirm = Some(Confirm::OpenFile(p));
                     } else {
                         self.open(&p);
@@ -835,27 +891,27 @@ impl App {
                 }
             }
             Act::Select(i) => {
-                self.selected = Some(i);
-                self.marked.clear();
+                self.pane.selected = Some(i);
+                self.pane.marked.clear();
             }
             Act::ToggleMark(i) => {
-                if !self.marked.insert(i) {
-                    self.marked.remove(&i);
+                if !self.pane.marked.insert(i) {
+                    self.pane.marked.remove(&i);
                 }
-                self.selected = Some(i);
+                self.pane.selected = Some(i);
             }
             Act::MarkRange(i) => {
                 // Range in display order, so Shift-click follows what's shown.
-                let order = self.sorted_order(&self.filter.clone());
-                let anchor = self.selected.unwrap_or(i);
+                let order = self.pane.sorted_order(&self.pane.filter.clone());
+                let anchor = self.pane.selected.unwrap_or(i);
                 let pa = order.iter().position(|&x| x == anchor);
                 let pi = order.iter().position(|&x| x == i);
                 if let (Some(pa), Some(pi)) = (pa, pi) {
                     for &node in &order[pa.min(pi)..=pa.max(pi)] {
-                        self.marked.insert(node);
+                        self.pane.marked.insert(node);
                     }
                 }
-                self.selected = Some(i);
+                self.pane.selected = Some(i);
             }
             Act::PickOutDir => {
                 if let Some(d) = rfd::FileDialog::new().pick_folder() {
@@ -881,7 +937,7 @@ impl App {
                     self.status =
                         format!("Error: {shown} no longer exists (removed from recent files)");
                     self.recent.retain(|r| Path::new(r) != p);
-                } else if self.is_dirty() {
+                } else if self.pane.is_dirty() {
                     self.confirm = Some(Confirm::OpenFile(p));
                 } else {
                     self.open(&p);
@@ -893,7 +949,7 @@ impl App {
                 self.recent.clear();
                 self.status = "Cleared the recent-files list".into();
             }
-            Act::Sort(key) => self.cycle_sort(key),
+            Act::Sort(key) => self.pane.cycle_sort(key),
             Act::ExtractSelected => self.extract_selected(),
             Act::ExtractAll => self.extract_all(),
             Act::Create => {
@@ -902,15 +958,15 @@ impl App {
                     2 => Disk::format_d81(&self.new_name, &self.new_id),
                     _ => Disk::format(&self.new_name, &self.new_id),
                 };
-                self.clear_history();
-                self.disk = Some(EditDisk {
+                self.pane.clear_history();
+                self.pane.disk = Some(EditDisk {
                     disk,
                     path: None,
                     dirty: true,
                 });
-                self.selected = None;
-                self.refresh();
-                self.opened_path = None;
+                self.pane.selected = None;
+                self.pane.refresh();
+                self.pane.opened_path = None;
                 self.status = "Created a blank image (unsaved)".into();
             }
             Act::AddFile => {
@@ -931,16 +987,16 @@ impl App {
             Act::SaveAs => self.save(true),
             Act::Validate => self.validate(),
             Act::NewArchive => {
-                self.clear_history();
-                self.disk = None;
-                self.read_only_disk = false;
-                self.archive = Some(Vec::new());
-                self.selected = None;
-                self.hex_cache = None;
-                self.gfx_cache = None;
-                self.pic_cache = None;
-                self.refresh();
-                self.opened_path = None;
+                self.pane.clear_history();
+                self.pane.disk = None;
+                self.pane.read_only_disk = false;
+                self.pane.archive = Some(Vec::new());
+                self.pane.selected = None;
+                self.pane.hex_cache = None;
+                self.pane.gfx_cache = None;
+                self.pane.pic_cache = None;
+                self.pane.refresh();
+                self.pane.opened_path = None;
                 self.status = "New archive — add files, then Save archive as…".into();
             }
             Act::SaveArchiveAs => self.save_archive(),
@@ -1001,23 +1057,25 @@ impl App {
     /// What Run in VICE would start, or why there's nothing to run.
     fn vice_plan(&self) -> Result<VicePlan, String> {
         let stem = self
+            .pane
             .opened_path
             .as_deref()
             .and_then(|p| Path::new(p).file_stem())
             .and_then(|s| s.to_str())
             .map(safe_file_name)
             .unwrap_or_else(|| "disk".into());
-        if let Some(disk) = self.map_disk() {
+        if let Some(disk) = self.pane.map_disk() {
             let entries = disk.directory().unwrap_or_default();
             let is_prg = |e: &sector64::Entry| e.file_type == sector64::FileType::Prg;
             // The selected program, else the first one on the disk.
             let i = self
+                .pane
                 .selected
                 .filter(|&i| entries.get(i).is_some_and(is_prg))
                 .or_else(|| entries.iter().position(is_prg))
                 .ok_or("there's no program on this disk to run")?;
             let entry = &entries[i];
-            let load = self.nodes.get(i).and_then(|n| n.data.as_ref().ok());
+            let load = self.pane.nodes.get(i).and_then(|n| n.data.as_ref().ok());
             use sector64::geometry::Geometry;
             let ext = match disk.geometry() {
                 Geometry::Cbm1541 { .. } => "d64",
@@ -1033,8 +1091,9 @@ impl App {
             });
         }
         let node = self
+            .pane
             .selected
-            .and_then(|i| self.nodes.get(i))
+            .and_then(|i| self.pane.nodes.get(i))
             .filter(|n| n.badge == "prg")
             .ok_or("select a program to run")?;
         let data = node
@@ -1098,8 +1157,8 @@ impl App {
         let dir = std::env::temp_dir().join(format!("sector64-vice-{}-{n}", std::process::id()));
         let file = dir.join(&plan.file_name);
         let bytes = match (
-            self.map_disk(),
-            self.selected.and_then(|i| self.nodes.get(i)),
+            self.pane.map_disk(),
+            self.pane.selected.and_then(|i| self.pane.nodes.get(i)),
         ) {
             (Some(disk), _) => disk.as_bytes(),
             (None, Some(Node { data: Ok(d), .. })) => d.as_slice(),
@@ -1187,12 +1246,12 @@ impl App {
     /// The main listing's chosen rows: the multi-select set if any, else the
     /// active row.
     fn chosen_rows(&self) -> Vec<usize> {
-        let mut rows: Vec<usize> = if self.marked.is_empty() {
-            self.selected.into_iter().collect()
+        let mut rows: Vec<usize> = if self.pane.marked.is_empty() {
+            self.pane.selected.into_iter().collect()
         } else {
-            self.marked.iter().copied().collect()
+            self.pane.marked.iter().copied().collect()
         };
-        rows.retain(|&i| i < self.nodes.len());
+        rows.retain(|&i| i < self.pane.nodes.len());
         rows
     }
 
@@ -1209,15 +1268,16 @@ impl App {
         // From a disk, copy directory entries (exact names, lock flags);
         // from an archive, the extracted bytes under the listed name.
         let src = self
+            .pane
             .disk
             .as_ref()
             .map(|e| &e.disk)
-            .or(self.ro_disk.as_ref());
+            .or(self.pane.ro_disk.as_ref());
         let entries = src.map(|d| d.directory().unwrap_or_default());
         let mut done = Vec::new();
         let mut failed = Vec::new();
         for i in rows {
-            let node = &self.nodes[i];
+            let node = &self.pane.nodes[i];
             let r = match (src, entries.as_ref().and_then(|e| e.get(i))) {
                 (Some(src), Some(entry)) => {
                     o.disk.copy_file_from(src, entry).map_err(|e| e.to_string())
@@ -1251,15 +1311,15 @@ impl App {
             self.status = "Select files on the other disk to copy".into();
             return;
         }
-        let before = self.snapshot();
+        let before = self.pane.snapshot();
         let mut done = Vec::new();
         let mut failed = Vec::new();
         for e in picked {
-            let r = if let Some(ed) = &mut self.disk {
+            let r = if let Some(ed) = &mut self.pane.disk {
                 ed.disk
                     .copy_file_from(&o.disk, e)
                     .map_err(|x| x.to_string())
-            } else if let Some(stage) = &mut self.archive {
+            } else if let Some(stage) = &mut self.pane.archive {
                 match (e.file_type, o.disk.read_entry(e)) {
                     (FileType::Rel, _) => Err(sector64::Error::CannotCopy("REL files").to_string()),
                     (_, Err(x)) => Err(x.to_string()),
@@ -1283,23 +1343,25 @@ impl App {
         }
         let status = copy_report(&done, &failed, "the open disk");
         if !done.is_empty() {
-            if let Some(ed) = &mut self.disk {
+            if let Some(ed) = &mut self.pane.disk {
                 ed.dirty = true;
             }
-            self.record(
+            self.pane.record(
                 before,
                 &format!("Copied {} file(s) from the other disk", done.len()),
             );
-            self.hex_cache = None;
-            self.gfx_cache = None;
-            self.pic_cache = None;
-            self.refresh();
+            self.pane.hex_cache = None;
+            self.pane.gfx_cache = None;
+            self.pane.pic_cache = None;
+            self.pane.refresh();
         }
         self.status = status;
     }
 
     fn save_archive(&mut self) {
-        let Some(stage) = &self.archive else { return };
+        let Some(stage) = &self.pane.archive else {
+            return;
+        };
         if stage.is_empty() {
             self.status = "Add at least one file first".into();
             return;
@@ -1339,7 +1401,7 @@ impl App {
     }
 
     fn validate(&mut self) {
-        let Some(ed) = &self.disk else {
+        let Some(ed) = &self.pane.disk else {
             self.validation = "Open a D64/D71/D81 to validate".into();
             return;
         };
@@ -1367,163 +1429,118 @@ impl App {
             2 => FileType::Usr,
             _ => FileType::Prg,
         };
-        let before = self.snapshot();
+        let before = self.pane.snapshot();
         let done = format!("Added \"{name}\" ({} bytes)", bytes.len());
-        if let Some(ed) = &mut self.disk {
+        if let Some(ed) = &mut self.pane.disk {
             match ed.disk.write_file(&name, ft, bytes) {
                 Ok(()) => {
                     ed.dirty = true;
-                    self.record(before, &done);
-                    self.refresh();
+                    self.pane.record(before, &done);
+                    self.pane.refresh();
                     self.status = done;
                 }
                 Err(e) => self.status = format!("Add failed: {e}"),
             }
-        } else if let Some(stage) = &mut self.archive {
+        } else if let Some(stage) = &mut self.pane.archive {
             stage.push(ImportFile {
                 name: name.clone(),
                 file_type: ft,
                 data: bytes.to_vec(),
             });
-            self.record(before, &done);
-            self.refresh();
+            self.pane.record(before, &done);
+            self.pane.refresh();
             self.status = done;
         }
     }
 
     fn rename(&mut self) {
-        let Some(i) = self.selected else {
+        let Some(i) = self.pane.selected else {
             self.status = "Select a file to rename".into();
             return;
         };
-        let old = self.nodes[i].name.clone();
-        let new = self.rename_to.trim().to_string();
+        let old = self.pane.nodes[i].name.clone();
+        let new = self.pane.rename_to.trim().to_string();
         if new.is_empty() {
             self.status = "Enter a new name".into();
             return;
         }
-        let before = self.snapshot();
+        let before = self.pane.snapshot();
         let done = format!("Renamed \"{old}\" → \"{new}\"");
-        if let Some(ed) = &mut self.disk {
+        if let Some(ed) = &mut self.pane.disk {
             match ed.disk.rename(&old, &new) {
                 Ok(()) => {
                     ed.dirty = true;
-                    self.record(before, &done);
-                    self.refresh();
+                    self.pane.record(before, &done);
+                    self.pane.refresh();
                     self.status = done;
                 }
                 Err(e) => self.status = format!("Rename failed: {e}"),
             }
-        } else if let Some(stage) = &mut self.archive {
+        } else if let Some(stage) = &mut self.pane.archive {
             stage[i].name = new.clone();
-            self.record(before, &done);
-            self.refresh();
+            self.pane.record(before, &done);
+            self.pane.refresh();
             self.status = done;
         }
     }
 
     fn delete(&mut self) {
-        let Some(i) = self.selected else {
+        let Some(i) = self.pane.selected else {
             self.status = "Select a file to delete".into();
             return;
         };
-        let name = self.nodes[i].name.clone();
-        let before = self.snapshot();
-        if let Some(ed) = &mut self.disk {
+        let name = self.pane.nodes[i].name.clone();
+        let before = self.pane.snapshot();
+        if let Some(ed) = &mut self.pane.disk {
             match ed.disk.scratch(&name) {
                 Ok(n) => {
                     ed.dirty = true;
                     let done = format!("Deleted \"{name}\" ({n} blocks freed)");
-                    self.record(before, &done);
-                    self.selected = None;
-                    self.refresh();
+                    self.pane.record(before, &done);
+                    self.pane.selected = None;
+                    self.pane.refresh();
                     self.status = done;
                 }
                 Err(e) => self.status = format!("Delete failed: {e}"),
             }
-        } else if let Some(stage) = &mut self.archive {
+        } else if let Some(stage) = &mut self.pane.archive {
             stage.remove(i);
             let done = format!("Removed \"{name}\"");
-            self.record(before, &done);
-            self.selected = None;
-            self.refresh();
+            self.pane.record(before, &done);
+            self.pane.selected = None;
+            self.pane.refresh();
             self.status = done;
         }
     }
 
-    /// The editable content as it is now, if a disk or new archive is open.
-    fn snapshot(&self) -> Option<Snapshot> {
-        if let Some(ed) = &self.disk {
-            Some(Snapshot::Disk(ed.disk.clone(), ed.dirty))
-        } else {
-            self.archive.as_ref().map(|a| Snapshot::Archive(a.clone()))
-        }
-    }
-
-    /// Put `snapshot` back as the editable content.
-    fn restore(&mut self, snapshot: Snapshot) {
-        match snapshot {
-            Snapshot::Disk(disk, dirty) => {
-                if let Some(ed) = &mut self.disk {
-                    ed.disk = disk;
-                    ed.dirty = dirty;
-                }
-            }
-            Snapshot::Archive(files) => self.archive = Some(files),
-        }
-        self.hex_cache = None;
-        self.gfx_cache = None;
-        self.pic_cache = None;
-        self.refresh();
-    }
-
-    /// Record a successful edit: `before` goes on the undo stack and the redo
-    /// stack is dropped (a new edit starts a new branch of history).
-    fn record(&mut self, before: Option<Snapshot>, label: &str) {
-        let Some(snapshot) = before else { return };
-        self.undo.push(UndoStep {
-            snapshot,
-            label: label.to_string(),
-        });
-        if self.undo.len() > UNDO_MAX {
-            self.undo.remove(0);
-        }
-        self.redo.clear();
-    }
-
-    fn clear_history(&mut self) {
-        self.undo.clear();
-        self.redo.clear();
-    }
-
     fn undo(&mut self) {
-        let (Some(step), Some(now)) = (self.undo.pop(), self.snapshot()) else {
+        let (Some(step), Some(now)) = (self.pane.undo.pop(), self.pane.snapshot()) else {
             self.status = "Nothing to undo".into();
             return;
         };
-        self.restore(step.snapshot);
+        self.pane.restore(step.snapshot);
         self.status = format!("Undone: {}", step.label);
-        self.redo.push(UndoStep {
+        self.pane.redo.push(UndoStep {
             snapshot: now,
             label: step.label,
         });
     }
 
     fn redo(&mut self) {
-        let (Some(step), Some(now)) = (self.redo.pop(), self.snapshot()) else {
+        let (Some(step), Some(now)) = (self.pane.redo.pop(), self.pane.snapshot()) else {
             self.status = "Nothing to redo".into();
             return;
         };
-        self.restore(step.snapshot);
+        self.pane.restore(step.snapshot);
         self.status = format!("Redone: {}", step.label);
-        self.undo.push(UndoStep {
+        self.pane.undo.push(UndoStep {
             snapshot: now,
             label: step.label,
         });
     }
 
     fn save(&mut self, save_as: bool) {
-        let Some(ed) = &mut self.disk else {
+        let Some(ed) = &mut self.pane.disk else {
             self.status = "Nothing to save".into();
             return;
         };
@@ -1548,15 +1565,15 @@ impl App {
                 ed.path = Some(path.clone());
                 ed.dirty = false;
                 // Every other point in the history now differs from the file.
-                for step in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+                for step in self.pane.undo.iter_mut().chain(self.pane.redo.iter_mut()) {
                     if let Snapshot::Disk(_, dirty) = &mut step.snapshot {
                         *dirty = true;
                     }
                 }
-                self.opened_path = Some(path.display().to_string());
+                self.pane.opened_path = Some(path.display().to_string());
                 remember_recent(&mut self.recent, &path);
                 self.status = format!("Saved {}", path.display());
-                self.refresh();
+                self.pane.refresh();
             }
             Err(e) => self.status = format!("Save failed: {e}"),
         }
@@ -1564,19 +1581,22 @@ impl App {
 
     fn extract_selected(&mut self) {
         // The target rows: the multi-select set if any, else the active row.
-        let mut targets: Vec<usize> = if self.marked.is_empty() {
-            self.selected.into_iter().collect()
+        let mut targets: Vec<usize> = if self.pane.marked.is_empty() {
+            self.pane.selected.into_iter().collect()
         } else {
-            self.marked.iter().copied().collect()
+            self.pane.marked.iter().copied().collect()
         };
-        targets.retain(|&i| i < self.nodes.len());
+        targets.retain(|&i| i < self.pane.nodes.len());
         if targets.is_empty() {
             self.status = "Select a file first".into();
             return;
         }
         if targets.len() == 1 {
             let i = targets[0];
-            let (name, data) = (self.nodes[i].name.clone(), self.nodes[i].data.clone());
+            let (name, data) = (
+                self.pane.nodes[i].name.clone(),
+                self.pane.nodes[i].data.clone(),
+            );
             let data = match data {
                 Ok(d) => d,
                 Err(e) => {
@@ -1604,9 +1624,9 @@ impl App {
         };
         let (mut ok, mut skipped) = (0, 0);
         for i in targets {
-            match &self.nodes[i].data {
+            match &self.pane.nodes[i].data {
                 Ok(d) => {
-                    let dest = PathBuf::from(&dir).join(sanitize(&self.nodes[i].name));
+                    let dest = PathBuf::from(&dir).join(sanitize(&self.pane.nodes[i].name));
                     if std::fs::write(&dest, d).is_ok() {
                         ok += 1;
                     } else {
@@ -1626,7 +1646,7 @@ impl App {
             self.out_dir.clone()
         };
         let (mut ok, mut skipped) = (0, 0);
-        for node in &self.nodes {
+        for node in &self.pane.nodes {
             match &node.data {
                 Ok(d) => {
                     let dest = PathBuf::from(&dir).join(sanitize(&node.name));
@@ -1745,89 +1765,93 @@ impl eframe::App for App {
 
         // Guard the window close against unsaved disk edits.
         let other_dirty = self.other.as_ref().is_some_and(|o| o.dirty);
-        if ctx.input(|i| i.viewport().close_requested()) && (self.is_dirty() || other_dirty) {
+        if ctx.input(|i| i.viewport().close_requested()) && (self.pane.is_dirty() || other_dirty) {
             if self.confirm.is_none() {
                 self.confirm = Some(Confirm::Quit);
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
-        let editable = self.editable();
-        let is_disk = self.disk.is_some();
-        let is_archive = self.archive.is_some();
+        let editable = self.pane.editable();
+        let is_disk = self.pane.disk.is_some();
+        let is_archive = self.pane.archive.is_some();
 
         // Refresh the hex preview cache when the selection changes (done before
         // the panels so the closures only read `self` immutably).
-        match self.selected {
-            Some(i) if i < self.nodes.len() => {
+        match self.pane.selected {
+            Some(i) if i < self.pane.nodes.len() => {
                 let mode = self.preview_mode;
                 let dialect = self.basic_dialect;
                 let stale = self
+                    .pane
                     .hex_cache
                     .as_ref()
                     .map(|(ci, cm, cd, _)| *ci != i || *cm != mode || *cd != dialect)
                     .unwrap_or(true);
                 if stale {
-                    let text = match &self.nodes[i].data {
+                    let text = match &self.pane.nodes[i].data {
                         Ok(d) => match mode {
                             PreviewMode::Hex => hexdump(d, 16 * 1024),
                             PreviewMode::Text => petscii_text(d, 64 * 1024),
                             PreviewMode::Basic => basic_preview(d, dialect),
-                            PreviewMode::Dis => dis_preview(d, self.nodes[i].badge == "prg"),
+                            PreviewMode::Dis => dis_preview(d, self.pane.nodes[i].badge == "prg"),
                             // Drawn from the bytes by the pane itself; this
                             // only marks that there is something to show.
                             PreviewMode::Gfx | PreviewMode::Pic => "gfx".into(),
                         },
                         Err(e) => format!("(not extractable: {e})"),
                     };
-                    self.hex_cache = Some((i, mode, dialect, text));
+                    self.pane.hex_cache = Some((i, mode, dialect, text));
                 }
             }
             _ => {
-                self.hex_cache = None;
-                self.gfx_cache = None;
-                self.pic_cache = None;
+                self.pane.hex_cache = None;
+                self.pane.gfx_cache = None;
+                self.pane.pic_cache = None;
             }
         }
         let preview = self
+            .pane
             .hex_cache
             .as_ref()
             .map(|(_, _, _, s)| s.clone())
             .unwrap_or_default();
         let preview_name = self
+            .pane
             .selected
-            .and_then(|i| self.nodes.get(i))
+            .and_then(|i| self.pane.nodes.get(i))
             .map(|n| n.name.clone());
 
         // Context flags that drive which buttons are enabled.
-        let sel_now = self.selected;
-        let has_sel = self.selected.is_some();
+        let sel_now = self.pane.selected;
+        let has_sel = self.pane.selected.is_some();
         let sel_extractable = self
+            .pane
             .selected
-            .and_then(|i| self.nodes.get(i))
+            .and_then(|i| self.pane.nodes.get(i))
             .map(|n| n.data.is_ok())
             .unwrap_or(false);
-        let any_extractable = self.nodes.iter().any(|n| n.data.is_ok());
+        let any_extractable = self.pane.nodes.iter().any(|n| n.data.is_ok());
 
         // Local copies of edited strings (write back after the frame).
         let mut out_dir = std::mem::take(&mut self.out_dir);
         let mut new_name = std::mem::take(&mut self.new_name);
         let mut new_id = std::mem::take(&mut self.new_id);
-        let mut rename_to = std::mem::take(&mut self.rename_to);
+        let mut rename_to = std::mem::take(&mut self.pane.rename_to);
         let mut new_fmt = self.new_fmt;
         let mut add_type = self.add_type;
-        let mut renaming = self.renaming.filter(|&i| i < self.nodes.len());
-        let mut rename_focus = self.rename_focus;
-        let mut filter = std::mem::take(&mut self.filter);
+        let mut renaming = self.pane.renaming.filter(|&i| i < self.pane.nodes.len());
+        let mut rename_focus = self.pane.rename_focus;
+        let mut filter = std::mem::take(&mut self.pane.filter);
         let mut preview_mode = self.preview_mode;
         let mut basic_dialect = self.basic_dialect;
         let mut gfx_kind = self.gfx_kind;
         let mut gfx_multi = self.gfx_multi;
-        let mut gfx_cache = self.gfx_cache.take();
+        let mut gfx_cache = self.pane.gfx_cache.take();
         let mut pic_format = self.pic_format;
-        let mut pic_cache = self.pic_cache.take();
+        let mut pic_cache = self.pane.pic_cache.take();
         let mut show_preview = self.show_preview;
         let mut show_help = self.show_help;
-        let has_map = self.map_disk().is_some();
+        let has_map = self.pane.map_disk().is_some();
         let mut show_map = self.show_map && has_map;
         let mut show_copy = self.show_copy;
         let can_run = self.vice_plan().is_ok();
@@ -2004,8 +2028,8 @@ impl eframe::App for App {
                     }
                     ui.separator();
                     // Undo / Redo, with what they would undo or redo on hover.
-                    let undo_next = self.undo.last().map(|s| s.label.clone());
-                    let redo_next = self.redo.last().map(|s| s.label.clone());
+                    let undo_next = self.pane.undo.last().map(|s| s.label.clone());
+                    let redo_next = self.pane.redo.last().map(|s| s.label.clone());
                     let undo = ui
                         .add_enabled(
                             undo_next.is_some(),
@@ -2035,7 +2059,7 @@ impl eframe::App for App {
                         {
                             if let Some(s) = sel_now {
                                 renaming = Some(s);
-                                rename_to = self.nodes[s].name.clone();
+                                rename_to = self.pane.nodes[s].name.clone();
                                 rename_focus = true;
                             }
                             ui.close_menu();
@@ -2112,7 +2136,7 @@ impl eframe::App for App {
                 {
                     acts.push(Act::OpenDialog);
                 }
-                let mut opened = self.opened_path.clone().unwrap_or_default();
+                let mut opened = self.pane.opened_path.clone().unwrap_or_default();
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut opened)
                         .interactive(false)
@@ -2169,7 +2193,7 @@ impl eframe::App for App {
         // its functionality (HEX/TEXT toggle, scrolling) is unchanged.
         // Column widths for the listing, shared by the preview sizing below and
         // the list itself.
-        let cols = Cols::of(&self.nodes);
+        let cols = Cols::of(&self.pane.nodes);
 
         if show_preview {
             let pane_w = preview_width(ctx, preview_mode, &preview, preview_name.as_deref(), cols);
@@ -2273,15 +2297,19 @@ impl eframe::App for App {
                                 );
                             } else if let (PreviewMode::Gfx, Some((i, Ok(data), badge))) = (
                                 preview_mode,
-                                self.selected.and_then(|i| {
-                                    self.nodes.get(i).map(|n| (i, n.data.as_ref(), &n.badge))
+                                self.pane.selected.and_then(|i| {
+                                    self.pane
+                                        .nodes
+                                        .get(i)
+                                        .map(|n| (i, n.data.as_ref(), &n.badge))
                                 }),
                             ) {
                                 gfx_ui(ui, &mut gfx_cache, i, data, badge, gfx_kind, gfx_multi);
                             } else if let (PreviewMode::Pic, Some((i, Ok(data)))) = (
                                 preview_mode,
-                                self.selected
-                                    .and_then(|i| self.nodes.get(i).map(|n| (i, n.data.as_ref()))),
+                                self.pane.selected.and_then(|i| {
+                                    self.pane.nodes.get(i).map(|n| (i, n.data.as_ref()))
+                                }),
                             ) {
                                 pic_ui(ui, &mut pic_cache, i, data, pic_format);
                             } else if preview_mode == PreviewMode::Dis {
@@ -2309,7 +2337,7 @@ impl eframe::App for App {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            if self.nodes.is_empty() {
+            if self.pane.nodes.is_empty() {
                 // The logo, the name, and what to do first.
                 let logo = ic.logo.id();
                 let intro = |ui: &mut egui::Ui| {
@@ -2330,7 +2358,8 @@ impl eframe::App for App {
                         .color(c64::TEXT_DIM),
                     );
                 };
-                if self.recent.is_empty() || self.editable() || self.opened_path.is_some() {
+                if self.recent.is_empty() || self.pane.editable() || self.pane.opened_path.is_some()
+                {
                     ui.vertical_centered(|ui| {
                         ui.add_space((ui.available_height() * 0.5 - 70.0).max(8.0));
                         intro(ui);
@@ -2354,7 +2383,7 @@ impl eframe::App for App {
             }
             // Disk/archive header, shown as a fixed title row above the files
             // (like a 1541 directory's header line).
-            if !self.title.is_empty() {
+            if !self.pane.title.is_empty() {
                 egui::Frame::none()
                     .fill(c64::BG_PANEL)
                     .stroke(egui::Stroke::new(1.0, c64::ACCENT_DIM))
@@ -2362,7 +2391,9 @@ impl eframe::App for App {
                     .show(ui, |ui| {
                         ui.add(
                             egui::Label::new(
-                                egui::RichText::new(&self.title).color(c64::BRIGHT).strong(),
+                                egui::RichText::new(&self.pane.title)
+                                    .color(c64::BRIGHT)
+                                    .strong(),
                             )
                             .truncate(),
                         );
@@ -2370,12 +2401,12 @@ impl eframe::App for App {
                 ui.add_space(2.0);
             }
             // Filter box: live, case-insensitive name filter.
-            let order = self.sorted_order(&filter);
+            let order = self.pane.sorted_order(&filter);
             ui.horizontal(|ui| {
                 ui.label("Filter:");
                 if !filter.trim().is_empty() {
                     ui.label(
-                        egui::RichText::new(format!("({}/{})", order.len(), self.nodes.len()))
+                        egui::RichText::new(format!("({}/{})", order.len(), self.pane.nodes.len()))
                             .color(c64::TEXT_DIM),
                     );
                     if ui.button("X").on_hover_text("clear filter").clicked() {
@@ -2396,14 +2427,14 @@ impl eframe::App for App {
             // Column header (reserves the scrollbar width so it lines up with
             // the rows below), clickable to sort.
             let bar = ui.spacing().scroll.bar_width + 2.0;
-            let disk_columns = is_disk || self.read_only_disk;
-            if let Some(key) = header_row(ui, cols, disk_columns, bar, self.sort) {
+            let disk_columns = is_disk || self.pane.read_only_disk;
+            if let Some(key) = header_row(ui, cols, disk_columns, bar, self.pane.sort) {
                 acts.push(Act::Sort(key));
             }
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (pos, &i) in order.iter().enumerate() {
-                    let node = &self.nodes[i];
-                    let sel = self.selected == Some(i) || self.marked.contains(&i);
+                    let node = &self.pane.nodes[i];
+                    let sel = self.pane.selected == Some(i) || self.pane.marked.contains(&i);
                     let extractable = node.data.is_ok();
                     let editing = renaming == Some(i);
                     let edit = if editing { Some(&mut rename_to) } else { None };
@@ -2555,13 +2586,13 @@ impl eframe::App for App {
         // Disk map window: every block, coloured by owner. Clicking a file's
         // block selects it in the listing.
         if show_map {
-            if self.map_cache.is_none() {
-                self.map_cache = self.map_disk().map(Disk::block_map);
+            if self.pane.map_cache.is_none() {
+                self.pane.map_cache = self.pane.map_disk().map(Disk::block_map);
             }
             if !show_help && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 show_map = false;
             }
-            if let Some(map) = &self.map_cache {
+            if let Some(map) = &self.pane.map_cache {
                 let screen = ctx.screen_rect();
                 egui::Window::new(egui::RichText::new("DISK MAP").color(c64::ACCENT).strong())
                     .collapsible(false)
@@ -2608,7 +2639,7 @@ impl eframe::App for App {
             }
             let screen = ctx.screen_rect();
             let chosen = self.chosen_rows().len();
-            let can_receive = self.editable();
+            let can_receive = self.pane.editable();
             egui::Window::new(egui::RichText::new("COPY").color(c64::ACCENT).strong())
                 .collapsible(false)
                 .resizable(true)
@@ -2642,7 +2673,7 @@ impl eframe::App for App {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 let quitting = matches!(self.confirm, Some(Confirm::Quit));
-                let main_dirty = self.is_dirty();
+                let main_dirty = self.pane.is_dirty();
                 ui.label(match (main_dirty, quitting && other_dirty) {
                     (true, true) => {
                         "The open disk and the Copy window's disk have unsaved changes."
@@ -2668,7 +2699,7 @@ impl eframe::App for App {
                 Some(0) => match self.confirm.take() {
                     Some(Confirm::OpenFile(p)) => self.open(&p),
                     Some(Confirm::Quit) => {
-                        if let Some(ed) = &mut self.disk {
+                        if let Some(ed) = &mut self.pane.disk {
                             ed.dirty = false;
                         }
                         if let Some(o) = &mut self.other {
@@ -2680,7 +2711,7 @@ impl eframe::App for App {
                 },
                 Some(1) => self.confirm = None,
                 Some(2) => {
-                    if self.is_dirty() {
+                    if self.pane.is_dirty() {
                         self.save(false);
                     }
                     let quitting = matches!(self.confirm, Some(Confirm::Quit));
@@ -2688,7 +2719,7 @@ impl eframe::App for App {
                         self.save_other(false);
                     }
                     let other_dirty = quitting && self.other.as_ref().is_some_and(|o| o.dirty);
-                    if !self.is_dirty() && !other_dirty {
+                    if !self.pane.is_dirty() && !other_dirty {
                         match self.confirm.take() {
                             Some(Confirm::OpenFile(p)) => self.open(&p),
                             Some(Confirm::Quit) => {
@@ -2726,11 +2757,11 @@ impl eframe::App for App {
         // Keyboard shortcuts. Single-key actions are suppressed while a text
         // field has focus; Ctrl combos always apply.
         let typing = ctx.wants_keyboard_input();
-        let n = self.nodes.len();
+        let n = self.pane.nodes.len();
         let sel_name = sel_now
-            .and_then(|s| self.nodes.get(s))
+            .and_then(|s| self.pane.nodes.get(s))
             .map(|x| x.name.clone());
-        let order = self.sorted_order(&filter);
+        let order = self.pane.sorted_order(&filter);
         ctx.input(|i| {
             if i.modifiers.command && i.key_pressed(egui::Key::O) {
                 acts.push(Act::OpenDialog);
@@ -2788,22 +2819,22 @@ impl eframe::App for App {
         });
 
         // Write edited strings back, then apply actions.
-        self.filter = filter;
+        self.pane.filter = filter;
         self.out_dir = out_dir;
         self.new_name = new_name;
         self.new_id = new_id;
-        self.rename_to = rename_to;
+        self.pane.rename_to = rename_to;
         self.new_fmt = new_fmt;
         self.add_type = add_type;
-        self.renaming = renaming;
-        self.rename_focus = rename_focus;
+        self.pane.renaming = renaming;
+        self.pane.rename_focus = rename_focus;
         self.preview_mode = preview_mode;
         self.basic_dialect = basic_dialect;
         self.gfx_kind = gfx_kind;
         self.gfx_multi = gfx_multi;
-        self.gfx_cache = gfx_cache;
+        self.pane.gfx_cache = gfx_cache;
         self.pic_format = pic_format;
-        self.pic_cache = pic_cache;
+        self.pane.pic_cache = pic_cache;
         self.show_preview = show_preview;
         self.show_help = show_help;
         self.show_map = show_map;
@@ -4831,19 +4862,22 @@ mod tests {
     /// An app with a blank, saved D64 open (as if loaded from a file).
     fn app_with_disk() -> App {
         let mut app = App {
-            disk: Some(EditDisk {
-                disk: Disk::format("UNDO TEST", "UT"),
-                path: None,
-                dirty: false,
-            }),
+            pane: Pane {
+                disk: Some(EditDisk {
+                    disk: Disk::format("UNDO TEST", "UT"),
+                    path: None,
+                    dirty: false,
+                }),
+                ..Default::default()
+            },
             ..Default::default()
         };
-        app.refresh();
+        app.pane.refresh();
         app
     }
 
     fn names(app: &App) -> Vec<String> {
-        app.nodes.iter().map(|n| n.name.clone()).collect()
+        app.pane.nodes.iter().map(|n| n.name.clone()).collect()
     }
 
     #[test]
@@ -4883,28 +4917,31 @@ mod tests {
         app.add_type = 0; // PRG
         app.add("FIRST".into(), b"\x01\x08\x00\x00");
         app.add("SECOND".into(), b"\x01\x1c\x00\x00");
-        let i = |app: &App, n: &str| app.nodes.iter().position(|x| x.name == n);
-        app.selected = i(&app, "NOTES");
+        let i = |app: &App, n: &str| app.pane.nodes.iter().position(|x| x.name == n);
+        app.pane.selected = i(&app, "NOTES");
         let p = app.vice_plan().unwrap();
         assert_eq!(p.program.as_deref(), Some("first"));
         assert_eq!((p.file_name.as_str(), p.c128), ("disk.d64", false));
-        app.selected = i(&app, "SECOND");
+        app.pane.selected = i(&app, "SECOND");
         let p = app.vice_plan().unwrap();
         assert_eq!((p.program.as_deref(), p.c128), (Some("second"), true));
 
         // From an archive listing, the selected program runs on its own.
         let mut list = App {
-            nodes: vec![Node {
-                name: "DEMO/1".into(),
-                badge: "prg".into(),
-                detail: String::new(),
-                blocks: 0,
-                data: Ok(vec![0x01, 0x08, 0x00]),
-            }],
+            pane: Pane {
+                nodes: vec![Node {
+                    name: "DEMO/1".into(),
+                    badge: "prg".into(),
+                    detail: String::new(),
+                    blocks: 0,
+                    data: Ok(vec![0x01, 0x08, 0x00]),
+                }],
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(list.vice_plan().is_err());
-        list.selected = Some(0);
+        list.pane.selected = Some(0);
         let p = list.vice_plan().unwrap();
         assert_eq!((p.file_name.as_str(), p.program), ("DEMO_1.prg", None));
     }
@@ -4929,10 +4966,10 @@ mod tests {
         let mut app = app_with_disk();
         app.add("ONE".into(), b"\x01\x08");
         app.add("TWO".into(), b"\x01\x08");
-        app.selected = Some(0);
-        app.rename_to = "FIRST".into();
+        app.pane.selected = Some(0);
+        app.pane.rename_to = "FIRST".into();
         app.rename();
-        app.selected = Some(1);
+        app.pane.selected = Some(1);
         app.delete();
         assert_eq!(names(&app), ["FIRST"]);
 
@@ -4944,14 +4981,14 @@ mod tests {
         app.undo(); // add TWO
         app.undo(); // add ONE
         assert!(names(&app).is_empty());
-        assert!(!app.is_dirty(), "back to the state that was loaded");
+        assert!(!app.pane.is_dirty(), "back to the state that was loaded");
         app.undo();
         assert_eq!(app.status, "Nothing to undo");
 
         app.redo();
         app.redo();
         assert_eq!(names(&app), ["ONE", "TWO"]);
-        assert!(app.is_dirty());
+        assert!(app.pane.is_dirty());
         // A new edit drops the redo history.
         app.add("NEW".into(), b"\x01\x08");
         app.redo();
@@ -4976,7 +5013,7 @@ mod tests {
         app.add("TWO".into(), &[7u8; 600]);
         app.add("THREE".into(), b"\x01\x08");
         // Nothing to copy to yet.
-        app.marked.extend([0, 2]);
+        app.pane.marked.extend([0, 2]);
         app.apply(Act::CopyToOther);
         assert!(app.other.is_none());
 
@@ -4986,8 +5023,8 @@ mod tests {
         assert_eq!(other_names(&app), ["ONE", "THREE"]);
         assert_eq!(app.status, "Copied 2 files to the other disk");
         // Copying one again is refused, and nothing changes.
-        app.marked.clear();
-        app.selected = Some(0);
+        app.pane.marked.clear();
+        app.pane.selected = Some(0);
         app.apply(Act::CopyToOther);
         assert_eq!(
             app.status,
@@ -4997,7 +5034,7 @@ mod tests {
 
         // Back the other way: delete ONE here, copy it back from the other
         // disk; the main Undo takes it away again.
-        app.selected = Some(0);
+        app.pane.selected = Some(0);
         app.delete();
         assert_eq!(names(&app), ["TWO", "THREE"]);
         app.apply(Act::OtherMark(0, false));
@@ -5008,7 +5045,7 @@ mod tests {
             "Copied \"ONE\" to the open disk; skipped \"THREE\": a file with that name already exists"
         );
         assert_eq!(names(&app), ["ONE", "TWO", "THREE"]);
-        assert_eq!(app.nodes[0].data.as_deref().unwrap(), b"\x01\x08\x60");
+        assert_eq!(app.pane.nodes[0].data.as_deref().unwrap(), b"\x01\x08\x60");
         app.undo();
         assert_eq!(names(&app), ["TWO", "THREE"]);
 
@@ -5022,26 +5059,29 @@ mod tests {
     #[test]
     fn copy_window_copies_archive_members_and_into_new_archives() {
         let mut app = App {
-            nodes: vec![
-                Node {
-                    name: "DOC".into(),
-                    badge: "seq".into(),
-                    detail: String::new(),
-                    blocks: 0,
-                    data: Ok(b"TEXT".to_vec()),
-                },
-                Node {
-                    name: "DATA".into(),
-                    badge: "rel".into(),
-                    detail: String::new(),
-                    blocks: 0,
-                    data: Ok(vec![1; 10]),
-                },
-            ],
+            pane: Pane {
+                nodes: vec![
+                    Node {
+                        name: "DOC".into(),
+                        badge: "seq".into(),
+                        detail: String::new(),
+                        blocks: 0,
+                        data: Ok(b"TEXT".to_vec()),
+                    },
+                    Node {
+                        name: "DATA".into(),
+                        badge: "rel".into(),
+                        detail: String::new(),
+                        blocks: 0,
+                        data: Ok(vec![1; 10]),
+                    },
+                ],
+                ..Default::default()
+            },
             ..Default::default()
         };
         app.apply(Act::OtherNew(0));
-        app.marked.extend([0, 1]);
+        app.pane.marked.extend([0, 1]);
         app.apply(Act::CopyToOther);
         assert_eq!(other_names(&app), ["DOC"]);
         assert!(app
@@ -5062,19 +5102,22 @@ mod tests {
         app.apply(Act::NewArchive);
         app.apply(Act::CopyFromOther);
         assert_eq!(names(&app), ["DOC"]);
-        assert_eq!(app.archive.as_ref().unwrap()[0].file_type, FileType::Seq);
+        assert_eq!(
+            app.pane.archive.as_ref().unwrap()[0].file_type,
+            FileType::Seq
+        );
     }
 
     #[test]
     fn failed_edits_are_not_recorded_and_history_is_capped() {
         let mut app = app_with_disk();
-        app.selected = None;
+        app.pane.selected = None;
         app.delete(); // nothing selected: no change
-        assert!(app.undo.is_empty());
+        assert!(app.pane.undo.is_empty());
         for i in 0..UNDO_MAX + 5 {
             app.add(format!("F{i}"), b"\x01\x08");
         }
-        assert_eq!(app.undo.len(), UNDO_MAX);
+        assert_eq!(app.pane.undo.len(), UNDO_MAX);
     }
 
     #[test]
@@ -5083,14 +5126,17 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("u.d64");
         let mut app = app_with_disk();
-        app.disk.as_mut().unwrap().path = Some(path.clone());
+        app.pane.disk.as_mut().unwrap().path = Some(path.clone());
         app.add("ONE".into(), b"\x01\x08");
         app.save(false);
-        assert!(!app.is_dirty());
+        assert!(!app.pane.is_dirty());
         app.undo();
-        assert!(app.is_dirty(), "the disk no longer matches the saved file");
+        assert!(
+            app.pane.is_dirty(),
+            "the disk no longer matches the saved file"
+        );
         app.redo();
-        assert!(!app.is_dirty(), "back to exactly what was saved");
+        assert!(!app.pane.is_dirty(), "back to exactly what was saved");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -5103,7 +5149,7 @@ mod tests {
         app.undo();
         assert_eq!(names(&app), ["A"]);
         app.apply(Act::NewArchive);
-        assert!(app.undo.is_empty() && app.redo.is_empty());
+        assert!(app.pane.undo.is_empty() && app.pane.redo.is_empty());
     }
 
     #[test]
@@ -5153,15 +5199,15 @@ mod tests {
     #[test]
     fn disk_map_is_rebuilt_after_edits_and_covers_read_only_disks() {
         let mut app = app_with_disk();
-        app.map_cache = app.map_disk().map(Disk::block_map);
-        assert_eq!(app.map_cache.as_ref().unwrap().files.len(), 0);
+        app.pane.map_cache = app.pane.map_disk().map(Disk::block_map);
+        assert_eq!(app.pane.map_cache.as_ref().unwrap().files.len(), 0);
         app.add("NEW".into(), &[1u8; 600]);
-        assert!(app.map_cache.is_none(), "an edit drops the stale map");
-        let map = app.map_disk().unwrap().block_map();
+        assert!(app.pane.map_cache.is_none(), "an edit drops the stale map");
+        let map = app.pane.map_disk().unwrap().block_map();
         assert_eq!(map.blocks_of(0).len(), 3);
-        app.map_cache = Some(map);
+        app.pane.map_cache = Some(map);
         app.undo();
-        assert!(app.map_cache.is_none(), "undo drops it too");
+        assert!(app.pane.map_cache.is_none(), "undo drops it too");
 
         // A Zip-Code set opens read-only but still has a map.
         let dir = scratch("map");
@@ -5173,16 +5219,17 @@ mod tests {
             std::fs::write(dir.join(format!("{}!GAME", i + 1)), part).unwrap();
         }
         app.open(&dir.join("1!GAME"));
-        assert!(app.disk.is_none() && app.read_only_disk);
+        assert!(app.pane.disk.is_none() && app.pane.read_only_disk);
         let map = app
+            .pane
             .map_disk()
             .expect("read-only disk is mapped")
             .block_map();
         assert_eq!(map.files[0].name, "HELLO");
         // Opening a plain archive leaves nothing to map.
-        app.archive = Some(Vec::new());
+        app.pane.archive = Some(Vec::new());
         app.open(&dir.join("missing.d64"));
-        assert!(app.map_disk().is_none());
+        assert!(app.pane.map_disk().is_none());
     }
 
     #[test]
