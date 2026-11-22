@@ -550,8 +550,15 @@ struct Pane {
 
 #[derive(Default)]
 struct App {
-    /// The open disk or archive.
+    /// The open disk or archive: in dual-pane view, the focused pane, the one
+    /// the menus and keys act on.
     pane: Pane,
+    /// The other pane in dual-pane view. Focusing it swaps it with `pane`.
+    back: Pane,
+    /// Whether two panes show side by side.
+    dual: bool,
+    /// Whether the focused pane is the right-hand one.
+    focus_right: bool,
     // new-image controls
     new_fmt: usize, // 0=d64, 1=d71, 2=d81
     new_name: String,
@@ -652,6 +659,12 @@ enum Act {
     CopyFromOther,
     /// Start the open disk, or the selected program, in VICE.
     RunVice,
+    /// Dual-pane view: focus the other pane.
+    FocusOther,
+    /// Start renaming this row in place.
+    StartRename(usize),
+    /// Dual-pane view: copy the chosen files into the other pane.
+    CopyToPane,
 }
 
 impl Pane {
@@ -788,7 +801,9 @@ impl Pane {
 }
 
 impl App {
-    fn new(initial: Option<String>, storage: Option<&dyn eframe::Storage>) -> Self {
+    /// `initial` is up to two files from the command line; two open side by
+    /// side in dual-pane view.
+    fn new(initial: &[String], storage: Option<&dyn eframe::Storage>) -> Self {
         let mut app = App {
             new_name: "blank".into(),
             new_id: "01".into(),
@@ -800,6 +815,9 @@ impl App {
             if let Some(dir) = eframe::get_value::<String>(s, "out_dir") {
                 app.out_dir = dir;
             }
+            if let Some(dual) = eframe::get_value::<bool>(s, "dual_pane") {
+                app.dual = dual;
+            }
             if let Some(dir) = eframe::get_value::<String>(s, "vice_dir") {
                 app.vice_dir = dir;
             }
@@ -808,8 +826,14 @@ impl App {
                 app.recent.truncate(RECENT_MAX);
             }
         }
-        if let Some(p) = initial {
-            app.open(Path::new(&p));
+        if let Some(p) = initial.first() {
+            app.open(Path::new(p));
+        }
+        if let Some(p) = initial.get(1) {
+            app.dual = true;
+            app.apply(Act::FocusOther);
+            app.open(Path::new(p));
+            app.apply(Act::FocusOther);
         }
         app
     }
@@ -943,6 +967,22 @@ impl App {
                     self.open(&p);
                 }
             }
+            Act::FocusOther => {
+                if self.dual {
+                    std::mem::swap(&mut self.pane, &mut self.back);
+                    self.back.renaming = None;
+                    self.focus_right = !self.focus_right;
+                    self.show_validation = false;
+                }
+            }
+            Act::StartRename(i) => {
+                if let Some(node) = self.pane.nodes.get(i) {
+                    self.pane.rename_to = node.name.clone();
+                    self.pane.renaming = Some(i);
+                    self.pane.rename_focus = true;
+                }
+            }
+            Act::CopyToPane => self.copy_to_pane(),
             Act::Undo => self.undo(),
             Act::Redo => self.redo(),
             Act::ClearRecent => {
@@ -1358,6 +1398,67 @@ impl App {
         self.status = status;
     }
 
+    /// Dual-pane view: copy the focused pane's chosen files into the other
+    /// pane's disk or new archive, as one step of that pane's Undo.
+    fn copy_to_pane(&mut self) {
+        if !self.dual {
+            return;
+        }
+        let rows = self.chosen_rows();
+        if rows.is_empty() {
+            self.status = "Select files to copy to the other pane".into();
+            return;
+        }
+        if !self.back.editable() {
+            self.status =
+                "Open a disk or start a new archive in the other pane to copy into".into();
+            return;
+        }
+        let before = self.back.snapshot();
+        // From a disk, copy directory entries (exact names, lock flags);
+        // from an archive, the extracted bytes under the listed name.
+        let src = &self.pane;
+        let src_disk = src.map_disk();
+        let entries = src_disk.map(|d| d.directory().unwrap_or_default());
+        let mut done = Vec::new();
+        let mut failed = Vec::new();
+        for i in rows {
+            let node = &src.nodes[i];
+            let r = if let Some(ed) = &mut self.back.disk {
+                match (src_disk, entries.as_ref().and_then(|e| e.get(i))) {
+                    (Some(d), Some(entry)) => {
+                        ed.disk.copy_file_from(d, entry).map_err(|e| e.to_string())
+                    }
+                    _ => copy_bytes(&mut ed.disk, node),
+                }
+            } else if let Some(stage) = &mut self.back.archive {
+                node_file(node).map(|f| stage.push(f))
+            } else {
+                Err("nothing to copy into".to_string())
+            };
+            match r {
+                Ok(()) => done.push(node.name.clone()),
+                Err(e) => failed.push(format!("\"{}\": {e}", node.name)),
+            }
+        }
+        let status = copy_report(&done, &failed, "the other pane");
+        if !done.is_empty() {
+            let dest = &mut self.back;
+            if let Some(ed) = &mut dest.disk {
+                ed.dirty = true;
+            }
+            dest.record(
+                before,
+                &format!("Copied {} file(s) from the other pane", done.len()),
+            );
+            dest.hex_cache = None;
+            dest.gfx_cache = None;
+            dest.pic_cache = None;
+            dest.refresh();
+        }
+        self.status = status;
+    }
+
     fn save_archive(&mut self) {
         let Some(stage) = &self.pane.archive else {
             return;
@@ -1742,6 +1843,7 @@ impl eframe::App for App {
     /// Persist app state (window geometry is saved by eframe itself).
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "out_dir", &self.out_dir);
+        eframe::set_value(storage, "dual_pane", &self.dual);
         eframe::set_value(storage, "recent_files", &self.recent);
         eframe::set_value(storage, "vice_dir", &self.vice_dir);
     }
@@ -1762,10 +1864,16 @@ impl eframe::App for App {
             self.icons = Some(Icons::load(ctx));
         }
         let ic = self.icons.clone().unwrap();
+        // Tab switches panes when no text field has the keyboard. Checked
+        // before any widget runs, while focus is still last frame's.
+        let tab_switch = self.dual
+            && !ctx.wants_keyboard_input()
+            && ctx.input(|i| i.modifiers.is_none() && i.key_pressed(egui::Key::Tab));
 
         // Guard the window close against unsaved disk edits.
         let other_dirty = self.other.as_ref().is_some_and(|o| o.dirty);
-        if ctx.input(|i| i.viewport().close_requested()) && (self.pane.is_dirty() || other_dirty) {
+        let any_dirty = self.pane.is_dirty() || self.back.is_dirty() || other_dirty;
+        if ctx.input(|i| i.viewport().close_requested()) && any_dirty {
             if self.confirm.is_none() {
                 self.confirm = Some(Confirm::Quit);
             }
@@ -1855,6 +1963,8 @@ impl eframe::App for App {
         let mut show_map = self.show_map && has_map;
         let mut show_copy = self.show_copy;
         let can_run = self.vice_plan().is_ok();
+        let mut dual = self.dual;
+        let back_editable = self.back.editable();
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(2.0);
@@ -2011,6 +2121,22 @@ impl eframe::App for App {
                         show_copy = !show_copy;
                         ui.close_menu();
                     }
+                    if dual
+                        && ui
+                            .add_enabled(
+                                has_sel && back_editable,
+                                icon_button(&ic.blank, "Copy to Other Pane")
+                                    .shortcut_text(key_hint("F5")),
+                            )
+                            .on_hover_text("copy the selected files into the other pane")
+                            .on_disabled_hover_text(
+                                "select files, with a disk or new archive open in the other pane",
+                            )
+                            .clicked()
+                    {
+                        acts.push(Act::CopyToPane);
+                        ui.close_menu();
+                    }
                     if ui
                         .add_enabled(
                             can_run,
@@ -2115,6 +2241,25 @@ impl eframe::App for App {
                     .clicked()
                 {
                     show_preview = !show_preview;
+                    // The preview takes the other pane's place; Dual brings
+                    // that pane back.
+                    if show_preview {
+                        dual = false;
+                    }
+                }
+                ui.separator();
+                if ui
+                    .selectable_label(dual, "Dual")
+                    .on_hover_text(
+                        "show two disks side by side; Tab switches between them \
+                         (hides the preview pane)",
+                    )
+                    .clicked()
+                {
+                    dual = !dual;
+                    if dual {
+                        show_preview = false;
+                    }
                 }
                 ui.separator();
                 if ui.button("Help").clicked() {
@@ -2336,175 +2481,76 @@ impl eframe::App for App {
                 });
         }
 
+        let mut back_filter = std::mem::take(&mut self.back.filter);
+        let mut back_rect = None;
         egui::CentralPanel::default().show(ctx, |ui| {
-            if self.pane.nodes.is_empty() {
-                // The logo, the name, and what to do first.
-                let logo = ic.logo.id();
-                let intro = |ui: &mut egui::Ui| {
-                    ui.add(egui::Image::new((logo, egui::vec2(48.0, 48.0))));
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new("SECTOR64")
-                            .heading()
-                            .color(c64::ACCENT)
-                            .strong(),
-                    );
-                    ui.add_space(12.0);
-                    ui.label(
-                        egui::RichText::new(
-                            "Open a disk or archive, or make a new image,\n\
-                             then drag files in to add them.",
-                        )
-                        .color(c64::TEXT_DIM),
-                    );
-                };
-                if self.recent.is_empty() || self.pane.editable() || self.pane.opened_path.is_some()
-                {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space((ui.available_height() * 0.5 - 70.0).max(8.0));
-                        intro(ui);
-                    });
-                } else {
-                    // Start screen: the intro, then the recent files as links.
-                    ui.vertical_centered(|ui| {
-                        ui.add_space((ui.available_height() * 0.25).max(8.0));
-                        intro(ui);
-                        ui.add_space(16.0);
-                        ui.label(egui::RichText::new("RECENT FILES").color(c64::ACCENT));
-                        ui.add_space(4.0);
-                        for (label, path) in recent_labels(&self.recent) {
-                            if ui.link(label).on_hover_text(&path).clicked() {
-                                acts.push(Act::OpenRecent(PathBuf::from(path)));
-                            }
-                        }
-                    });
-                }
+            let mut focused = |ui: &mut egui::Ui, acts: &mut Vec<Act>| {
+                pane_ui(
+                    ui,
+                    &ic,
+                    &self.pane,
+                    &mut filter,
+                    Some((&mut renaming, &mut rename_to, &mut rename_focus)),
+                    if self.focus_right { "right" } else { "left" },
+                    &self.recent,
+                    self.dual && back_editable,
+                    acts,
+                )
+            };
+            if !self.dual {
+                focused(ui, &mut acts);
                 return;
             }
-            // Disk/archive header, shown as a fixed title row above the files
-            // (like a 1541 directory's header line).
-            if !self.pane.title.is_empty() {
-                egui::Frame::none()
-                    .fill(c64::BG_PANEL)
-                    .stroke(egui::Stroke::new(1.0, c64::ACCENT_DIM))
-                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(&self.pane.title)
-                                    .color(c64::BRIGHT)
-                                    .strong(),
-                            )
-                            .truncate(),
-                        );
-                    });
-                ui.add_space(2.0);
-            }
-            // Filter box: live, case-insensitive name filter.
-            let order = self.pane.sorted_order(&filter);
-            ui.horizontal(|ui| {
-                ui.label("Filter:");
-                if !filter.trim().is_empty() {
-                    ui.label(
-                        egui::RichText::new(format!("({}/{})", order.len(), self.pane.nodes.len()))
-                            .color(c64::TEXT_DIM),
-                    );
-                    if ui.button("X").on_hover_text("clear filter").clicked() {
-                        filter.clear();
-                    }
-                }
-                ui.add(
-                    egui::TextEdit::singleline(&mut filter)
-                        // Stable id so focus survives the count/clear widgets
-                        // appearing before the field once it has text.
-                        .id(egui::Id::new("filter_box"))
-                        .hint_text("type to filter by name")
-                        .desired_width(f32::INFINITY),
-                );
-            });
-            ui.add_space(2.0);
-            // Auto-pad columns to the widest row so they line up.
-            // Column header (reserves the scrollbar width so it lines up with
-            // the rows below), clickable to sort.
-            let bar = ui.spacing().scroll.bar_width + 2.0;
-            let disk_columns = is_disk || self.pane.read_only_disk;
-            if let Some(key) = header_row(ui, cols, disk_columns, bar, self.pane.sort) {
-                acts.push(Act::Sort(key));
-            }
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for (pos, &i) in order.iter().enumerate() {
-                    let node = &self.pane.nodes[i];
-                    let sel = self.pane.selected == Some(i) || self.pane.marked.contains(&i);
-                    let extractable = node.data.is_ok();
-                    let editing = renaming == Some(i);
-                    let edit = if editing { Some(&mut rename_to) } else { None };
-                    let (resp, result) = file_row(ui, node, sel, pos, cols, edit, editing && rename_focus);
-                    if editing {
-                        rename_focus = false;
-                        match result {
-                            RenameEdit::Commit => {
-                                acts.push(Act::Select(i));
-                                acts.push(Act::Rename);
-                                renaming = None;
+            // Two panes side by side, each framed; the focused one's
+            // frame is bright.
+            let mut focused = Some(focused);
+            ui.columns(2, |cols| {
+                for (k, col) in cols.iter_mut().enumerate() {
+                    let is_focused = (k == 1) == self.focus_right;
+                    let stroke = if is_focused { c64::ACCENT } else { c64::WELL };
+                    let r = egui::Frame::none()
+                        .stroke(egui::Stroke::new(2.0, stroke))
+                        .inner_margin(egui::Margin::same(4.0))
+                        .show(col, |ui| {
+                            ui.set_min_size(ui.available_size());
+                            if is_focused {
+                                if let Some(mut f) = focused.take() {
+                                    f(ui, &mut acts);
+                                }
+                            } else {
+                                let side = if k == 1 { "right" } else { "left" };
+                                pane_ui(
+                                    ui,
+                                    &ic,
+                                    &self.back,
+                                    &mut back_filter,
+                                    None,
+                                    side,
+                                    &self.recent,
+                                    false,
+                                    &mut acts,
+                                );
                             }
-                            RenameEdit::Cancel => renaming = None,
-                            RenameEdit::None => {}
-                        }
-                        continue; // a row being renamed takes no other interaction
+                        });
+                    if !is_focused {
+                        back_rect = Some((r.response.rect, r.response.layer_id));
                     }
-                    if resp.clicked() {
-                        let mods = ui.input(|i| i.modifiers);
-                        if mods.command {
-                            acts.push(Act::ToggleMark(i));
-                        } else if mods.shift {
-                            acts.push(Act::MarkRange(i));
-                        } else {
-                            acts.push(Act::Select(i));
-                        }
-                    }
-                    if resp.double_clicked() {
-                        acts.push(Act::Select(i));
-                        acts.push(Act::ExtractSelected);
-                    }
-                    // Right-click actions for this file.
-                    resp.context_menu(|ui| {
-                        // Target this row, but don't disturb an existing
-                        // multi-selection that already includes it.
-                        if !sel {
-                            acts.push(Act::Select(i));
-                        }
-                        ui.set_min_width(150.0);
-                        if ui.add_enabled(extractable, icon_button(&ic.down, "Extract")).clicked() {
-                            acts.push(Act::ExtractSelected);
-                            ui.close_menu();
-                        }
-                        if editable {
-                            ui.separator();
-                            if ui
-                                .add(
-                                    icon_button(&ic.pencil, "Rename").shortcut_text(key_hint("F2")),
-                                )
-                                .clicked()
-                            {
-                                renaming = Some(i);
-                                rename_to = node.name.clone();
-                                rename_focus = true;
-                                ui.close_menu();
-                            }
-                            let del = if is_archive { "Remove" } else { "Delete" };
-                            if ui
-                                .add(icon_button(&ic.trash, del).shortcut_text(key_hint("Del")))
-                                .clicked()
-                            {
-                                acts.push(Act::Select(i)); // delete this row specifically
-                                acts.push(Act::Delete);
-                                ui.close_menu();
-                            }
-                        }
-                    });
                 }
             });
         });
+        // A press anywhere in the other pane focuses it first, so the click,
+        // menu or typing that follows acts on it.
+        if let Some((rect, layer)) = back_rect {
+            let pressed_in = ctx.input(|i| {
+                i.pointer.any_pressed()
+                    && i.pointer.interact_pos().is_some_and(|p| rect.contains(p))
+            }) && ctx
+                .input(|i| i.pointer.interact_pos())
+                .is_some_and(|p| ctx.layer_id_at(p) == Some(layer));
+            if pressed_in {
+                acts.insert(0, Act::FocusOther);
+            }
+        }
 
         // Validation result popover — a centred window that dismisses when
         // clicked anywhere on it.
@@ -2673,17 +2719,26 @@ impl eframe::App for App {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 let quitting = matches!(self.confirm, Some(Confirm::Quit));
-                let main_dirty = self.pane.is_dirty();
-                ui.label(match (main_dirty, quitting && other_dirty) {
-                    (true, true) => {
-                        "The open disk and the Copy window's disk have unsaved changes."
-                    }
-                    (false, true) => "The Copy window's disk has unsaved changes.",
-                    _ => "The open disk has unsaved changes.",
-                });
+                let back_dirty = quitting && self.back.is_dirty();
+                let mut which = Vec::new();
+                if self.pane.is_dirty() {
+                    which.push(if self.dual {
+                        "this pane's disk"
+                    } else {
+                        "the open disk"
+                    });
+                }
+                if back_dirty {
+                    which.push("the other pane's disk");
+                }
+                if quitting && other_dirty {
+                    which.push("the Copy window's disk");
+                }
+                ui.label(unsaved_message(&which));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if (is_disk || quitting && other_dirty) && ui.button("💾 Save first").clicked()
+                    if (is_disk || back_dirty || quitting && other_dirty)
+                        && ui.button("💾 Save first").clicked()
                     {
                         action = Some(2);
                     }
@@ -2699,8 +2754,10 @@ impl eframe::App for App {
                 Some(0) => match self.confirm.take() {
                     Some(Confirm::OpenFile(p)) => self.open(&p),
                     Some(Confirm::Quit) => {
-                        if let Some(ed) = &mut self.pane.disk {
-                            ed.dirty = false;
+                        for pane in [&mut self.pane, &mut self.back] {
+                            if let Some(ed) = &mut pane.disk {
+                                ed.dirty = false;
+                            }
                         }
                         if let Some(o) = &mut self.other {
                             o.dirty = false;
@@ -2715,10 +2772,17 @@ impl eframe::App for App {
                         self.save(false);
                     }
                     let quitting = matches!(self.confirm, Some(Confirm::Quit));
+                    if quitting && self.back.is_dirty() {
+                        // Save it as the focused pane, then swap back.
+                        std::mem::swap(&mut self.pane, &mut self.back);
+                        self.save(false);
+                        std::mem::swap(&mut self.pane, &mut self.back);
+                    }
                     if quitting && self.other.as_ref().is_some_and(|o| o.dirty) {
                         self.save_other(false);
                     }
-                    let other_dirty = quitting && self.other.as_ref().is_some_and(|o| o.dirty);
+                    let other_dirty = quitting
+                        && (self.back.is_dirty() || self.other.as_ref().is_some_and(|o| o.dirty));
                     if !self.pane.is_dirty() && !other_dirty {
                         match self.confirm.take() {
                             Some(Confirm::OpenFile(p)) => self.open(&p),
@@ -2743,7 +2807,18 @@ impl eframe::App for App {
                 .filter_map(|f| f.path.clone())
                 .collect()
         });
-        if editable {
+        // In dual-pane view they go to the pane they were dropped on.
+        let mut drop_editable = editable;
+        if let (false, Some((rect, _))) = (dropped.is_empty(), back_rect) {
+            if ctx
+                .input(|i| i.pointer.hover_pos())
+                .is_some_and(|p| rect.contains(p))
+            {
+                acts.push(Act::FocusOther);
+                drop_editable = back_editable;
+            }
+        }
+        if drop_editable {
             for p in dropped {
                 match std::fs::read(&p) {
                     Ok(bytes) => acts.push(Act::AddBytes(cbm_name_from(&p), bytes)),
@@ -2762,6 +2837,16 @@ impl eframe::App for App {
             .and_then(|s| self.pane.nodes.get(s))
             .map(|x| x.name.clone());
         let order = self.pane.sorted_order(&filter);
+        if tab_switch {
+            acts.push(Act::FocusOther);
+            // Tab also moves egui's keyboard focus to the next widget; undo
+            // that so the keys keep working on the list.
+            ctx.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
+        }
         ctx.input(|i| {
             if i.modifiers.command && i.key_pressed(egui::Key::O) {
                 acts.push(Act::OpenDialog);
@@ -2780,6 +2865,9 @@ impl eframe::App for App {
             }
             if i.modifiers.command && i.key_pressed(egui::Key::R) && can_run {
                 acts.push(Act::RunVice);
+            }
+            if self.dual && i.key_pressed(egui::Key::F5) {
+                acts.push(Act::CopyToPane);
             }
             if !typing {
                 // Undo / redo (text fields keep Ctrl+Z for their own text).
@@ -2820,6 +2908,7 @@ impl eframe::App for App {
 
         // Write edited strings back, then apply actions.
         self.pane.filter = filter;
+        self.back.filter = back_filter;
         self.out_dir = out_dir;
         self.new_name = new_name;
         self.new_id = new_id;
@@ -2839,6 +2928,7 @@ impl eframe::App for App {
         self.show_help = show_help;
         self.show_map = show_map;
         self.show_copy = show_copy;
+        self.dual = dual;
         for act in acts {
             self.apply(act);
         }
@@ -2980,6 +3070,217 @@ enum RenameEdit {
     Cancel,
 }
 
+/// The inline-rename state a pane's list edits: the row being renamed, the
+/// text typed so far, and whether the field should take focus this frame.
+type RenameState<'a> = (&'a mut Option<usize>, &'a mut String, &'a mut bool);
+
+/// Draw one pane: the welcome screen when it's empty, otherwise the header,
+/// the filter box and the file list. `side` keeps each pane's widget ids
+/// apart; `rename` is given only to the focused pane, the only one that
+/// renames in place. Clicks and menu picks become `acts`.
+#[allow(clippy::too_many_arguments)]
+fn pane_ui(
+    ui: &mut egui::Ui,
+    ic: &Icons,
+    pane: &Pane,
+    filter: &mut String,
+    mut rename: Option<RenameState>,
+    side: &str,
+    recent: &[String],
+    can_copy_across: bool,
+    acts: &mut Vec<Act>,
+) {
+    let editable = pane.editable();
+    let is_disk = pane.disk.is_some();
+    let is_archive = pane.archive.is_some();
+    let cols = Cols::of(&pane.nodes);
+    // Only the focused pane can rename in place.
+    let active = rename.is_some();
+    if pane.nodes.is_empty() {
+        // The logo, the name, and what to do first.
+        let logo = ic.logo.id();
+        let intro = |ui: &mut egui::Ui| {
+            ui.add(egui::Image::new((logo, egui::vec2(48.0, 48.0))));
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new("SECTOR64")
+                    .heading()
+                    .color(c64::ACCENT)
+                    .strong(),
+            );
+            ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new(
+                    "Open a disk or archive, or make a new image,\n\
+                     then drag files in to add them.",
+                )
+                .color(c64::TEXT_DIM),
+            );
+        };
+        if recent.is_empty() || pane.editable() || pane.opened_path.is_some() {
+            ui.vertical_centered(|ui| {
+                ui.add_space((ui.available_height() * 0.5 - 70.0).max(8.0));
+                intro(ui);
+            });
+        } else {
+            // Start screen: the intro, then the recent files as links.
+            ui.vertical_centered(|ui| {
+                ui.add_space((ui.available_height() * 0.25).max(8.0));
+                intro(ui);
+                ui.add_space(16.0);
+                ui.label(egui::RichText::new("RECENT FILES").color(c64::ACCENT));
+                ui.add_space(4.0);
+                for (label, path) in recent_labels(recent) {
+                    if ui.link(label).on_hover_text(&path).clicked() {
+                        acts.push(Act::OpenRecent(PathBuf::from(path)));
+                    }
+                }
+            });
+        }
+        return;
+    }
+    // Disk/archive header, shown as a fixed title row above the files
+    // (like a 1541 directory's header line).
+    if !pane.title.is_empty() {
+        egui::Frame::none()
+            .fill(c64::BG_PANEL)
+            .stroke(egui::Stroke::new(1.0, c64::ACCENT_DIM))
+            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+            .show(ui, |ui| {
+                ui.add(
+                    egui::Label::new(egui::RichText::new(&pane.title).color(c64::BRIGHT).strong())
+                        .truncate(),
+                );
+            });
+        ui.add_space(2.0);
+    }
+    // Filter box: live, case-insensitive name filter.
+    let order = pane.sorted_order(filter);
+    ui.horizontal(|ui| {
+        ui.label("Filter:");
+        if !filter.trim().is_empty() {
+            ui.label(
+                egui::RichText::new(format!("({}/{})", order.len(), pane.nodes.len()))
+                    .color(c64::TEXT_DIM),
+            );
+            if ui.button("X").on_hover_text("clear filter").clicked() {
+                filter.clear();
+            }
+        }
+        ui.add(
+            egui::TextEdit::singleline(filter)
+                // Stable id so focus survives the count/clear widgets
+                // appearing before the field once it has text.
+                .id(egui::Id::new(("filter_box", side)))
+                .hint_text("type to filter by name")
+                .desired_width(f32::INFINITY),
+        );
+    });
+    ui.add_space(2.0);
+    // Auto-pad columns to the widest row so they line up.
+    // Column header (reserves the scrollbar width so it lines up with
+    // the rows below), clickable to sort.
+    let bar = ui.spacing().scroll.bar_width + 2.0;
+    let disk_columns = is_disk || pane.read_only_disk;
+    if let Some(key) = header_row(ui, cols, disk_columns, bar, pane.sort) {
+        acts.push(Act::Sort(key));
+    }
+    egui::ScrollArea::vertical()
+        .id_salt(("list", side))
+        .show(ui, |ui| {
+            for (pos, &i) in order.iter().enumerate() {
+                let node = &pane.nodes[i];
+                let sel = pane.selected == Some(i) || pane.marked.contains(&i);
+                let extractable = node.data.is_ok();
+                let editing = rename.as_ref().is_some_and(|r| *r.0 == Some(i));
+                let (edit, focus) = match (&mut rename, editing) {
+                    (Some((_, text, focus)), true) => (Some(&mut **text), **focus),
+                    _ => (None, false),
+                };
+                let row_sel = match (sel, active) {
+                    (false, _) => RowSel::No,
+                    (true, true) => RowSel::Yes,
+                    (true, false) => RowSel::Unfocused,
+                };
+                let (resp, result) = file_row(ui, node, row_sel, pos, cols, edit, focus);
+                if let (Some((renaming, _, focus)), true) = (&mut rename, editing) {
+                    **focus = false;
+                    match result {
+                        RenameEdit::Commit => {
+                            acts.push(Act::Select(i));
+                            acts.push(Act::Rename);
+                            **renaming = None;
+                        }
+                        RenameEdit::Cancel => **renaming = None,
+                        RenameEdit::None => {}
+                    }
+                    continue; // a row being renamed takes no other interaction
+                }
+                if resp.clicked() {
+                    let mods = ui.input(|i| i.modifiers);
+                    if mods.command {
+                        acts.push(Act::ToggleMark(i));
+                    } else if mods.shift {
+                        acts.push(Act::MarkRange(i));
+                    } else {
+                        acts.push(Act::Select(i));
+                    }
+                }
+                if resp.double_clicked() {
+                    acts.push(Act::Select(i));
+                    acts.push(Act::ExtractSelected);
+                }
+                // Right-click actions for this file.
+                resp.context_menu(|ui| {
+                    // Target this row, but don't disturb an existing
+                    // multi-selection that already includes it.
+                    if !sel {
+                        acts.push(Act::Select(i));
+                    }
+                    ui.set_min_width(150.0);
+                    if ui
+                        .add_enabled(extractable, icon_button(&ic.down, "Extract"))
+                        .clicked()
+                    {
+                        acts.push(Act::ExtractSelected);
+                        ui.close_menu();
+                    }
+                    if can_copy_across
+                        && ui
+                            .add(
+                                icon_button(&ic.blank, "Copy to Other Pane")
+                                    .shortcut_text(key_hint("F5")),
+                            )
+                            .clicked()
+                    {
+                        acts.push(Act::CopyToPane);
+                        ui.close_menu();
+                    }
+                    if editable {
+                        ui.separator();
+                        if ui
+                            .add(icon_button(&ic.pencil, "Rename").shortcut_text(key_hint("F2")))
+                            .clicked()
+                        {
+                            acts.push(Act::Select(i));
+                            acts.push(Act::StartRename(i));
+                            ui.close_menu();
+                        }
+                        let del = if is_archive { "Remove" } else { "Delete" };
+                        if ui
+                            .add(icon_button(&ic.trash, del).shortcut_text(key_hint("Del")))
+                            .clicked()
+                        {
+                            acts.push(Act::Select(i)); // delete this row specifically
+                            acts.push(Act::Delete);
+                            ui.close_menu();
+                        }
+                    }
+                });
+            }
+        });
+}
+
 /// Clickable column header, using the same column math as [`file_row`] so the
 /// labels sit over their columns. Returns the column whose header was clicked.
 /// `scrollbar` reserves the list's scrollbar width.
@@ -3058,13 +3359,22 @@ fn header_row(
     None
 }
 
+/// How a row shows selection: in the focused pane, a selected row is filled
+/// bright; in the other pane, it's shaded softly.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowSel {
+    No,
+    Yes,
+    Unfocused,
+}
+
 /// Draw one file as a full-width, painted, selectable row: a colour-coded type
 /// badge, the name, its detail, and a right-aligned size (or an error). When
 /// `edit` is `Some`, the name is shown as an editable field instead.
 fn file_row(
     ui: &mut egui::Ui,
     node: &Node,
-    selected: bool,
+    sel: RowSel,
     index: usize,
     cols: Cols,
     edit: Option<&mut String>,
@@ -3081,9 +3391,10 @@ fn file_row(
 
     // Cloned painter so the `ui` is free for an inline TextEdit widget later.
     let painter = ui.painter().clone();
+    let selected = sel == RowSel::Yes;
     if selected {
         painter.rect_filled(rect, Rounding::ZERO, c64::ACCENT);
-    } else if resp.hovered() {
+    } else if sel == RowSel::Unfocused || resp.hovered() {
         painter.rect_filled(rect, Rounding::ZERO, c64::ACCENT_DIM);
     } else if index % 2 == 1 {
         painter.rect_filled(rect, Rounding::ZERO, c64::STRIPE);
@@ -4262,6 +4573,17 @@ fn copy_window_ui(
 /// onto `disk` under its listed name, refusing names already there and REL
 /// files.
 fn copy_bytes(disk: &mut Disk, node: &Node) -> Result<(), String> {
+    let f = node_file(node)?;
+    if disk.find_entry(&f.name).ok().flatten().is_some() {
+        return Err(sector64::Error::FileExists.to_string());
+    }
+    disk.write_file(&f.name, f.file_type, &f.data)
+        .map_err(|e| e.to_string())
+}
+
+/// A listed file as a file to write elsewhere: its name, its type (from the
+/// badge) and its bytes. REL files and files that couldn't be read fail.
+fn node_file(node: &Node) -> Result<ImportFile, String> {
     let data = node.data.as_ref().map_err(|e| e.clone())?;
     let file_type = match node.badge.as_str() {
         "rel" => return Err(sector64::Error::CannotCopy("REL files").to_string()),
@@ -4270,11 +4592,25 @@ fn copy_bytes(disk: &mut Disk, node: &Node) -> Result<(), String> {
         "del" => FileType::Del,
         _ => FileType::Prg,
     };
-    if disk.find_entry(&node.name).ok().flatten().is_some() {
-        return Err(sector64::Error::FileExists.to_string());
-    }
-    disk.write_file(&node.name, file_type, data)
-        .map_err(|e| e.to_string())
+    Ok(ImportFile {
+        name: node.name.clone(),
+        file_type,
+        data: data.clone(),
+    })
+}
+
+/// What the unsaved-changes prompt says, given which disks have unsaved
+/// changes (e.g. "the open disk").
+fn unsaved_message(which: &[&str]) -> String {
+    let list = match which {
+        [] => "Nothing".to_string(),
+        [one] => one.to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    let verb = if which.len() > 1 { "have" } else { "has" };
+    let mut s = format!("{list} {verb} unsaved changes.");
+    s[..1].make_ascii_uppercase();
+    s
 }
 
 /// The status line after a copy: how many went to `dest`, and why any
@@ -4551,7 +4887,7 @@ fn recent_labels(list: &[String]) -> Vec<(String, String)> {
 }
 
 fn main() -> eframe::Result<()> {
-    let initial = std::env::args().nth(1);
+    let initial: Vec<String> = std::env::args().skip(1).take(2).collect();
     #[allow(unused_mut)]
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -4580,7 +4916,7 @@ fn main() -> eframe::Result<()> {
         Box::new(move |cc| {
             load_c64_font(&cc.egui_ctx);
             apply_c64_theme(&cc.egui_ctx);
-            Ok(Box::new(App::new(initial, cc.storage)))
+            Ok(Box::new(App::new(&initial, cc.storage)))
         }),
     )
 }
@@ -4878,6 +5214,83 @@ mod tests {
 
     fn names(app: &App) -> Vec<String> {
         app.pane.nodes.iter().map(|n| n.name.clone()).collect()
+    }
+
+    #[test]
+    fn tab_focus_swaps_the_panes_only_in_dual_view() {
+        let mut app = app_with_disk();
+        app.apply(Act::AddBytes("ONE".into(), vec![1, 8, 0]));
+        app.apply(Act::FocusOther);
+        assert_eq!(names(&app), ["ONE"], "single view: nothing to focus");
+        app.dual = true;
+        app.apply(Act::FocusOther);
+        assert!(app.focus_right && app.pane.nodes.is_empty());
+        assert_eq!(app.back.nodes[0].name, "ONE");
+        // Each pane keeps its own undo history.
+        app.apply(Act::Undo);
+        assert_eq!(app.status, "Nothing to undo");
+        app.apply(Act::FocusOther);
+        assert!(!app.focus_right);
+        app.apply(Act::Undo);
+        assert!(names(&app).is_empty());
+    }
+
+    #[test]
+    fn f5_copies_into_the_other_panes_disk_or_archive() {
+        let mut app = app_with_disk();
+        app.dual = true;
+        app.apply(Act::AddBytes("ONE".into(), vec![1, 8, 0]));
+        app.apply(Act::AddBytes("TWO".into(), vec![1, 8, 1]));
+        app.pane.marked.extend([0, 1]);
+        // Nothing open in the other pane yet.
+        app.apply(Act::CopyToPane);
+        assert!(app.status.contains("in the other pane to copy into"));
+
+        // Into a blank disk: one undo step there, nothing changed here.
+        app.apply(Act::FocusOther);
+        app.apply(Act::Create);
+        app.apply(Act::FocusOther);
+        app.pane.marked.extend([0, 1]);
+        app.apply(Act::CopyToPane);
+        assert_eq!(app.status, "Copied 2 files to the other pane");
+        let back: Vec<_> = app.back.nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(back, ["ONE", "TWO"]);
+        assert!(app.back.is_dirty());
+        assert_eq!(app.back.undo.len(), 1);
+        assert_eq!(names(&app), ["ONE", "TWO"]);
+        // Copying again clashes on the names.
+        app.pane.marked.extend([0]);
+        app.apply(Act::CopyToPane);
+        assert!(app.status.starts_with("Nothing copied; skipped \"ONE\""));
+
+        // Into a new archive, with the bytes and type.
+        app.apply(Act::FocusOther);
+        app.apply(Act::NewArchive);
+        app.apply(Act::FocusOther);
+        app.apply(Act::Select(1));
+        app.apply(Act::CopyToPane);
+        let stage = app.back.archive.as_ref().unwrap();
+        assert_eq!(
+            (stage[0].name.as_str(), &stage[0].data[..]),
+            ("TWO", &[1, 8, 1][..])
+        );
+    }
+
+    #[test]
+    fn unsaved_prompt_names_each_disk() {
+        assert_eq!(
+            unsaved_message(&["the open disk"]),
+            "The open disk has unsaved changes."
+        );
+        assert_eq!(
+            unsaved_message(&[
+                "this pane's disk",
+                "the other pane's disk",
+                "the Copy window's disk"
+            ]),
+            "This pane's disk, the other pane's disk and the Copy window's disk have unsaved \
+             changes."
+        );
     }
 
     #[test]

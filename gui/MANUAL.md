@@ -37,11 +37,12 @@ This manual describes every feature of the graphical browser
  10. Validating a disk
  11. The disk map
  12. Copying between disks
- 13. Running in VICE
- 14. Status line and toast messages
- 15. Keyboard shortcuts
- 16. Settings that persist
- 17. Tips and troubleshooting
+ 13. Two disks side by side
+ 14. Running in VICE
+ 15. Status line and toast messages
+ 16. Keyboard shortcuts
+ 17. Settings that persist
+ 18. Tips and troubleshooting
 
 
 ----------------------------------------------------------------
@@ -100,7 +101,7 @@ the whole archive.
 Default layout (the preview pane is hidden until you turn it on):
 
   +----------------------------------------------------------+
-  | [=] SECTOR64  File | Disk | Preview | Help                 |  <- menu bar
+  | [=] SECTOR64  File | Disk | Preview | Dual | Help        |  <- menu bar
   +----------------------------------------------------------+
   | Disk 0 "MY DISK" 1A                          664 free    |  <- header row
   | Filter: [ type to filter by name                       ] |  <- filter box
@@ -118,7 +119,7 @@ With the preview pane turned on (menu bar > Preview), it opens on
 the right and the listing makes room for it:
 
   +----------------------------------------------------------+
-  | [=] SECTOR64  File | Disk |[Preview]| Help                 |  <- Preview lit
+  | [=] SECTOR64  File | Disk |[Preview]| Dual | Help        |  <- Preview lit
   +----------------------------------------------------------+
   | Disk 0 "MY DISK" 1A   664 free |  PREVIEW — HELLO        |  <- header | preview
   | Filter: [ filter by name     ] |           HEX | TEXT    |     head + toggle
@@ -133,10 +134,13 @@ the right and the listing makes room for it:
 
 - Menu bar (top):
     File     New, Open, Open Recent, Add file, Save, Save As,
-             Extract ▸, Copy..., Run in VICE, Undo, Redo,
+             Extract ▸, Copy..., Copy to Other Pane (in
+             dual view), Run in VICE, Undo, Redo,
              Rename and Delete.
     Disk     Validate Disk and Disk Map.
     Preview  shows or hides the preview pane.
+    Dual     splits the window into two panes (see 13); it
+             takes turns with the preview pane.
     Help     this manual.
 - Header row: the disk/archive title and, for disks, blocks
   free. Shown as the first line of the listing.
@@ -176,7 +180,7 @@ it instead (see 8). If you drop several files, the first is
 opened and the rest are ignored.
 
 On Linux, drag-and-drop works only when Sector64 runs on X11; see
-"Drag-and-drop on Linux (Wayland)" in section 17.
+"Drag-and-drop on Linux (Wayland)" in section 18.
 
 When a file opens, the first entry is selected automatically, so
 if you turn the preview pane on it has something to show at once.
@@ -397,7 +401,7 @@ ADDING FILES
 
   With a disk open, either:
     - Drag host files onto the window (on Linux this needs X11;
-      see section 17), or
+      see section 18), or
     - File > Add file ▸, choose the type (prg / seq / usr), then
       Add file… and pick a file.
   The file is given a Commodore name derived from its host name
@@ -455,7 +459,7 @@ THE UNSAVED-CHANGES GUARD
 
   1. File > New ▸ > Empty archive.
   2. Add files by dragging them in (on Linux this needs X11; see
-     section 17), or File > Add file ▸.
+     section 18), or File > Add file ▸.
   3. File > Save archive as… and choose a container format by
      the extension you type:
          .t64   tape image
@@ -565,7 +569,63 @@ Esc or Close hides the window without closing its disk.
 
 
 ----------------------------------------------------------------
- 13. RUNNING IN VICE
+ 13. TWO DISKS SIDE BY SIDE
+----------------------------------------------------------------
+
+Click Dual in the menu bar to split the window into two panes,
+each with its own disk or archive, like a two-panel file
+commander. Click Dual again to go back to one pane. Sector64
+remembers which you used last.
+
+  +----------------------------------------------------------+
+  | [=] SECTOR64  File | Disk | Preview |[Dual]| Help        |
+  +----------------------------------------------------------+
+  |#Disk 0 "GAMES" 1A       #| Disk 0 "BLANK" 01             |
+  |#Filter: [             ] #| Filter: [                   ] |
+  |#PRG   HELLO     689 B   #| PRG   README    410 B         |
+  |#PRG   GAME     8503 B   #|                               |
+  +----------------------------------------------------------+
+     ^ focused pane (bright frame)   ^ other pane
+
+One pane has the focus, shown by its bright frame and bright
+selection. The menus, the keyboard shortcuts, the preview pane,
+the disk map, the Open: line and Run in VICE all work on the
+focused pane. Click anywhere in the other pane, or press Tab, to
+move the focus there. Each pane keeps its own selection, sort,
+filter and undo history.
+
+To open a file in a pane, focus it and use File > Open (Ctrl+O)
+or Open Recent. An empty pane shows the recent files, so you can
+click one there. Files dropped on a pane go to that pane. You
+can also start with two files open side by side:
+
+    sector64-gui games.d64 blank.d64
+
+COPYING BETWEEN THE PANES
+
+Select files in the focused pane (Ctrl-click or Shift-click for
+several) and press F5, or choose File > Copy to Other Pane, or
+right-click a file and choose Copy to Other Pane. They are
+copied into the other pane's disk or new archive, the same way
+as the Copy window copies (see 12): exact names, types and lock
+flags, with REL files and name clashes skipped. The other pane
+needs an editable disk (D64, D71, D81 or CMD-native D2M) or a
+new archive. To undo a copy, focus the pane it went into and
+press Ctrl+Z.
+
+The preview pane and the second pane take turns. Turning
+Preview on hides the pane that isn't focused, and the preview
+shows the focused pane's selection. Clicking Dual again brings
+the other pane back and hides the preview.
+
+When you quit, Sector64 asks about unsaved changes in either
+pane. Turning Dual off (or Preview on) hides the other pane but
+keeps its disk open, unsaved changes included, for when you turn
+Dual back on.
+
+
+----------------------------------------------------------------
+ 14. RUNNING IN VICE
 ----------------------------------------------------------------
 
 Choose File > Run in VICE (or press Ctrl+R) to try a
@@ -598,7 +658,7 @@ names that differ only there may load the wrong one.
 
 
 ----------------------------------------------------------------
- 14. STATUS LINE AND TOAST MESSAGES
+ 15. STATUS LINE AND TOAST MESSAGES
 ----------------------------------------------------------------
 
 The status line at the bottom always shows the result of your
@@ -614,7 +674,7 @@ early. The most recent few are shown at once.
 
 
 ----------------------------------------------------------------
- 15. KEYBOARD SHORTCUTS
+ 16. KEYBOARD SHORTCUTS
 ----------------------------------------------------------------
 
     Ctrl+O      Open a file
@@ -625,6 +685,9 @@ early. The most recent few are shown at once.
     Ctrl+M      Show or hide the disk map
     Ctrl+K      Show or hide the Copy window
     Ctrl+R      Run the disk or selected program in VICE
+    Tab         Dual view: move the focus to the other pane
+    F5          Dual view: copy the selected file(s) to the
+                other pane
     Enter       Extract the selected file
     Delete      Delete / scratch the selected file(s)
     F2          Rename the selected file (in place)
@@ -637,7 +700,7 @@ field (the filter box or a rename).
 
 
 ----------------------------------------------------------------
- 16. SETTINGS THAT PERSIST
+ 17. SETTINGS THAT PERSIST
 ----------------------------------------------------------------
 
 Between runs Sector64 remembers:
@@ -645,7 +708,8 @@ Between runs Sector64 remembers:
       allows it), and
     - the Output folder you last chose, and
     - your recent files (see 4), and
-    - the VICE folder, if you had to choose it (see 13).
+    - the VICE folder, if you had to choose it (see 14), and
+    - whether the window was split into two panes (see 13).
 
 Note: under a tiling Wayland compositor the window manager
 controls window geometry, so the saved size may be overridden by
@@ -653,7 +717,7 @@ your layout. The output folder is always restored.
 
 
 ----------------------------------------------------------------
- 17. TIPS AND TROUBLESHOOTING
+ 18. TIPS AND TROUBLESHOOTING
 ----------------------------------------------------------------
 
 THE PETSCII FONT
