@@ -142,6 +142,11 @@ be executable (mode 755). `sector64.desktop` has
 
 ## Workflow
 
+- **Feature list:** `docs/FEATURES.md` is the single list of what's built
+  and what's next (the `feature-list` skill describes the format). Add new
+  ideas and follow-ups to it as they come up, and update a feature's row in
+  the same PR that builds it; on release, turn `Done (unreleased, #PR)`
+  into `Done vX.Y.Z`.
 - One branch and one PR per change. The user approves with "merge", then
   squash-merge and delete the branch.
 - Commit messages end with the Co-Authored-By line from the system prompt.
