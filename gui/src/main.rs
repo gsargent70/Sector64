@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use egui::Color32;
+use sector64::compare::{Item as CompareItem, Row as CompareRow, Status as CompareStatus};
 use sector64::{
     parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64, write_lbr,
     write_lnx, write_p00, write_t64, BamState, BasicDialect, BlockMap, BlockStatus, Disk, FileType,
@@ -559,6 +560,10 @@ struct App {
     dual: bool,
     /// Whether the focused pane is the right-hand one.
     focus_right: bool,
+    /// Whether the Compare window is open, and whether it lists the files
+    /// that are the same on both sides as well as the differences.
+    show_compare: bool,
+    compare_all: bool,
     // new-image controls
     new_fmt: usize, // 0=d64, 1=d71, 2=d81
     new_name: String,
@@ -665,6 +670,8 @@ enum Act {
     StartRename(usize),
     /// Dual-pane view: copy the chosen files into the other pane.
     CopyToPane,
+    /// Compare window: select this file in the left and right panes.
+    CompareSelect(Option<usize>, Option<usize>),
 }
 
 impl Pane {
@@ -983,6 +990,19 @@ impl App {
                 }
             }
             Act::CopyToPane => self.copy_to_pane(),
+            Act::CompareSelect(l, r) => {
+                let (left, right) = if self.focus_right {
+                    (&mut self.back, &mut self.pane)
+                } else {
+                    (&mut self.pane, &mut self.back)
+                };
+                for (pane, i) in [(left, l), (right, r)] {
+                    pane.marked.clear();
+                    if i.is_some() {
+                        pane.selected = i;
+                    }
+                }
+            }
             Act::Undo => self.undo(),
             Act::Redo => self.redo(),
             Act::ClearRecent => {
@@ -1962,6 +1982,9 @@ impl eframe::App for App {
         let has_map = self.pane.map_disk().is_some();
         let mut show_map = self.show_map && has_map;
         let mut show_copy = self.show_copy;
+        let can_compare = !self.pane.nodes.is_empty() && !self.back.nodes.is_empty();
+        let mut show_compare = self.show_compare && can_compare;
+        let mut compare_all = self.compare_all;
         let can_run = self.vice_plan().is_ok();
         let mut dual = self.dual;
         let back_editable = self.back.editable();
@@ -2231,6 +2254,23 @@ impl eframe::App for App {
                         .clicked()
                     {
                         show_map = !show_map;
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            can_compare,
+                            egui::Button::new("Compare Panes")
+                                .selected(show_compare)
+                                .shortcut_text(key_hint("Ctrl+D")),
+                        )
+                        .on_hover_text("list which files match, differ, or are on only one side")
+                        .on_disabled_hover_text(
+                            "open a disk or archive in each pane (Dual) to compare them",
+                        )
+                        .clicked()
+                    {
+                        show_compare = !show_compare;
                         ui.close_menu();
                     }
                 });
@@ -2706,6 +2746,46 @@ impl eframe::App for App {
                 });
         }
 
+        // Compare window: the two panes' files side by side, by name. It shows
+        // both panes, so it brings Dual back if Preview had hidden one.
+        if show_compare {
+            if !dual {
+                dual = true;
+                show_preview = false;
+            }
+            if !show_help
+                && !show_map
+                && !show_copy
+                && ctx.input(|i| i.key_pressed(egui::Key::Escape))
+            {
+                show_compare = false;
+            }
+            let (left, right) = if self.focus_right {
+                (&self.back, &self.pane)
+            } else {
+                (&self.pane, &self.back)
+            };
+            let rows = sector64::compare::compare(&compare_items(left), &compare_items(right));
+            let screen = ctx.screen_rect();
+            egui::Window::new(egui::RichText::new("COMPARE").color(c64::ACCENT).strong())
+                .collapsible(false)
+                .resizable(true)
+                .default_width(680.0_f32.min(screen.width() - 40.0))
+                .max_height(screen.height() - 60.0)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .default_pos(screen.center())
+                .show(ctx, |ui| {
+                    compare_ui(
+                        ui,
+                        [left, right],
+                        &rows,
+                        &mut compare_all,
+                        &mut show_compare,
+                        &mut acts,
+                    );
+                });
+        }
+
         // Unsaved-changes confirmation (before opening another file or quitting).
         if self.confirm.is_some() {
             let mut action: Option<u8> = None; // 0 discard, 1 cancel, 2 save
@@ -2857,6 +2937,9 @@ impl eframe::App for App {
             if i.modifiers.command && i.key_pressed(egui::Key::M) && has_map {
                 show_map = !show_map;
             }
+            if i.modifiers.command && i.key_pressed(egui::Key::D) && can_compare {
+                show_compare = !show_compare;
+            }
             if i.modifiers.command && i.key_pressed(egui::Key::K) {
                 show_copy = !show_copy;
             }
@@ -2928,6 +3011,8 @@ impl eframe::App for App {
         self.show_help = show_help;
         self.show_map = show_map;
         self.show_copy = show_copy;
+        self.show_compare = show_compare;
+        self.compare_all = compare_all;
         self.dual = dual;
         for act in acts {
             self.apply(act);
@@ -4407,6 +4492,157 @@ fn disk_title(disk: &Disk, header: sector64::Result<sector64::Header>) -> String
 
 /// The Copy window's contents: the other disk's header, its files, and the
 /// buttons that open, make, save it and copy files across.
+/// A pane's files as the comparison sees them.
+fn compare_items(p: &Pane) -> Vec<CompareItem<'_>> {
+    p.nodes
+        .iter()
+        .map(|n| CompareItem {
+            name: &n.name,
+            kind: &n.badge,
+            data: n.data.as_deref().ok(),
+        })
+        .collect()
+}
+
+/// The Compare window's summary line, e.g. "2 differ, 1 only on the left,
+/// 14 the same".
+fn compare_summary(s: &sector64::compare::Summary) -> String {
+    if s.identical() {
+        return format!(
+            "Identical: the same {} file(s) on both sides, byte for byte.",
+            s.same
+        );
+    }
+    let parts = [
+        (s.differ, "differ"),
+        (s.only_left, "only on the left"),
+        (s.only_right, "only on the right"),
+        (s.unreadable, "can't be read"),
+        (s.same, "the same"),
+    ];
+    parts
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, what)| format!("{n} {what}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// How a Compare row looks: its mark, its colour and what it says.
+fn compare_look(row: &CompareRow, kinds: [Option<&str>; 2]) -> (&'static str, Color32, String) {
+    match row.status {
+        CompareStatus::Same => ("=", c64::TEXT_DIM, "same".into()),
+        CompareStatus::Differs(d) => {
+            let mut notes = Vec::new();
+            if d.kind {
+                let k = |k: Option<&str>| k.unwrap_or("?").to_uppercase();
+                notes.push(format!("type {} / {}", k(kinds[0]), k(kinds[1])));
+            }
+            if let Some(at) = d.first {
+                notes.push(format!("differs from byte {at}"));
+            }
+            ("*", c64::WARN, notes.join("; "))
+        }
+        CompareStatus::Unreadable => ("?", c64::TEXT_DIM, "can't be read to compare".into()),
+        CompareStatus::OnlyLeft => ("<", c64::ORPHAN, "only on the left".into()),
+        CompareStatus::OnlyRight => (">", c64::ORPHAN, "only on the right".into()),
+    }
+}
+
+/// The Compare window's contents: what each pane holds, a summary, and a
+/// row per file saying how it compares. Clicking a row selects that file
+/// in both panes.
+fn compare_ui(
+    ui: &mut egui::Ui,
+    panes: [&Pane; 2],
+    rows: &[CompareRow],
+    all: &mut bool,
+    open: &mut bool,
+    acts: &mut Vec<Act>,
+) {
+    for (side, p) in ["LEFT ", "RIGHT"].into_iter().zip(panes) {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(side).color(c64::TEXT_DIM));
+            ui.add(egui::Label::new(egui::RichText::new(&p.title).color(c64::BRIGHT)).truncate());
+        });
+    }
+    ui.separator();
+    let summary = sector64::compare::summarize(rows);
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Close").clicked() {
+                *open = false;
+            }
+            ui.checkbox(all, "Show same")
+                .on_hover_text("also list the files that match on both sides");
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let colour = if summary.identical() {
+                    c64::OK
+                } else {
+                    c64::TEXT
+                };
+                ui.add(
+                    egui::Label::new(egui::RichText::new(compare_summary(&summary)).color(colour))
+                        .wrap(),
+                );
+            });
+        });
+    });
+    ui.separator();
+    let node = |side: usize, i: Option<usize>| i.and_then(|i| panes[side].nodes.get(i));
+    let shown: Vec<&CompareRow> = rows
+        .iter()
+        .filter(|r| *all || r.status != CompareStatus::Same)
+        .collect();
+    if shown.is_empty() {
+        ui.label(egui::RichText::new("No differences.").color(c64::TEXT_DIM));
+        return;
+    }
+    egui::ScrollArea::vertical()
+        .id_salt("compare_scroll")
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            egui::Grid::new("compare_grid")
+                .striped(true)
+                .num_columns(5)
+                .spacing([16.0, 4.0])
+                .show(ui, |ui| {
+                    for head in ["", "NAME", "LEFT", "RIGHT", ""] {
+                        ui.label(egui::RichText::new(head).color(c64::TEXT_DIM));
+                    }
+                    ui.end_row();
+                    for row in shown {
+                        let (l, r) = (node(0, row.left), node(1, row.right));
+                        let kinds = [l.map(|n| n.badge.as_str()), r.map(|n| n.badge.as_str())];
+                        let (mark, colour, note) = compare_look(row, kinds);
+                        ui.label(egui::RichText::new(mark).color(colour));
+                        if ui
+                            .selectable_label(false, egui::RichText::new(&row.name).color(colour))
+                            .on_hover_text("select it in both panes")
+                            .clicked()
+                        {
+                            acts.push(Act::CompareSelect(row.left, row.right));
+                        }
+                        for n in [l, r] {
+                            let size = match n.map(|n| n.data.as_ref()) {
+                                Some(Ok(d)) => format!("{} B", d.len()),
+                                Some(Err(_)) => "?".into(),
+                                None => "—".into(),
+                            };
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(size);
+                                },
+                            );
+                        }
+                        ui.label(egui::RichText::new(note).color(colour));
+                        ui.end_row();
+                    }
+                });
+        });
+}
+
 fn copy_window_ui(
     ui: &mut egui::Ui,
     other: Option<&OtherDisk>,
@@ -5274,6 +5510,31 @@ mod tests {
             (stage[0].name.as_str(), &stage[0].data[..]),
             ("TWO", &[1, 8, 1][..])
         );
+    }
+
+    #[test]
+    fn compare_rows_select_the_file_in_both_panes() {
+        let mut app = app_with_disk();
+        app.dual = true;
+        app.apply(Act::AddBytes("A".into(), vec![1, 8, 0]));
+        app.apply(Act::AddBytes("B".into(), vec![1, 8, 1]));
+        app.apply(Act::FocusOther);
+        app.apply(Act::Create);
+        app.apply(Act::AddBytes("B".into(), vec![1, 8, 2]));
+        // The focused pane is now the right one.
+        app.pane.marked.insert(0);
+        app.apply(Act::CompareSelect(Some(1), Some(0)));
+        assert_eq!((app.back.selected, app.pane.selected), (Some(1), Some(0)));
+        assert!(app.pane.marked.is_empty());
+        // A file on one side only leaves the other pane's selection alone.
+        app.apply(Act::CompareSelect(Some(0), None));
+        assert_eq!((app.back.selected, app.pane.selected), (Some(0), Some(0)));
+
+        let rows = sector64::compare::compare(&compare_items(&app.back), &compare_items(&app.pane));
+        let s = sector64::compare::summarize(&rows);
+        assert_eq!(compare_summary(&s), "1 differ, 1 only on the left");
+        let (mark, _, note) = compare_look(&rows[1], [Some("prg"), Some("prg")]);
+        assert_eq!((mark, note.as_str()), ("*", "differs from byte 2"));
     }
 
     #[test]
