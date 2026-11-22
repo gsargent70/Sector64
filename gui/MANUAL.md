@@ -137,7 +137,7 @@ the right and the listing makes room for it:
              Extract ▸, Copy..., Copy to Other Pane (in
              dual view), Run in VICE, Undo, Redo,
              Rename and Delete.
-    Disk     Validate Disk and Disk Map.
+    Disk     Validate Disk, Disk Map and Compare Panes.
     Preview  shows or hides the preview pane.
     Dual     splits the window into two panes (see 13); it
              takes turns with the preview pane.
@@ -613,6 +613,27 @@ needs an editable disk (D64, D71, D81 or CMD-native D2M) or a
 new archive. To undo a copy, focus the pane it went into and
 press Ctrl+Z.
 
+COMPARING THE PANES
+
+Choose Disk > Compare Panes (Ctrl+D) to see how the two panes'
+files compare. It works on any two listings: two disks, or a disk
+and an archive. Files are matched by name, and each row says
+whether the file is:
+
+    =   the same on both sides (byte for byte, same type)
+    *   different: the byte where they first differ, and the
+        types if those differ (e.g. PRG / SEQ)
+    <   only in the left pane
+    >   only in the right pane
+    ?   unreadable on one side, so it can't be compared
+
+The summary line counts each kind, or says the two are identical.
+Only the differences are listed unless you tick Show same. Click
+a row to select that file in both panes, ready to preview it or
+copy it across with F5. The window follows your edits as you
+make them. Esc or Close hides it. If Preview has hidden a pane,
+opening Compare brings it back.
+
 The preview pane and the second pane take turns. Turning
 Preview on hides the pane that isn't focused, and the preview
 shows the focused pane's selection. Clicking Dual again brings
@@ -684,6 +705,7 @@ early. The most recent few are shown at once.
     Ctrl+L      Validate the open disk
     Ctrl+M      Show or hide the disk map
     Ctrl+K      Show or hide the Copy window
+    Ctrl+D      Compare the two panes' files
     Ctrl+R      Run the disk or selected program in VICE
     Tab         Dual view: move the focus to the other pane
     F5          Dual view: copy the selected file(s) to the

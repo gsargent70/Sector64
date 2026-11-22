@@ -225,7 +225,9 @@ every block of any disk image as a track-by-sector grid, coloured by the file
 marked; hover a block to see its file, click to select it. The **Copy** window holds a second disk image and
 copies files between the two, from any disk or archive onto a D64/D71/D81/D2M
 and back. **Dual** view splits the window into two panes, each with its own disk
-or archive, and F5 copies the selected files from one to the other. **Run in VICE** starts the open disk, or the selected program, in the
+or archive, and F5 copies the selected files from one to the other. **Compare
+Panes** lists which files match byte for byte, which differ (and where),
+and which are on only one side. **Run in VICE** starts the open disk, or the selected program, in the
 VICE emulator (on a copy, unsaved edits included). Members that need a
 not-yet-implemented decoder are listed with the reason instead of bytes.
 
