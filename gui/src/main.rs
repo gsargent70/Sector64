@@ -2241,14 +2241,25 @@ impl eframe::App for App {
                     .clicked()
                 {
                     show_preview = !show_preview;
+                    // The preview takes the other pane's place; Dual brings
+                    // that pane back.
+                    if show_preview {
+                        dual = false;
+                    }
                 }
                 ui.separator();
                 if ui
                     .selectable_label(dual, "Dual")
-                    .on_hover_text("show two disks side by side; Tab switches between them")
+                    .on_hover_text(
+                        "show two disks side by side; Tab switches between them \
+                         (hides the preview pane)",
+                    )
                     .clicked()
                 {
                     dual = !dual;
+                    if dual {
+                        show_preview = false;
+                    }
                 }
                 ui.separator();
                 if ui.button("Help").clicked() {
@@ -2327,19 +2338,10 @@ impl eframe::App for App {
         // its functionality (HEX/TEXT toggle, scrolling) is unchanged.
         // Column widths for the listing, shared by the preview sizing below and
         // the list itself.
-        let mut list_cols = vec![Cols::of(&self.pane.nodes)];
-        if self.dual {
-            list_cols.push(Cols::of(&self.back.nodes));
-        }
+        let cols = Cols::of(&self.pane.nodes);
 
         if show_preview {
-            let pane_w = preview_width(
-                ctx,
-                preview_mode,
-                &preview,
-                preview_name.as_deref(),
-                &list_cols,
-            );
+            let pane_w = preview_width(ctx, preview_mode, &preview, preview_name.as_deref(), cols);
             egui::SidePanel::right("preview")
                 .resizable(false)
                 .exact_width(pane_w)
@@ -3755,7 +3757,7 @@ fn preview_width(
     mode: PreviewMode,
     preview: &str,
     name: Option<&str>,
-    lists: &[Cols],
+    cols: Cols,
 ) -> f32 {
     let mono = egui::FontId::monospace(16.0);
     let cw = ctx.fonts(|f| f.glyph_width(&mono, '0')).max(6.0);
@@ -3781,19 +3783,13 @@ fn preview_width(
     let header_chars = "PREVIEW — ".chars().count() + name.map_or(0, |n| n.chars().count()) + 30;
     let want = content_chars.max(header_chars) as f32 * cw + chrome;
 
-    // Leave the list (or both panes' lists) beside it room for its longest
-    // name and all its columns if possible, but keep at least ~20 characters
-    // of preview; below that the lists shorten names, then drop columns
-    // (`place_cols`).
+    // Leave the list beside it room for its longest name and all its
+    // columns if possible, but keep at least ~20 characters of preview;
+    // below that the list shortens names, then drops columns (`place_cols`).
     let screen = ctx.screen_rect().width();
     let list_chrome = 2.0 * 8.0 + 2.0 * 8.0 + bar + 8.0;
-    let list_full: f32 = lists
-        .iter()
-        .map(|cols| {
-            let name = cols.name_chars.max(MIN_NAME_CHARS);
-            cols.row_chars_with_name(name, true, true) as f32 * cw + list_chrome
-        })
-        .sum();
+    let name = cols.name_chars.max(MIN_NAME_CHARS);
+    let list_full = cols.row_chars_with_name(name, true, true) as f32 * cw + list_chrome;
     let floor = 20.0 * cw + chrome;
     want.min(screen - list_full).max(floor.min(want))
 }
@@ -5021,7 +5017,7 @@ mod tests {
                 let (pane, cw) = in_frame(screen, |ctx| {
                     let cw = ctx.fonts(|f| f.glyph_width(&egui::FontId::monospace(16.0), '0'));
                     (
-                        preview_width(ctx, PreviewMode::Hex, &dump, Some("STARFALL.GAME"), &[cols]),
+                        preview_width(ctx, PreviewMode::Hex, &dump, Some("STARFALL.GAME"), cols),
                         cw,
                     )
                 });
@@ -5055,7 +5051,7 @@ mod tests {
         let (pane, cw) = in_frame(2400.0, |ctx| {
             let cw = ctx.fonts(|f| f.glyph_width(&egui::FontId::monospace(16.0), '0'));
             (
-                preview_width(ctx, PreviewMode::Text, "HELLO", Some("README"), &[cols]),
+                preview_width(ctx, PreviewMode::Text, "HELLO", Some("README"), cols),
                 cw,
             )
         });

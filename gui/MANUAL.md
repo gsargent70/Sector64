@@ -139,7 +139,8 @@ the right and the listing makes room for it:
              Rename and Delete.
     Disk     Validate Disk and Disk Map.
     Preview  shows or hides the preview pane.
-    Dual     splits the window into two panes (see 13).
+    Dual     splits the window into two panes (see 13); it
+             takes turns with the preview pane.
     Help     this manual.
 - Header row: the disk/archive title and, for disks, blocks
   free. Shown as the first line of the listing.
@@ -612,9 +613,15 @@ needs an editable disk (D64, D71, D81 or CMD-native D2M) or a
 new archive. To undo a copy, focus the pane it went into and
 press Ctrl+Z.
 
+The preview pane and the second pane take turns. Turning
+Preview on hides the pane that isn't focused, and the preview
+shows the focused pane's selection. Clicking Dual again brings
+the other pane back and hides the preview.
+
 When you quit, Sector64 asks about unsaved changes in either
-pane. Turning Dual off hides the other pane but keeps its disk
-open, unsaved changes included, for when you turn it back on.
+pane. Turning Dual off (or Preview on) hides the other pane but
+keeps its disk open, unsaved changes included, for when you turn
+Dual back on.
 
 
 ----------------------------------------------------------------
