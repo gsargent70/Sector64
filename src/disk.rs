@@ -546,6 +546,9 @@ impl Disk {
         };
 
         for entry in self.directory()? {
+            if self.is_placeholder(&entry) {
+                continue;
+            }
             for bs in self.file_block_chain(entry.first_track, entry.first_sector)? {
                 if used.contains(&bs) {
                     if !report.cross_linked.contains(&bs) {
@@ -807,6 +810,30 @@ impl Disk {
     /// The free-count byte the BAM records for a track.
     fn free_count(&self, track: u8) -> Option<u8> {
         self.bam_cell(track).map(|(count, _, _)| self.data[count])
+    }
+
+    /// The free blocks in a track's bitmap, if it has a count byte to match.
+    fn track_free_bits(&self, track: u8) -> Option<u8> {
+        if matches!(self.geom, Geometry::CmdNative { .. }) {
+            return None;
+        }
+        self.bam_cell(track)?;
+        let n = self.geom.sector_count(track)?;
+        let free = (0..n).filter(|&s| self.bam_is_free(track, s as u8)).count();
+        Some(free as u8)
+    }
+
+    /// Whether a track's free count disagrees with its bitmap.
+    pub(crate) fn track_miscounted(&self, track: u8) -> bool {
+        self.track_free_bits(track)
+            .is_some_and(|n| self.free_count(track) != Some(n))
+    }
+
+    /// Set a track's free count from its bitmap.
+    pub(crate) fn recount_track(&mut self, track: u8) {
+        if let (Some(n), Some((count, ..))) = (self.track_free_bits(track), self.bam_cell(track)) {
+            self.data[count] = n;
+        }
     }
 
     /// Blocks free across every track except the directory track.

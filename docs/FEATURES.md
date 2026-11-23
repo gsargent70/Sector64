@@ -28,6 +28,9 @@ the core plus one front end.
 
 | ID | Idea | Notes |
 |---|---|---|
+| CLI-05 | Repair from the command line (`s64val --repair`) | S; core done in DISK-04 |
+| FMT-14 | CMD-native subdirectories: list and map the files inside them | M; today only the top directory is read, so repair never frees blocks on such disks |
+| DISK-07 | Repair broken REL and GEOS files (rebuild side sectors, VLIR index) | L; DISK-04 can only remove them |
 | APP-09 | macOS build: universal .app in a .dmg/zip, built on GitHub's macOS runners, pushed to itch as a `mac` channel | M; needs Mac font paths, VICE .app lookup, ⌘ in shortcut labels; signing and notarization need an Apple Developer account ($99/yr) |
 
 ---
@@ -94,7 +97,7 @@ Checking and inspecting a disk's structure.
 | DISK-01 | Validate: every file chain against the BAM | M | Done v1.0.0 | |
 | DISK-02 | Disk map: every block, coloured by owner | M | Done v1.0.6 | |
 | DISK-03 | Compare Panes: same / differs (first byte) / only on one side | M | Done v1.0.9 | core `sector64::compare` |
-| DISK-04 | Validate **and repair**: rebuild the BAM, free orphaned blocks, drop broken entries, with undo | L | Idea | like the 1541's VALIDATE |
+| DISK-04 | Validate **and repair**: rebuild the BAM, free orphaned blocks, drop broken entries, with undo | L | Done (unreleased, #44) | core `sector64::repair`; also ends broken chains and splits cross-linked files; BAM checked against `c1541 -validate` |
 | DISK-05 | Sector editor: view/edit any track and sector in hex, jump from the disk map, follow chains | L | Idea | |
 | DISK-06 | Compare window: "Copy missing files" button that copies everything that's only on one side across | S | Done (unreleased, #43) | either direction; follow-up to DISK-03 |
 
@@ -131,8 +134,7 @@ Checking and inspecting a disk's structure.
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Bigger features:** EDIT-06 (BASIC text → PRG) or DISK-04 (validate
-   and repair).
+1. **Bigger feature:** EDIT-06 (BASIC text → PRG).
 2. **Then:** DISK-05 (sector editor), EDIT-07, VIEW-10, FMT-13.
 
 ## Done by release

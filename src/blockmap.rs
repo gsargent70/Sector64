@@ -289,6 +289,9 @@ impl Disk {
         map.chains = vec![Vec::new(); map.files.len()];
         for i in 0..map.files.len() {
             let e = map.files[i].clone();
+            if self.is_placeholder(&e) {
+                continue;
+            }
             let owner = Owner::File(i);
             let mut faults = Vec::new();
             let mut take = |map: &mut BlockMap, (chain, fault): (Vec<(u8, u8)>, Option<String>)| {
@@ -333,6 +336,19 @@ impl Disk {
             if e.file_type == FileType::Rel {
                 if e.side_track != 0 {
                     take(&mut map, self.walk(e.side_track, e.side_sector));
+                    // Drives past the 1571 start with a super side sector,
+                    // which lists the groups of side sectors. Its own link
+                    // leads to the first group.
+                    let groups = match self.block(e.side_track, e.side_sector) {
+                        Ok(b) if b[2] == 0xFE => b[3..255].to_vec(),
+                        _ => Vec::new(),
+                    };
+                    for pair in groups.chunks_exact(2).skip(1) {
+                        if pair[0] == 0 {
+                            break;
+                        }
+                        take(&mut map, self.walk(pair[0], pair[1]));
+                    }
                 }
             } else if geos && e.side_track != 0 {
                 // The GEOS info block (icon, description).
@@ -342,12 +358,42 @@ impl Disk {
                 map.problems.push(format!("\"{}\": {f}", e.name));
             }
         }
+        // Placeholders own only what's plainly theirs: a sound chain of
+        // allocated blocks that nothing else uses.
+        for i in 0..map.files.len() {
+            let e = &map.files[i];
+            if !self.is_placeholder(e) {
+                continue;
+            }
+            let (chain, fault) = self.walk(e.first_track, e.first_sector);
+            let theirs = |&(t, s): &(u8, u8)| {
+                map.get(t, s)
+                    .is_some_and(|b| b.owner == Owner::None && b.bam == BamState::Allocated)
+            };
+            if fault.is_none() && chain.iter().all(theirs) {
+                for &(t, s) in &chain {
+                    map.claim(t, s, Owner::File(i));
+                }
+                map.chains[i] = chain;
+            }
+        }
         map
+    }
+
+    /// An entry that's there to be seen rather than loaded, such as a line of
+    /// directory art: no blocks, and either type DEL or pointing at the
+    /// header or directory. Where it points means nothing.
+    pub(crate) fn is_placeholder(&self, e: &Entry) -> bool {
+        let geom = self.geometry();
+        let in_dir = e.first_track == geom.directory_track()
+            && (e.first_sector == geom.header_sector()
+                || e.first_sector == geom.directory_first_sector());
+        e.blocks == 0 && (e.file_type == FileType::Del || in_dir)
     }
 
     /// Follow a T/S chain leniently: the blocks reached, and why the walk
     /// stopped early (if it did).
-    fn walk(&self, track: u8, sector: u8) -> (Vec<(u8, u8)>, Option<String>) {
+    pub(crate) fn walk(&self, track: u8, sector: u8) -> (Vec<(u8, u8)>, Option<String>) {
         let mut chain: Vec<(u8, u8)> = Vec::new();
         if track == 0 {
             return (chain, None);
@@ -374,7 +420,7 @@ impl Disk {
 
     /// `count` blocks in disk order from (track, sector), stopping at the end
     /// of the disk.
-    fn run(&self, track: u8, sector: u8, count: u16) -> Vec<(u8, u8)> {
+    pub(crate) fn run(&self, track: u8, sector: u8, count: u16) -> Vec<(u8, u8)> {
         let geom = self.geometry();
         let mut out = Vec::new();
         let (mut t, mut s) = (track, sector as u16);

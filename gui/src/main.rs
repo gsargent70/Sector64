@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 use egui::Color32;
 use sector64::compare::{Item as CompareItem, Row as CompareRow, Status as CompareStatus};
+use sector64::repair::{Fix, RepairPlan};
 use sector64::{
     write_lbr, write_lnx, write_p00, write_t64, BamState, BasicDialect, BlockMap, BlockStatus,
     Disk, FileType, GfxKind, GfxSheet, ImportFile, Owner, PicFormat,
@@ -596,7 +597,10 @@ struct App {
     /// The PIC preview's format (`None` detects it).
     pic_format: Option<PicFormat>,
     validation: String,
-    // whether the validation-result popover is showing
+    /// Whether the last check found anything wrong, and the fixes it offers.
+    validation_bad: bool,
+    repair: RepairPlan,
+    // whether the validation window is showing
     show_validation: bool,
     // whether the preview pane is visible (toggled from the menu bar)
     show_preview: bool,
@@ -644,6 +648,8 @@ enum Act {
     Save,
     SaveAs,
     Validate,
+    /// Validation window: apply the fixes that are ticked.
+    Repair,
     NewArchive,
     SaveArchiveAs,
     /// Copy window: open a disk to copy to, or make a blank one (0 D64,
@@ -1049,6 +1055,7 @@ impl App {
             Act::Save => self.save(false),
             Act::SaveAs => self.save(true),
             Act::Validate => self.validate(),
+            Act::Repair => self.repair_disk(),
             Act::NewArchive => {
                 self.pane.clear_history();
                 self.pane.disk = None;
@@ -1509,22 +1516,68 @@ impl App {
             self.validation = "Open a D64/D71/D81 to validate".into();
             return;
         };
-        self.validation = match ed.disk.validate() {
-            Ok(r) => format!(
-                "blocks: {} used, {} free\ncross-linked: {}\nused-but-free: {}\n{}",
-                r.blocks_used,
-                r.blocks_free,
-                r.cross_linked.len(),
-                r.used_but_free.len(),
-                if r.cross_linked.is_empty() && r.used_but_free.is_empty() {
-                    "✓ consistent with the BAM"
-                } else {
-                    "⚠ inconsistencies found"
-                },
-            ),
-            Err(e) => format!("validate: {e}"),
-        };
+        let map = ed.disk.block_map();
+        let shared = map.tracks.iter().flatten().filter(|b| b.shared).count();
+        let (_, used, system, lost, conflict) = map.counts();
+        let plan = ed.disk.repair_plan();
+        // Lost blocks, files never closed and off-by-default fixes may all be
+        // deliberate; the rest is damage.
+        self.validation_bad = conflict > 0
+            || !map.problems.is_empty()
+            || plan
+                .choices
+                .iter()
+                .any(|c| c.apply && !matches!(c.fix, Fix::FreeLost { .. }));
+        let free = ed.disk.blocks_free().unwrap_or(0);
+        self.validation = format!(
+            "blocks: {used} in files, {system} DOS, {free} free\n\
+             shared by two files: {shared}\n\
+             in use but listed as free: {}\n\
+             lost (nothing uses them): {lost}\n\
+             broken chains: {}\n{}",
+            conflict - shared,
+            map.problems.len(),
+            if self.validation_bad {
+                "⚠ problems found"
+            } else {
+                "✓ consistent with the BAM"
+            },
+        );
+        self.repair = plan;
         self.show_validation = true;
+    }
+
+    /// Apply the ticked fixes to the open disk, as one step of its Undo, and
+    /// check it again.
+    fn repair_disk(&mut self) {
+        let before = self.pane.snapshot();
+        let Some(ed) = &mut self.pane.disk else {
+            return;
+        };
+        // The window stays open while the disk can be edited, so make sure
+        // the fixes are still the ones it shows.
+        if !ed.disk.repair_plan().same_fixes(&self.repair) {
+            self.validate();
+            self.status = "The disk has changed, so it was checked again".into();
+            return;
+        }
+        match ed.disk.repair(&self.repair) {
+            Ok(n) => {
+                ed.dirty = true;
+                let done = format!(
+                    "Repaired the disk ({n} fix{})",
+                    if n == 1 { "" } else { "es" }
+                );
+                self.pane.record(before, &done);
+                self.pane.hex_cache = None;
+                self.pane.gfx_cache = None;
+                self.pane.pic_cache = None;
+                self.pane.refresh();
+                self.validate();
+                self.status = done;
+            }
+            Err(e) => self.status = format!("Repair failed, nothing changed: {e}"),
+        }
     }
 
     fn add(&mut self, name: String, bytes: &[u8]) {
@@ -2216,9 +2269,10 @@ impl eframe::App for App {
                     if ui
                         .add_enabled(
                             is_disk,
-                            egui::Button::new("Validate Disk").shortcut_text(key_hint("Ctrl+L")),
+                            egui::Button::new("Validate / Repair")
+                                .shortcut_text(key_hint("Ctrl+L")),
                         )
-                        .on_hover_text("check every file's block chain against the BAM")
+                        .on_hover_text("check every file's blocks against the BAM, and repair them")
                         .on_disabled_hover_text(disk_tip)
                         .clicked()
                     {
@@ -2354,8 +2408,6 @@ impl eframe::App for App {
                     });
                 });
         });
-
-        // Validation results appear in a dismiss-on-click popover (built below).
 
         // Preview pane — shown only when toggled on from the menu bar. All of
         // its functionality (HEX/TEXT toggle, scrolling) is unchanged.
@@ -2575,40 +2627,40 @@ impl eframe::App for App {
             }
         }
 
-        // Validation result popover — a centred window that dismisses when
-        // clicked anywhere on it.
+        // Validation window: what the check found, and the fixes it offers.
         if self.show_validation {
-            let text = self.validation.clone();
-            let warn = text.contains('⚠');
-            let win = egui::Window::new(
+            if !show_help
+                && !show_map
+                && !show_copy
+                && !show_compare
+                && ctx.input(|i| i.key_pressed(egui::Key::Escape))
+            {
+                self.show_validation = false;
+            }
+            let screen = ctx.screen_rect();
+            let mut close = false;
+            egui::Window::new(
                 egui::RichText::new("DISK VALIDATION")
                     .color(c64::ACCENT)
                     .strong(),
             )
             .collapsible(false)
             .resizable(false)
+            .max_height(screen.height() - 60.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                let col = if warn { c64::WARN } else { c64::OK };
-                ui.add_space(2.0);
-                ui.add(
-                    egui::Label::new(egui::RichText::new(&text).monospace().color(col))
-                        .wrap_mode(egui::TextWrapMode::Extend),
+                ui.set_max_width(640.0_f32.min(screen.width() - 60.0));
+                validation_ui(
+                    ui,
+                    &self.validation,
+                    self.validation_bad,
+                    &mut self.repair,
+                    &mut close,
+                    &mut acts,
                 );
-                ui.add_space(6.0);
-                ui.label(egui::RichText::new("click to dismiss").color(c64::TEXT_DIM));
             });
-            // Dismiss on a mouse click anywhere inside the popover.
-            if let Some(inner) = win {
-                let clicked_inside = ctx.input(|i| {
-                    i.pointer.primary_clicked()
-                        && i.pointer
-                            .interact_pos()
-                            .is_some_and(|p| inner.response.rect.contains(p))
-                });
-                if clicked_inside {
-                    self.show_validation = false;
-                }
+            if close {
+                self.show_validation = false;
             }
         }
 
@@ -4473,6 +4525,77 @@ fn disk_title(disk: &Disk, header: sector64::Result<sector64::Header>) -> String
     }
 }
 
+/// The validation window's contents: the check's results, a checkbox per
+/// fix, and the buttons.
+fn validation_ui(
+    ui: &mut egui::Ui,
+    text: &str,
+    bad: bool,
+    plan: &mut RepairPlan,
+    close: &mut bool,
+    acts: &mut Vec<Act>,
+) {
+    let col = if bad { c64::WARN } else { c64::OK };
+    ui.add_space(2.0);
+    ui.label(egui::RichText::new(text).monospace().color(col));
+    if !plan.choices.is_empty() {
+        ui.separator();
+        ui.label(egui::RichText::new("FIXES").color(c64::ACCENT).strong());
+        egui::ScrollArea::vertical()
+            .id_salt("repair_scroll")
+            .max_height(260.0)
+            .show(ui, |ui| {
+                for c in &mut plan.choices {
+                    let tip = fix_tip(&c.fix);
+                    ui.checkbox(&mut c.apply, c.fix.to_string())
+                        .on_hover_text(tip);
+                }
+            });
+    }
+    for note in &plan.notes {
+        ui.label(egui::RichText::new(format!("Note: {note}.")).color(c64::TEXT_DIM));
+    }
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if !plan.choices.is_empty() {
+            let n = plan.choices.iter().filter(|c| c.apply).count();
+            if ui
+                .add_enabled(n > 0, egui::Button::new(format!("Repair ({n})")))
+                .on_hover_text("make the ticked fixes; Undo takes them all back")
+                .on_disabled_hover_text("tick the fixes to make")
+                .clicked()
+            {
+                acts.push(Act::Repair);
+            }
+        }
+        if ui.button("Close").clicked() {
+            *close = true;
+        }
+    });
+}
+
+/// What a fix does, and what to think about before making it.
+fn fix_tip(fix: &Fix) -> &'static str {
+    match fix {
+        Fix::EndDirectory { .. } => {
+            "entries after the break are lost; their files' blocks stay allocated"
+        }
+        Fix::EndFile { .. } => "the rest of the file is already cut off and can't be found",
+        Fix::RemoveFile { .. } => {
+            "blocks that only this file uses are freed; untick it if the entry is there on purpose"
+        }
+        Fix::SplitFile { .. } => {
+            "each file gets its own copy, so deleting one can't damage the other"
+        }
+        Fix::MarkUsed { .. } => "otherwise the next file written could overwrite them",
+        Fix::FreeLost { .. } => {
+            "they may be lost parts of broken files, or data a protected game hides: \
+             untick it if you want to keep them"
+        }
+        Fix::Recount { .. } => "the number of free blocks is worked out again",
+    }
+}
+
 /// A pane's files as the comparison sees them.
 fn compare_items(p: &Pane) -> Vec<CompareItem<'_>> {
     p.nodes
@@ -5542,6 +5665,36 @@ mod tests {
         copy_bytes(&mut disk, &node).unwrap();
         assert!(copy_bytes(&mut disk, &node).is_err());
         assert_eq!(disk.directory().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn validating_offers_repairs_as_one_undo_step() {
+        let mut app = app_with_disk();
+        app.add("ONE".into(), &[1; 600]);
+        app.apply(Act::Validate);
+        assert!(app.show_validation && !app.validation_bad);
+        assert!(app.repair.choices.is_empty());
+
+        // Break ONE's chain after its first block.
+        let disk = &mut app.pane.disk.as_mut().unwrap().disk;
+        let e = disk.find_entry("ONE").unwrap().unwrap();
+        disk.block_mut(e.first_track, e.first_sector).unwrap()[0] = 99;
+        let broken = disk.as_bytes().to_vec();
+        // The window's list is out of date, so it's only checked again.
+        app.apply(Act::Repair);
+        assert_eq!(app.pane.disk.as_ref().unwrap().disk.as_bytes(), broken);
+        assert!(app.validation_bad, "{}", app.validation);
+        let undo = app.pane.undo.len();
+        app.apply(Act::Repair);
+        assert_eq!(app.status, "Repaired the disk (1 fix)");
+        assert_eq!(app.pane.nodes[0].data.as_ref().unwrap().len(), 254);
+        assert!(app.pane.is_dirty());
+        // What's left is the cut-off blocks, which aren't damage.
+        assert!(!app.validation_bad, "{}", app.validation);
+        assert_eq!(app.repair.choices.len(), 1);
+        assert_eq!(app.pane.undo.len(), undo + 1);
+        app.apply(Act::Undo);
+        assert_eq!(app.pane.disk.as_ref().unwrap().disk.as_bytes(), broken);
     }
 
     #[test]

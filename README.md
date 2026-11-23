@@ -46,6 +46,11 @@ job with those failure modes designed out:
 - **Validation** (`Disk::validate` → `ValidationReport`): cross-checks every
   file's chain against the BAM, reporting cross-linked blocks and blocks used
   but marked free.
+- **Repair** (`Disk::repair_plan` → `RepairPlan`, `Disk::repair`): lists what can
+  be fixed and applies the chosen fixes, all or nothing. It rebuilds the BAM
+  (checked against `c1541 -validate`), ends broken chains, separates
+  cross-linked files and mends a broken directory. Fixes that might lose data
+  start switched off.
 - **Relative files** (`Disk::side_sector_chain`, `rel_data_blocks`,
   `read_rel` → `RelFile`): follows a REL file's side-sector chain, gathers the
   data-block pointers it indexes, and splits the data into fixed-length
@@ -219,7 +224,8 @@ automatically, or picked by hand), as 6502 machine code (disassembled from the
 address a BASIC `SYS` line jumps to), as a Koala Painter, Art Studio, Advanced
 Art Studio or Doodle! picture, or as sprites and characters (hires or
 multicolour, lined up with the memory a PRG loads to); for an open D64/D71/D81, **Validate
-disk** cross-checks every file chain against the BAM. The **disk map** draws
+/ Repair** cross-checks every file chain against the BAM and offers fixes to
+tick. The **disk map** draws
 every block of any disk image as a track-by-sector grid, coloured by the file
 (or DOS structure) that owns it, with free, orphaned and conflicting blocks
 marked; hover a block to see its file, click to select it. The **Copy** window holds a second disk image and
@@ -348,6 +354,7 @@ against a real disk.
 | `src/bin/s64extract.rs` | CLI: extract one file to stdout, or list it as BASIC |
 | `src/bin/s64val.rs` | CLI: validate the disk against its BAM, or draw its block map |
 | `src/listing.rs`   | any disk or archive as one flat list of files |
+| `src/repair.rs`    | finding and fixing damage to a disk |
 | `src/compare.rs`   | file-by-file comparison of two listings |
 | `src/bin/s64cmp.rs` | CLI: compare two disks or archives |
 | `src/bin/s64write.rs` | CLI: format, add, delete, rename |
