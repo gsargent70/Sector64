@@ -8,12 +8,14 @@
 //! and so on.
 
 use std::collections::HashMap;
+use std::fmt;
 
 /// One file in a listing.
 #[derive(Clone, Copy, Debug)]
 pub struct Item<'a> {
     pub name: &'a str,
-    /// The file type's mnemonic (`prg`, `seq`, …).
+    /// The file type's mnemonic (`prg`, `seq`, …), or empty when the format
+    /// doesn't record one (LHA, Wraptor); it then matches any type.
     pub kind: &'a str,
     /// The file's bytes, or `None` if they couldn't be read.
     pub data: Option<&'a [u8]>,
@@ -45,6 +47,42 @@ pub enum Status {
     OnlyRight,
 }
 
+impl Status {
+    /// A one-character mark for listings: `=` same, `*` different, `?`
+    /// unreadable, `<` only on the left, `>` only on the right.
+    pub fn mark(&self) -> &'static str {
+        match self {
+            Status::Same => "=",
+            Status::Differs(_) => "*",
+            Status::Unreadable => "?",
+            Status::OnlyLeft => "<",
+            Status::OnlyRight => ">",
+        }
+    }
+
+    /// What was found, in words, given each side's file type (e.g. `type
+    /// PRG / SEQ; differs from byte 2`).
+    pub fn describe(&self, kinds: [Option<&str>; 2]) -> String {
+        match self {
+            Status::Same => "same".into(),
+            Status::Differs(d) => {
+                let mut notes = Vec::new();
+                if d.kind {
+                    let k = |k: Option<&str>| k.unwrap_or("?").to_uppercase();
+                    notes.push(format!("type {} / {}", k(kinds[0]), k(kinds[1])));
+                }
+                if let Some(at) = d.first {
+                    notes.push(format!("differs from byte {at}"));
+                }
+                notes.join("; ")
+            }
+            Status::Unreadable => "can't be read to compare".into(),
+            Status::OnlyLeft => "only on the left".into(),
+            Status::OnlyRight => "only on the right".into(),
+        }
+    }
+}
+
 /// One file name's result: its index in each listing, if present there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
@@ -68,6 +106,32 @@ impl Summary {
     /// Whether the two listings hold exactly the same files.
     pub fn identical(&self) -> bool {
         self.differ + self.unreadable + self.only_left + self.only_right == 0
+    }
+}
+
+/// A summary line, e.g. `2 differ, 1 only on the left, 14 the same`.
+impl fmt::Display for Summary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.identical() {
+            return write!(
+                f,
+                "Identical: the same {} file(s) on both sides, byte for byte.",
+                self.same
+            );
+        }
+        let parts = [
+            (self.differ, "differ"),
+            (self.only_left, "only on the left"),
+            (self.only_right, "only on the right"),
+            (self.unreadable, "can't be read"),
+            (self.same, "the same"),
+        ];
+        let parts: Vec<_> = parts
+            .iter()
+            .filter(|(n, _)| *n > 0)
+            .map(|(n, what)| format!("{n} {what}"))
+            .collect();
+        f.write_str(&parts.join(", "))
     }
 }
 
@@ -120,7 +184,8 @@ fn pair_status(l: &Item, r: &Item) -> Status {
         .zip(b)
         .position(|(x, y)| x != y)
         .or_else(|| (a.len() != b.len()).then(|| a.len().min(b.len())));
-    let kind = !l.kind.eq_ignore_ascii_case(r.kind);
+    let typed = !l.kind.is_empty() && !r.kind.is_empty();
+    let kind = typed && !l.kind.eq_ignore_ascii_case(r.kind);
     if first.is_none() && !kind {
         Status::Same
     } else {
@@ -216,6 +281,14 @@ mod tests {
         assert_eq!((rows[1].right, rows[1].status), (None, Status::OnlyLeft));
         assert_eq!(rows[2].status, Status::Unreadable);
         assert_eq!(rows.len(), 3);
+    }
+
+    #[test]
+    fn a_format_without_types_matches_any_type() {
+        let status = |l, r| compare(&[item("A", l, b"1")], &[item("A", r, b"1")])[0].status;
+        assert_eq!(status("", "seq"), Status::Same);
+        assert_eq!(status("prg", ""), Status::Same);
+        assert_ne!(status("prg", "seq"), Status::Same);
     }
 
     #[test]

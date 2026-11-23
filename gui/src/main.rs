@@ -16,9 +16,8 @@ use eframe::egui;
 use egui::Color32;
 use sector64::compare::{Item as CompareItem, Row as CompareRow, Status as CompareStatus};
 use sector64::{
-    parse_arc, parse_lbr, parse_lha, parse_lnx, parse_p00, parse_sda, parse_t64, write_lbr,
-    write_lnx, write_p00, write_t64, BamState, BasicDialect, BlockMap, BlockStatus, Disk, FileType,
-    GfxKind, GfxSheet, ImportFile, Owner, PicFormat,
+    write_lbr, write_lnx, write_p00, write_t64, BamState, BasicDialect, BlockMap, BlockStatus,
+    Disk, FileType, GfxKind, GfxSheet, ImportFile, Owner, PicFormat,
 };
 
 /// The Commodore 64 palette this UI is themed around (Pepto values).
@@ -672,6 +671,9 @@ enum Act {
     CopyToPane,
     /// Compare window: select this file in the left and right panes.
     CompareSelect(Option<usize>, Option<usize>),
+    /// Compare window: copy the files missing from the right pane into it
+    /// (`true`), or the ones missing from the left pane (`false`).
+    CopyMissing(bool),
 }
 
 impl Pane {
@@ -990,6 +992,7 @@ impl App {
                 }
             }
             Act::CopyToPane => self.copy_to_pane(),
+            Act::CopyMissing(to_right) => self.copy_missing(to_right),
             Act::CompareSelect(l, r) => {
                 let (left, right) = if self.focus_right {
                     (&mut self.back, &mut self.pane)
@@ -1434,49 +1437,29 @@ impl App {
                 "Open a disk or start a new archive in the other pane to copy into".into();
             return;
         }
-        let before = self.back.snapshot();
-        // From a disk, copy directory entries (exact names, lock flags);
-        // from an archive, the extracted bytes under the listed name.
-        let src = &self.pane;
-        let src_disk = src.map_disk();
-        let entries = src_disk.map(|d| d.directory().unwrap_or_default());
-        let mut done = Vec::new();
-        let mut failed = Vec::new();
-        for i in rows {
-            let node = &src.nodes[i];
-            let r = if let Some(ed) = &mut self.back.disk {
-                match (src_disk, entries.as_ref().and_then(|e| e.get(i))) {
-                    (Some(d), Some(entry)) => {
-                        ed.disk.copy_file_from(d, entry).map_err(|e| e.to_string())
-                    }
-                    _ => copy_bytes(&mut ed.disk, node),
-                }
-            } else if let Some(stage) = &mut self.back.archive {
-                node_file(node).map(|f| stage.push(f))
-            } else {
-                Err("nothing to copy into".to_string())
-            };
-            match r {
-                Ok(()) => done.push(node.name.clone()),
-                Err(e) => failed.push(format!("\"{}\": {e}", node.name)),
-            }
+        self.status = copy_rows(&self.pane, &mut self.back, &rows, "the other pane");
+    }
+
+    /// Compare window: copy every file that's only in the other pane into the
+    /// right pane (`to_right`) or the left one, as one step of its Undo.
+    fn copy_missing(&mut self, to_right: bool) {
+        let (dest, src, side) = match (self.focus_right == to_right, to_right) {
+            (true, true) => (&mut self.pane, &self.back, "the right pane"),
+            (true, false) => (&mut self.pane, &self.back, "the left pane"),
+            (false, true) => (&mut self.back, &self.pane, "the right pane"),
+            (false, false) => (&mut self.back, &self.pane, "the left pane"),
+        };
+        if !dest.editable() {
+            self.status = format!("Open a disk or start a new archive in {side} to copy into");
+            return;
         }
-        let status = copy_report(&done, &failed, "the other pane");
-        if !done.is_empty() {
-            let dest = &mut self.back;
-            if let Some(ed) = &mut dest.disk {
-                ed.dirty = true;
-            }
-            dest.record(
-                before,
-                &format!("Copied {} file(s) from the other pane", done.len()),
-            );
-            dest.hex_cache = None;
-            dest.gfx_cache = None;
-            dest.pic_cache = None;
-            dest.refresh();
-        }
-        self.status = status;
+        let rows = sector64::compare::compare(&compare_items(src), &compare_items(dest));
+        let missing: Vec<usize> = rows
+            .iter()
+            .filter(|r| r.status == CompareStatus::OnlyLeft)
+            .filter_map(|r| r.left)
+            .collect();
+        self.status = copy_rows(src, dest, &missing, side);
     }
 
     fn save_archive(&mut self) {
@@ -4490,8 +4473,6 @@ fn disk_title(disk: &Disk, header: sector64::Result<sector64::Header>) -> String
     }
 }
 
-/// The Copy window's contents: the other disk's header, its files, and the
-/// buttons that open, make, save it and copy files across.
 /// A pane's files as the comparison sees them.
 fn compare_items(p: &Pane) -> Vec<CompareItem<'_>> {
     p.nodes
@@ -4504,48 +4485,12 @@ fn compare_items(p: &Pane) -> Vec<CompareItem<'_>> {
         .collect()
 }
 
-/// The Compare window's summary line, e.g. "2 differ, 1 only on the left,
-/// 14 the same".
-fn compare_summary(s: &sector64::compare::Summary) -> String {
-    if s.identical() {
-        return format!(
-            "Identical: the same {} file(s) on both sides, byte for byte.",
-            s.same
-        );
-    }
-    let parts = [
-        (s.differ, "differ"),
-        (s.only_left, "only on the left"),
-        (s.only_right, "only on the right"),
-        (s.unreadable, "can't be read"),
-        (s.same, "the same"),
-    ];
-    parts
-        .iter()
-        .filter(|(n, _)| *n > 0)
-        .map(|(n, what)| format!("{n} {what}"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// How a Compare row looks: its mark, its colour and what it says.
-fn compare_look(row: &CompareRow, kinds: [Option<&str>; 2]) -> (&'static str, Color32, String) {
-    match row.status {
-        CompareStatus::Same => ("=", c64::TEXT_DIM, "same".into()),
-        CompareStatus::Differs(d) => {
-            let mut notes = Vec::new();
-            if d.kind {
-                let k = |k: Option<&str>| k.unwrap_or("?").to_uppercase();
-                notes.push(format!("type {} / {}", k(kinds[0]), k(kinds[1])));
-            }
-            if let Some(at) = d.first {
-                notes.push(format!("differs from byte {at}"));
-            }
-            ("*", c64::WARN, notes.join("; "))
-        }
-        CompareStatus::Unreadable => ("?", c64::TEXT_DIM, "can't be read to compare".into()),
-        CompareStatus::OnlyLeft => ("<", c64::ORPHAN, "only on the left".into()),
-        CompareStatus::OnlyRight => (">", c64::ORPHAN, "only on the right".into()),
+/// The colour of a Compare row.
+fn compare_colour(status: CompareStatus) -> Color32 {
+    match status {
+        CompareStatus::Same | CompareStatus::Unreadable => c64::TEXT_DIM,
+        CompareStatus::Differs(_) => c64::WARN,
+        CompareStatus::OnlyLeft | CompareStatus::OnlyRight => c64::ORPHAN,
     }
 }
 
@@ -4582,11 +4527,43 @@ fn compare_ui(
                     c64::TEXT
                 };
                 ui.add(
-                    egui::Label::new(egui::RichText::new(compare_summary(&summary)).color(colour))
-                        .wrap(),
+                    egui::Label::new(egui::RichText::new(summary.to_string()).color(colour)).wrap(),
                 );
             });
         });
+    });
+    ui.horizontal(|ui| {
+        let buttons = [
+            (true, "Copy Missing to Right", summary.only_left),
+            (false, "Copy Missing to Left", summary.only_right),
+        ];
+        for (to_right, label, n) in buttons {
+            let dest = panes[usize::from(to_right)];
+            let label = match n {
+                0 => label.to_string(),
+                n => format!("{label} ({n})"),
+            };
+            let (from, to) = if to_right {
+                ("left", "right")
+            } else {
+                ("right", "left")
+            };
+            let tip = if dest.editable() {
+                format!("the {to} pane isn't missing any files")
+            } else {
+                format!("the {to} pane needs an editable disk or a new archive")
+            };
+            if ui
+                .add_enabled(n > 0 && dest.editable(), egui::Button::new(label))
+                .on_hover_text(format!(
+                    "copy the files that are only on the {from} into the {to} pane"
+                ))
+                .on_disabled_hover_text(tip)
+                .clicked()
+            {
+                acts.push(Act::CopyMissing(to_right));
+            }
+        }
     });
     ui.separator();
     let node = |side: usize, i: Option<usize>| i.and_then(|i| panes[side].nodes.get(i));
@@ -4614,8 +4591,9 @@ fn compare_ui(
                     for row in shown {
                         let (l, r) = (node(0, row.left), node(1, row.right));
                         let kinds = [l.map(|n| n.badge.as_str()), r.map(|n| n.badge.as_str())];
-                        let (mark, colour, note) = compare_look(row, kinds);
-                        ui.label(egui::RichText::new(mark).color(colour));
+                        let colour = compare_colour(row.status);
+                        let note = row.status.describe(kinds);
+                        ui.label(egui::RichText::new(row.status.mark()).color(colour));
                         if ui
                             .selectable_label(false, egui::RichText::new(&row.name).color(colour))
                             .on_hover_text("select it in both panes")
@@ -4643,6 +4621,8 @@ fn compare_ui(
         });
 }
 
+/// The Copy window's contents: the other disk's header, its files, and the
+/// buttons that open, make, save it and copy files across.
 fn copy_window_ui(
     ui: &mut egui::Ui,
     other: Option<&OtherDisk>,
@@ -4805,12 +4785,61 @@ fn copy_window_ui(
     });
 }
 
+/// Copy the files at `rows` of `src` into `dest`'s disk or new archive, as
+/// one step of its Undo. Returns the status line, which calls it `dest_name`.
+fn copy_rows(src: &Pane, dest: &mut Pane, rows: &[usize], dest_name: &str) -> String {
+    let before = dest.snapshot();
+    // From a disk, copy directory entries (exact names, lock flags); from an
+    // archive, the extracted bytes under the listed name.
+    let src_disk = src.map_disk();
+    let entries = src_disk.map(|d| d.directory().unwrap_or_default());
+    let mut done = Vec::new();
+    let mut failed = Vec::new();
+    for &i in rows {
+        let Some(node) = src.nodes.get(i) else {
+            continue;
+        };
+        let r = if let Some(ed) = &mut dest.disk {
+            match (src_disk, entries.as_ref().and_then(|e| e.get(i))) {
+                (Some(d), Some(entry)) => {
+                    ed.disk.copy_file_from(d, entry).map_err(|e| e.to_string())
+                }
+                _ => copy_bytes(&mut ed.disk, node),
+            }
+        } else if let Some(stage) = &mut dest.archive {
+            node_file(node).map(|f| stage.push(f))
+        } else {
+            Err("nothing to copy into".to_string())
+        };
+        match r {
+            Ok(()) => done.push(node.name.clone()),
+            Err(e) => failed.push(format!("\"{}\": {e}", node.name)),
+        }
+    }
+    if !done.is_empty() {
+        if let Some(ed) = &mut dest.disk {
+            ed.dirty = true;
+        }
+        dest.record(
+            before,
+            &format!("Copied {} file(s) from the other pane", done.len()),
+        );
+        dest.hex_cache = None;
+        dest.gfx_cache = None;
+        dest.pic_cache = None;
+        dest.refresh();
+    }
+    copy_report(&done, &failed, dest_name)
+}
+
 /// Write an archive member (or any listed file without a directory entry)
 /// onto `disk` under its listed name, refusing names already there and REL
 /// files.
 fn copy_bytes(disk: &mut Disk, node: &Node) -> Result<(), String> {
     let f = node_file(node)?;
-    if disk.find_entry(&f.name).ok().flatten().is_some() {
+    // A disk keeps 16 characters of the name, so that's what can clash.
+    let name: String = f.name.chars().take(16).collect();
+    if disk.find_entry(&name).ok().flatten().is_some() {
         return Err(sector64::Error::FileExists.to_string());
     }
     disk.write_file(&f.name, f.file_type, &f.data)
@@ -4878,15 +4907,11 @@ fn default_disk_name(disk: &Disk) -> &'static str {
 /// all four parts from the same folder and decode them into a D64 image.
 /// Returns `None` when the name isn't a Zip-Code part.
 fn zipcode_set(path: &Path) -> Option<Result<Vec<u8>, String>> {
-    let file = path.file_name()?.to_str()?;
-    let rest = match file.as_bytes() {
-        [b'1'..=b'4', b'!', ..] if file.len() > 2 => &file[2..],
-        _ => return None,
-    };
+    let names = sector64::listing::zipcode_parts(path)?;
     let dir = path.parent().unwrap_or(Path::new(""));
     let mut parts = Vec::with_capacity(4);
-    for n in 1..=4 {
-        let p = dir.join(format!("{n}!{rest}"));
+    for name in names {
+        let p = dir.join(name);
         match std::fs::read(&p) {
             Ok(b) => parts.push(b),
             Err(e) => {
@@ -4939,106 +4964,27 @@ fn open_path(path: &Path) -> Result<Opened, String> {
         ));
     }
 
-    let import_nodes = |files: Vec<sector64::ImportFile>| {
-        files
-            .into_iter()
-            .map(|f| Node {
-                badge: f.file_type.mnemonic().to_string(),
-                detail: String::new(), // size is in the SIZE column
-                name: f.name,
-                blocks: 0,
-                data: Ok(f.data),
-            })
-            .collect::<Vec<_>>()
-    };
-    let is_p00 = {
-        let b = ext.as_bytes();
-        b.len() == 3
-            && matches!(b[0], b'p' | b's' | b'u' | b'r' | b'd')
-            && b[1].is_ascii_digit()
-            && b[2].is_ascii_digit()
-    };
-
-    let (kind, nodes) = match ext.as_str() {
-        "arc" | "sda" => {
-            let parse = if bytes.starts_with(&[0x01, 0x08]) {
-                parse_sda
-            } else {
-                parse_arc
-            };
-            let entries = parse(&bytes).map_err(|e| e.to_string())?;
-            let details = packed_details(
-                entries
-                    .iter()
-                    .map(|e| (e.packed.len(), e.method.label().to_string())),
-            );
-            let nodes = entries
-                .into_iter()
-                .zip(details)
-                .map(|(e, detail)| Node {
-                    badge: e.file_type.mnemonic().to_string(),
-                    detail,
-                    blocks: 0,
-                    data: e.decode().map_err(|x| x.to_string()),
-                    name: e.name,
-                })
-                .collect();
-            ("ARC/SDA archive", nodes)
-        }
-        "lha" | "lzh" | "sfx" => {
-            let entries = parse_lha(&bytes).map_err(|e| e.to_string())?;
-            let details = packed_details(
-                entries
-                    .iter()
-                    .map(|e| (e.compressed_size as usize, e.method_str().to_string())),
-            );
-            let nodes = entries
-                .into_iter()
-                .zip(details)
-                .map(|(e, detail)| Node {
-                    badge: String::new(),
-                    detail,
-                    blocks: 0,
-                    data: e.decode().map_err(|x| x.to_string()),
-                    name: e.name,
-                })
-                .collect();
-            ("LHA/SFX archive", nodes)
-        }
-        "lbr" => (
-            "LBR library",
-            import_nodes(parse_lbr(&bytes).map_err(|e| e.to_string())?),
-        ),
-        "t64" => (
-            "T64 tape archive",
-            import_nodes(parse_t64(&bytes).map_err(|e| e.to_string())?),
-        ),
-        "lnx" => (
-            "Lynx archive",
-            import_nodes(parse_lnx(&bytes).map_err(|e| e.to_string())?),
-        ),
-        "wr3" => {
-            // Members share one sliding window, so decode the whole archive.
-            let nodes = sector64::decompress_wr3(&bytes)
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .map(|f| Node {
-                    badge: String::new(),
-                    detail: String::new(), // size is in the SIZE column
-                    blocks: 0,
-                    data: Ok(f.content),
-                    name: f.name,
-                })
-                .collect();
-            ("Wraptor-3 archive", nodes)
-        }
-        _ if is_p00 => (
-            "PC64 container",
-            import_nodes(vec![parse_p00(&bytes).map_err(|e| e.to_string())?]),
-        ),
-        other => return Err(format!("unrecognized file type (.{other})")),
-    };
-    Ok(Opened::List(kind.to_string(), nodes))
+    let archive = sector64::listing::read_archive(&ext, &bytes)
+        .ok_or_else(|| format!("unrecognized file type (.{ext})"))?
+        .map_err(|e| e.to_string())?;
+    let mut details =
+        packed_details(archive.files.iter().filter_map(|f| f.packed.clone())).into_iter();
+    let nodes = archive
+        .files
+        .into_iter()
+        .map(|f| Node {
+            badge: f.kind.to_string(),
+            // Stored files have no detail: their size is in the SIZE column.
+            detail: match f.packed {
+                Some(_) => details.next().unwrap_or_default(),
+                None => String::new(),
+            },
+            name: f.name,
+            blocks: 0,
+            data: f.data.map_err(|e| e.to_string()),
+        })
+        .collect();
+    Ok(Opened::List(archive.label.to_string(), nodes))
 }
 
 /// A small procedurally-drawn 3.5" floppy icon (48×48 RGBA) for the window.
@@ -5532,9 +5478,70 @@ mod tests {
 
         let rows = sector64::compare::compare(&compare_items(&app.back), &compare_items(&app.pane));
         let s = sector64::compare::summarize(&rows);
-        assert_eq!(compare_summary(&s), "1 differ, 1 only on the left");
-        let (mark, _, note) = compare_look(&rows[1], [Some("prg"), Some("prg")]);
-        assert_eq!((mark, note.as_str()), ("*", "differs from byte 2"));
+        assert_eq!(s.to_string(), "1 differ, 1 only on the left");
+        let note = rows[1].status.describe([Some("prg"), Some("prg")]);
+        assert_eq!(
+            (rows[1].status.mark(), note.as_str()),
+            ("*", "differs from byte 2")
+        );
+    }
+
+    #[test]
+    fn compare_copies_the_missing_files_either_way() {
+        let names = |p: &Pane| p.nodes.iter().map(|n| n.name.clone()).collect::<Vec<_>>();
+        let mut app = app_with_disk();
+        app.dual = true;
+        for name in ["A", "BOTH", "C"] {
+            app.apply(Act::AddBytes(name.into(), vec![1, 8, 0]));
+        }
+        app.apply(Act::FocusOther);
+        app.apply(Act::Create);
+        app.apply(Act::AddBytes("BOTH".into(), vec![1, 8, 9]));
+        app.apply(Act::AddBytes("D".into(), vec![1, 8, 0]));
+
+        // The right pane has the focus, so this copies into it.
+        let undo = app.pane.undo.len();
+        app.apply(Act::CopyMissing(true));
+        assert_eq!(app.status, "Copied 2 files to the right pane");
+        assert_eq!(names(&app.pane), ["BOTH", "D", "A", "C"]);
+        assert_eq!(names(&app.back), ["A", "BOTH", "C"]);
+        assert_eq!(app.pane.nodes[0].data.as_deref(), Ok(&[1, 8, 9][..]));
+        // One Undo takes all of them back.
+        assert_eq!(app.pane.undo.len(), undo + 1);
+        app.apply(Act::Undo);
+        assert_eq!(names(&app.pane), ["BOTH", "D"]);
+
+        // Into the unfocused left pane, then the same with the focus there.
+        app.apply(Act::CopyMissing(false));
+        assert_eq!(app.status, "Copied \"D\" to the left pane");
+        assert_eq!(names(&app.back), ["A", "BOTH", "C", "D"]);
+        app.apply(Act::FocusOther);
+        app.apply(Act::CopyMissing(true));
+        assert_eq!(names(&app.back), ["BOTH", "D", "A", "C"]);
+        let rows = sector64::compare::compare(&compare_items(&app.pane), &compare_items(&app.back));
+        let s = sector64::compare::summarize(&rows);
+        assert_eq!((s.same, s.differ, s.only_left + s.only_right), (3, 1, 0));
+
+        // A read-only pane is left alone.
+        app.back.disk = None;
+        app.back.nodes.clear();
+        app.apply(Act::CopyMissing(true));
+        assert!(app.status.starts_with("Open a disk"), "{}", app.status);
+    }
+
+    #[test]
+    fn copying_a_long_archive_name_twice_is_refused() {
+        let node = Node {
+            name: "A NAME LONGER THAN SIXTEEN".into(),
+            badge: "prg".into(),
+            detail: String::new(),
+            blocks: 0,
+            data: Ok(vec![1, 8, 0]),
+        };
+        let mut disk = Disk::format("D", "D1");
+        copy_bytes(&mut disk, &node).unwrap();
+        assert!(copy_bytes(&mut disk, &node).is_err());
+        assert_eq!(disk.directory().unwrap().len(), 1);
     }
 
     #[test]

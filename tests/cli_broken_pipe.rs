@@ -55,6 +55,10 @@ fn listing_into_a_closed_pipe_exits_cleanly() {
     for _ in 0..5 {
         run_and_hang_up(env!("CARGO_BIN_EXE_s64ls"), &[img.as_os_str()]);
         run_and_hang_up(env!("CARGO_BIN_EXE_s64val"), &[img.as_os_str()]);
+        run_and_hang_up(
+            env!("CARGO_BIN_EXE_s64cmp"),
+            &["--all".as_ref(), img.as_os_str(), img.as_os_str()],
+        );
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

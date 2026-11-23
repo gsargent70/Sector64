@@ -3,7 +3,7 @@
 Clean-room, **zero-dependency** Rust toolkit for Commodore disk images and
 archives:
 - core library (`src/`)
-- 10 CLI tools (`src/bin/`, documented in `CLI.md`)
+- 11 CLI tools (`src/bin/`, documented in `CLI.md`)
 - an egui GUI in `gui/` (separate workspace member)
 
 It runs on Linux and Windows. Releases are on GitHub

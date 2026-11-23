@@ -19,7 +19,7 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 # The command-line tools (the GUI is added separately).
-CLI="s64ls s64extract s64val s64write s64pack s64arc s64lha s64wr3 s64cvt s64tap"
+CLI="s64ls s64extract s64val s64write s64pack s64arc s64lha s64wr3 s64cvt s64tap s64cmp"
 
 # Destinations (per-user, XDG-aware).
 PREFIX="${PREFIX:-$HOME/.local}"

@@ -38,7 +38,7 @@ The examples below use the bare command name as if the tools are on your
 - **Exit status**: `0` on success, `2` for a usage error (wrong
   arguments), and `1` (non-zero) when the operation fails — a missing
   file, an unreadable image, a name that isn't present, or a validation
-  failure.
+  failure. (`s64cmp` uses `1` for "they differ" and `2` for any failure.)
 - **CBM names** are matched case-insensitively against the name as shown
   in the directory listing.
 
@@ -127,6 +127,40 @@ copy-protected disk or boot loader keeps outside the directory. The map
 follows broken chains as far as they go and lists the faults at the end.
 It exits non-zero only when a block is in conflict or a chain is broken.
 It works on every disk image, G64 and D2M included.
+
+### `s64cmp` — compare two disks or archives
+
+```
+s64cmp [--all] <left> <right>
+```
+
+Compares the files in two disk images or archives, in any combination (a
+disk with the archive it came from, say). Files are matched by name.
+Each one that differs, or is on only one side, gets a line with its size
+on the left and on the right, then a summary line follows. `--all` lists
+the matching files too.
+
+```
+* "EDITED"                  4        6  differs from byte 2
+* "RETYPED"                 2        2  type PRG / SEQ
+< "GONE"                    1        -  only on the left
+> "NEW"                     -        2  only on the right
+2 differ, 1 only on the left, 1 only on the right, 1 the same
+```
+
+The mark is `=` same, `*` different, `<` only on the left, `>` only on
+the right, or `?` unreadable on one side. LHA and Wraptor archives don't
+record file types, so only the bytes are compared. Any part of a Zip-Code
+set (`1!NAME` to `4!NAME`) stands for the whole set. Disk names, IDs and
+lock flags aren't compared.
+
+The exit status is like `cmp` and `diff`: `0` when the files are all the
+same, `1` when they aren't, `2` when the two couldn't be compared (wrong
+arguments, a missing file, or a format it doesn't know).
+
+```sh
+s64cmp original.d64 copy.d64 && echo "good copy"
+```
 
 ### `s64write` — create and edit D64 images
 
@@ -271,6 +305,7 @@ s64tap game.tap
 | `s64ls`      | List a disk directory                     | stdout       |
 | `s64extract` | Extract one file (or list it as BASIC)    | stdout       |
 | `s64val`     | Validate a disk, or draw its block map    | stdout + exit|
+| `s64cmp`     | Compare two disks or archives             | stdout + exit|
 | `s64write`   | Create / edit a D64 (format/add/del/ren)  | the image    |
 | `s64pack`    | Create a t64/lnx/lbr/p00 archive          | the archive  |
 | `s64arc`     | List / extract ARC or SDA                 | stdout       |
