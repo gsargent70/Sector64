@@ -34,7 +34,7 @@ This manual describes every feature of the graphical browser
        - Undo and redo
        - The unsaved-changes guard
   9. Building an archive
- 10. Validating a disk
+ 10. Validating and repairing a disk
  11. The disk map
  12. Copying between disks
  13. Two disks side by side
@@ -137,7 +137,7 @@ the right and the listing makes room for it:
              Extract ▸, Copy..., Copy to Other Pane (in
              dual view), Run in VICE, Undo, Redo,
              Rename and Delete.
-    Disk     Validate Disk, Disk Map and Compare Panes.
+    Disk     Validate / Repair, Disk Map and Compare Panes.
     Preview  shows or hides the preview pane.
     Dual     splits the window into two panes (see 13); it
              takes turns with the preview pane.
@@ -472,17 +472,55 @@ before you save.
 
 
 ----------------------------------------------------------------
- 10. VALIDATING A DISK
+ 10. VALIDATING AND REPAIRING A DISK
 ----------------------------------------------------------------
 
-Choose Disk > Validate Disk (or press Ctrl+L) to check an open
-disk's integrity — the BAM against the directory chain, block
-links, and allocation. The result appears in a centred popover:
+Choose Disk > Validate / Repair (or press Ctrl+L) to check an
+open disk: every file's chain of blocks, the directory, and the
+BAM (the disk's list of free blocks). A window shows the result:
 
-    green   — the disk checks out.
-    red (⚠) — problems were found, described in the report.
+    green     the disk checks out
+    red (⚠)   problems were found
 
-Click anywhere on the popover to dismiss it.
+If anything can be fixed, it's listed with a checkbox for each
+fix. Tick the ones you want and click Repair. Nothing is changed
+until you do, and the file on your computer isn't changed until
+you save. One Undo (Ctrl+Z) takes the whole repair back. The disk
+is checked again afterwards, so you can see what's left.
+
+The fixes are:
+
+    Mark blocks in use      blocks a file uses that the BAM has
+                            as free, so the next file written
+                            could overwrite them
+    Free unused blocks      blocks the BAM has as used, but no
+                            file uses
+    Correct free counts     when a track's count of free blocks
+                            doesn't match its list
+    Keep the first N        a file whose chain breaks, loops or
+    blocks                  runs into the directory: the part
+                            that can be read is kept
+    Copy shared blocks      a file that runs into another file's
+                            blocks gets its own copy of them
+    Remove an entry         a file that starts off the disk, or
+                            was never closed (shown with a *)
+    End the directory       when the directory's own chain is
+                            broken: the entries before the break
+                            are kept
+
+Fixes that could lose something start unticked: removing a file
+that was never closed, separating two names for the same file,
+and freeing blocks when they may be the rest of a damaged file.
+Untick Free unused blocks for copy-protected disks, which can
+hide data there. Broken REL and GEOS files can be removed but not
+repaired. C128 boot sectors, GEOS disks with files on the border,
+and CMD disks with subdirectories never have blocks freed that
+might still be needed, and lines of directory art are left alone.
+
+Work on a copy of a disk you can't replace: if a file matters,
+extract what you can from it before repairing.
+
+Close or Esc hides the window.
 
 
 ----------------------------------------------------------------
@@ -516,8 +554,8 @@ figure leaves out, so the two can differ.
 
 If a file's block links are broken (a link off the disk, or a
 chain that loops), the map shows as much as it could follow and
-lists the problem above the grid. Validate Disk (section 10)
-stops at such faults; the map carries on.
+lists the problem above the grid. Validate / Repair (section 10)
+can end the chain there.
 
 Amber blocks aren't always damage: some copy-protected disks and
 boot loaders keep data where the directory doesn't point. GEOS
@@ -710,7 +748,7 @@ early. The most recent few are shown at once.
     Ctrl+S      Save the open disk
     Ctrl+Z      Undo the last edit
     Ctrl+Y      Redo (also Ctrl+Shift+Z)
-    Ctrl+L      Validate the open disk
+    Ctrl+L      Validate or repair the open disk
     Ctrl+M      Show or hide the disk map
     Ctrl+K      Show or hide the Copy window
     Ctrl+D      Compare the two panes' files
