@@ -1,7 +1,7 @@
 # Sector64 feature list
 
 Sector64 is a clean-room, dependency-free Rust toolkit for Commodore disk
-images and archives, with a C64-styled GUI and ten command-line tools. This
+images and archives, with a C64-styled GUI and eleven command-line tools. This
 is the project's single list of features: what's built, what's planned, and
 ideas for later.
 
@@ -26,10 +26,9 @@ the core plus one front end.
 
 ## Ideas inbox
 
-Nothing unsorted right now.
-
 | ID | Idea | Notes |
 |---|---|---|
+| APP-09 | macOS build: universal .app in a .dmg/zip, built on GitHub's macOS runners, pushed to itch as a `mac` channel | M; needs Mac font paths, VICE .app lookup, ⌘ in shortcut labels; signing and notarization need an Apple Developer account ($99/yr) |
 
 ---
 
@@ -97,7 +96,7 @@ Checking and inspecting a disk's structure.
 | DISK-03 | Compare Panes: same / differs (first byte) / only on one side | M | Done v1.0.9 | core `sector64::compare` |
 | DISK-04 | Validate **and repair**: rebuild the BAM, free orphaned blocks, drop broken entries, with undo | L | Idea | like the 1541's VALIDATE |
 | DISK-05 | Sector editor: view/edit any track and sector in hex, jump from the disk map, follow chains | L | Idea | |
-| DISK-06 | Compare window: "Copy missing files" button that copies everything that's only on one side across | S | Idea | follow-up to DISK-03 |
+| DISK-06 | Compare window: "Copy missing files" button that copies everything that's only on one side across | S | Done (unreleased, #43) | either direction; follow-up to DISK-03 |
 
 ## 5. Working with other tools (TOOL)
 
@@ -112,7 +111,7 @@ Checking and inspecting a disk's structure.
 |---|---|---|---|---|
 | CLI-01 | Ten tools: s64ls, s64extract, s64write, s64val, s64pack, s64arc, s64lha, s64wr3, s64cvt, s64tap | L | Done v1.0.0 | see CLI.md |
 | CLI-02 | `s64extract --list` (BASIC listing) and `s64val --map` (block map) | S | Done v1.0.7 | |
-| CLI-03 | Compare two disks or archives from the command line | S | Idea | follow-up to DISK-03; core already does it |
+| CLI-03 | Compare two disks or archives from the command line | S | Done (unreleased, #43) | `s64cmp`; core `sector64::listing` reads any disk or archive |
 | CLI-04 | `--json` output for scripts | M | Idea | |
 
 ## 7. GUI and app (APP)
@@ -132,10 +131,9 @@ Checking and inspecting a disk's structure.
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Small follow-ups:** DISK-06, CLI-03.
-2. **Bigger features:** EDIT-06 (BASIC text → PRG) or DISK-04 (validate
+1. **Bigger features:** EDIT-06 (BASIC text → PRG) or DISK-04 (validate
    and repair).
-3. **Then:** DISK-05 (sector editor), EDIT-07, VIEW-10, FMT-13.
+2. **Then:** DISK-05 (sector editor), EDIT-07, VIEW-10, FMT-13.
 
 ## Done by release
 

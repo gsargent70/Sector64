@@ -227,7 +227,7 @@ copies files between the two, from any disk or archive onto a D64/D71/D81/D2M
 and back. **Dual** view splits the window into two panes, each with its own disk
 or archive, and F5 copies the selected files from one to the other. **Compare
 Panes** lists which files match byte for byte, which differ (and where),
-and which are on only one side. **Run in VICE** starts the open disk, or the selected program, in the
+and which are on only one side, and can copy the missing ones across. **Run in VICE** starts the open disk, or the selected program, in the
 VICE emulator (on a copy, unsaved edits included). Members that need a
 not-yet-implemented decoder are listed with the reason instead of bytes.
 
@@ -280,6 +280,7 @@ cargo run --bin s64extract -- disk.d64 GAME > game.prg   # extract one file
 cargo run --bin s64val -- disk.d64                       # validate vs. the BAM
 cargo run --bin s64extract -- --list disk.d64 MENU       # list a BASIC program
 cargo run --bin s64val -- --map disk.d64                 # draw the block map
+cargo run --bin s64cmp -- a.d64 b.d64                    # compare two disks
 cargo run --bin s64write -- format disk.d64 "my disk" 01 # create a blank image
 cargo run --bin s64write -- add disk.d64 hello hello.prg # write a host file in
 cargo run --bin s64write -- rename disk.d64 hello hi     # rename
@@ -346,6 +347,9 @@ against a real disk.
 | `src/bin/s64ls.rs` | CLI directory listing |
 | `src/bin/s64extract.rs` | CLI: extract one file to stdout, or list it as BASIC |
 | `src/bin/s64val.rs` | CLI: validate the disk against its BAM, or draw its block map |
+| `src/listing.rs`   | any disk or archive as one flat list of files |
+| `src/compare.rs`   | file-by-file comparison of two listings |
+| `src/bin/s64cmp.rs` | CLI: compare two disks or archives |
 | `src/bin/s64write.rs` | CLI: format, add, delete, rename |
 | `src/bin/s64pack.rs` | CLI: create a T64/LNX/LBR/P00 archive |
 | `src/arc.rs`       | Commodore ARC + SDA walk, stored + crunch (LZW+RLE) decode |

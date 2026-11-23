@@ -634,6 +634,14 @@ copy it across with F5. The window follows your edits as you
 make them. Esc or Close hides it. If Preview has hidden a pane,
 opening Compare brings it back.
 
+Copy Missing to Right copies every file that's only on the left
+into the right pane, and Copy Missing to Left does the reverse.
+The number in brackets is how many files are missing. They copy
+like F5 does, so the pane receiving them needs an editable disk
+or a new archive, and files that can't be copied are skipped and
+named in the status line. Files that differ are left alone. To
+undo the copy, focus the pane it went into and press Ctrl+Z.
+
 The preview pane and the second pane take turns. Turning
 Preview on hides the pane that isn't focused, and the preview
 shows the focused pane's selection. Clicking Dual again brings

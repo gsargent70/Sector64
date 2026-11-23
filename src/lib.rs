@@ -33,6 +33,7 @@ pub mod g64;
 pub mod geometry;
 pub mod gfx;
 pub mod lha;
+pub mod listing;
 pub mod lzhuf;
 pub mod tap;
 pub mod wr3;
