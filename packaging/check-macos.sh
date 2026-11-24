@@ -10,8 +10,8 @@
 set -eu
 
 zip=$1
-out=$2
-mkdir -p "$out"
+mkdir -p "$2"
+out=$(CDPATH= cd -- "$2" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
