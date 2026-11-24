@@ -85,7 +85,7 @@ Changing disks and building archives.
 | EDIT-03 | Undo and redo | M | Done v1.0.5 | |
 | EDIT-04 | Copy files between two disks (Copy window) | M | Done v1.0.7 | exact names, types, lock flags |
 | EDIT-05 | Copy across panes with F5 | S | Done v1.0.9 | |
-| EDIT-06 | BASIC text → runnable PRG (V2, 7.0, Simons'), the reverse of VIEW-03/04 | L | Done (unreleased) | core `sector64::tokenize`, `s64basic`, GUI BASIC editor; checked against petcat and the C64/C128 ROMs |
+| EDIT-06 | BASIC text → runnable PRG (V2, 7.0, Simons'), the reverse of VIEW-03/04 | L | Done (unreleased, #45) | core `sector64::tokenize`, `s64basic`, GUI BASIC editor; checked against petcat and the C64/C128 ROMs |
 | EDIT-07 | Directory editing: reorder, separator/"art" entries, disk name and ID, lock/unlock | M | Idea | |
 | EDIT-08 | Proper REL and GEOS copy between disks (side sectors, VLIR records) | M | Idea | both are skipped today |
 
