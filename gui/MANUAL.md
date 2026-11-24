@@ -39,10 +39,11 @@ This manual describes every feature of the graphical browser
  12. Copying between disks
  13. Two disks side by side
  14. Running in VICE
- 15. Status line and toast messages
- 16. Keyboard shortcuts
- 17. Settings that persist
- 18. Tips and troubleshooting
+ 15. The BASIC editor
+ 16. Status line and toast messages
+ 17. Keyboard shortcuts
+ 18. Settings that persist
+ 19. Tips and troubleshooting
 
 
 ----------------------------------------------------------------
@@ -134,9 +135,9 @@ the right and the listing makes room for it:
 
 - Menu bar (top):
     File     New, Open, Open Recent, Add file, Save, Save As,
-             Extract ▸, Copy..., Copy to Other Pane (in
-             dual view), Run in VICE, Undo, Redo,
-             Rename and Delete.
+             Extract ▸, Copy..., BASIC Editor..., Copy to
+             Other Pane (in dual view), Run in VICE, Undo,
+             Redo, Rename and Delete.
     Disk     Validate / Repair, Disk Map and Compare Panes.
     Preview  shows or hides the preview pane.
     Dual     splits the window into two panes (see 13); it
@@ -180,7 +181,7 @@ it instead (see 8). If you drop several files, the first is
 opened and the rest are ignored.
 
 On Linux, drag-and-drop works only when Sector64 runs on X11; see
-"Drag-and-drop on Linux (Wayland)" in section 18.
+"Drag-and-drop on Linux (Wayland)" in section 19.
 
 When a file opens, the first entry is selected automatically, so
 if you turn the preview pane on it has something to show at once.
@@ -401,7 +402,7 @@ ADDING FILES
 
   With a disk open, either:
     - Drag host files onto the window (on Linux this needs X11;
-      see section 18), or
+      see section 19), or
     - File > Add file ▸, choose the type (prg / seq / usr), then
       Add file… and pick a file.
   The file is given a Commodore name derived from its host name
@@ -459,7 +460,7 @@ THE UNSAVED-CHANGES GUARD
 
   1. File > New ▸ > Empty archive.
   2. Add files by dragging them in (on Linux this needs X11; see
-     section 18), or File > Add file ▸.
+     section 19), or File > Add file ▸.
   3. File > Save archive as… and choose a container format by
      the extension you type:
          .t64   tape image
@@ -725,7 +726,66 @@ names that differ only there may load the wrong one.
 
 
 ----------------------------------------------------------------
- 15. STATUS LINE AND TOAST MESSAGES
+ 15. THE BASIC EDITOR
+----------------------------------------------------------------
+
+Choose File > BASIC Editor... (or press Ctrl+B) to write a BASIC
+program, or to change one that's on a disk. Type or paste it, one
+numbered line per line:
+
+    10 PRINT "{CLR}HELLO"
+    20 GOTO 10
+
+The line under the text says how big the program is, or which
+lines have problems. When it's right, give it a name and click
+Add to Disk: it's made into a PRG on the open disk (or in the new
+archive) and selected, ready for Ctrl+R to run it in VICE.
+
+    V2 / 7.0 / SIMONS  the BASIC it's written in: the C64's, the
+                       C128's, or Simons' BASIC
+    Open Text...       loads the text from a file. Listings from
+                       s64extract --list and petcat work.
+    List Selected      loads the program selected in the list
+    Add to Disk        puts the program on the disk. If it has a
+                       BASIC program of that name, the button
+                       says Replace on Disk and replaces it.
+    Save Text...       saves the text to a file
+
+Adding or replacing is one Undo step, and nothing is saved until
+you save the disk. Replace won't touch a locked file, a program
+with machine code after its BASIC, or anything that isn't BASIC.
+If loading would lose changes to the text, the button asks first.
+The text is kept when you close the window or quit.
+
+Keywords don't need spaces around them, and abbreviations work:
+? is PRINT, and a shifted letter cuts a keyword short (see below).
+
+Keys that can't be typed are written in braces:
+
+    {CLR} {HOME} {DOWN}    control codes and colours, by the
+    {RVS ON} {RED} {F1}    names the BASIC preview shows
+    {5 DOWN}               five of them (or {DOWN*5})
+    {SHIFT-A} {CBM-A}      a key with Shift, the Commodore key
+    {CTRL-C}               or Ctrl
+    {$93} {147}            any character by number
+    π (or ~)               pi
+
+Shifted letters depend on how the program is typed. If its
+keywords are in capitals, as the BASIC preview lists them, small
+letters are shifted ones (Po is short for POKE). If its keywords
+are in small letters, as petcat lists them, it's the other way
+round (pO). Inside quotes, shifted letters show as graphics on
+the C64 unless the program switches to lower case.
+
+On a VIC-20, load the program into the editor from a disk, or put
+the petcat heading ;name ==1001== on the first line: both keep
+the machine's load address.
+
+Esc leaves the text, and a second Esc closes the window.
+
+
+----------------------------------------------------------------
+ 16. STATUS LINE AND TOAST MESSAGES
 ----------------------------------------------------------------
 
 The status line at the bottom always shows the result of your
@@ -741,7 +801,7 @@ early. The most recent few are shown at once.
 
 
 ----------------------------------------------------------------
- 16. KEYBOARD SHORTCUTS
+ 17. KEYBOARD SHORTCUTS
 ----------------------------------------------------------------
 
     Ctrl+O      Open a file
@@ -751,6 +811,7 @@ early. The most recent few are shown at once.
     Ctrl+L      Validate or repair the open disk
     Ctrl+M      Show or hide the disk map
     Ctrl+K      Show or hide the Copy window
+    Ctrl+B      Show or hide the BASIC editor
     Ctrl+D      Compare the two panes' files
     Ctrl+R      Run the disk or selected program in VICE
     Tab         Dual view: move the focus to the other pane
@@ -768,7 +829,7 @@ field (the filter box or a rename).
 
 
 ----------------------------------------------------------------
- 17. SETTINGS THAT PERSIST
+ 18. SETTINGS THAT PERSIST
 ----------------------------------------------------------------
 
 Between runs Sector64 remembers:
@@ -777,7 +838,8 @@ Between runs Sector64 remembers:
     - the Output folder you last chose, and
     - your recent files (see 4), and
     - the VICE folder, if you had to choose it (see 14), and
-    - whether the window was split into two panes (see 13).
+    - whether the window was split into two panes (see 13), and
+    - the program in the BASIC editor (see 15).
 
 Note: under a tiling Wayland compositor the window manager
 controls window geometry, so the saved size may be overridden by
@@ -785,7 +847,7 @@ your layout. The output folder is always restored.
 
 
 ----------------------------------------------------------------
- 18. TIPS AND TROUBLESHOOTING
+ 19. TIPS AND TROUBLESHOOTING
 ----------------------------------------------------------------
 
 THE PETSCII FONT

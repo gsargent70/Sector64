@@ -1,7 +1,7 @@
 # Sector64 feature list
 
 Sector64 is a clean-room, dependency-free Rust toolkit for Commodore disk
-images and archives, with a C64-styled GUI and eleven command-line tools. This
+images and archives, with a C64-styled GUI and twelve command-line tools. This
 is the project's single list of features: what's built, what's planned, and
 ideas for later.
 
@@ -28,6 +28,7 @@ the core plus one front end.
 
 | ID | Idea | Notes |
 |---|---|---|
+| EDIT-09 | BASIC editor: renumber, find/replace, and keep machine code after a listed program | M; follow-up to EDIT-06 |
 | CLI-05 | Repair from the command line (`s64val --repair`) | S; core done in DISK-04 |
 | FMT-14 | CMD-native subdirectories: list and map the files inside them | M; today only the top directory is read, so repair never frees blocks on such disks |
 | DISK-07 | Repair broken REL and GEOS files (rebuild side sectors, VLIR index) | L; DISK-04 can only remove them |
@@ -84,7 +85,7 @@ Changing disks and building archives.
 | EDIT-03 | Undo and redo | M | Done v1.0.5 | |
 | EDIT-04 | Copy files between two disks (Copy window) | M | Done v1.0.7 | exact names, types, lock flags |
 | EDIT-05 | Copy across panes with F5 | S | Done v1.0.9 | |
-| EDIT-06 | BASIC text → runnable PRG (V2, 7.0, Simons'), the reverse of VIEW-03/04 | L | Idea | check the output with petcat |
+| EDIT-06 | BASIC text → runnable PRG (V2, 7.0, Simons'), the reverse of VIEW-03/04 | L | Done (unreleased) | core `sector64::tokenize`, `s64basic`, GUI BASIC editor; checked against petcat and the C64/C128 ROMs |
 | EDIT-07 | Directory editing: reorder, separator/"art" entries, disk name and ID, lock/unlock | M | Idea | |
 | EDIT-08 | Proper REL and GEOS copy between disks (side sectors, VLIR records) | M | Idea | both are skipped today |
 
@@ -134,8 +135,7 @@ Checking and inspecting a disk's structure.
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Bigger feature:** EDIT-06 (BASIC text → PRG).
-2. **Then:** DISK-05 (sector editor), EDIT-07, VIEW-10, FMT-13.
+1. **Next:** DISK-05 (sector editor), EDIT-07, VIEW-10, FMT-13.
 
 ## Done by release
 

@@ -11,7 +11,7 @@ set -eu
 
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
-CLI="s64ls s64extract s64val s64write s64pack s64arc s64lha s64wr3 s64cvt s64tap s64cmp"
+CLI="s64ls s64extract s64val s64write s64pack s64arc s64lha s64wr3 s64cvt s64tap s64cmp s64basic"
 
 for tool in cargo tar; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -66,8 +66,8 @@ Install for your user (no root):
         ~/.local/share/icons/hicolor/scalable/apps/
 
 Tools: sector64-gui (GUI), s64ls, s64extract, s64val, s64write, s64pack,
-       s64arc, s64lha, s64wr3, s64cvt, s64tap, s64cmp. See doc/MANUAL.md
-       (GUI) and doc/CLI.md (command line).
+       s64arc, s64lha, s64wr3, s64cvt, s64tap, s64cmp, s64basic. See
+       doc/MANUAL.md (GUI) and doc/CLI.md (command line).
 EOF
 
 tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"

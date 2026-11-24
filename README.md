@@ -51,6 +51,9 @@ job with those failure modes designed out:
   (checked against `c1541 -validate`), ends broken chains, separates
   cross-linked files and mends a broken directory. Fixes that might lose data
   start switched off.
+- **BASIC tokenizer** (`tokenize`): turns a program's text into a PRG, for BASIC
+  V2, the C128's BASIC 7.0 and Simons' BASIC. It matches VICE's `petcat` byte for
+  byte on full keywords, and the C64 and C128 ROMs (run in VICE) on abbreviations.
 - **Relative files** (`Disk::side_sector_chain`, `rel_data_blocks`,
   `read_rel` → `RelFile`): follows a REL file's side-sector chain, gathers the
   data-block pointers it indexes, and splits the data into fixed-length
@@ -233,7 +236,8 @@ copies files between the two, from any disk or archive onto a D64/D71/D81/D2M
 and back. **Dual** view splits the window into two panes, each with its own disk
 or archive, and F5 copies the selected files from one to the other. **Compare
 Panes** lists which files match byte for byte, which differ (and where),
-and which are on only one side, and can copy the missing ones across. **Run in VICE** starts the open disk, or the selected program, in the
+and which are on only one side, and can copy the missing ones across. The **BASIC editor** writes a program, or
+lists one from a disk to change, and puts it on the disk as a PRG. **Run in VICE** starts the open disk, or the selected program, in the
 VICE emulator (on a copy, unsaved edits included). Members that need a
 not-yet-implemented decoder are listed with the reason instead of bytes.
 
@@ -286,6 +290,7 @@ cargo run --bin s64extract -- disk.d64 GAME > game.prg   # extract one file
 cargo run --bin s64val -- disk.d64                       # validate vs. the BAM
 cargo run --bin s64extract -- --list disk.d64 MENU       # list a BASIC program
 cargo run --bin s64val -- --map disk.d64                 # draw the block map
+cargo run --bin s64basic -- menu.txt menu.prg            # BASIC text to a PRG
 cargo run --bin s64cmp -- a.d64 b.d64                    # compare two disks
 cargo run --bin s64write -- format disk.d64 "my disk" 01 # create a blank image
 cargo run --bin s64write -- add disk.d64 hello hello.prg # write a host file in
@@ -354,6 +359,8 @@ against a real disk.
 | `src/bin/s64extract.rs` | CLI: extract one file to stdout, or list it as BASIC |
 | `src/bin/s64val.rs` | CLI: validate the disk against its BAM, or draw its block map |
 | `src/listing.rs`   | any disk or archive as one flat list of files |
+| `src/tokenize.rs`  | BASIC text to a PRG (V2, 7.0, Simons'), the reverse of `basic.rs` |
+| `src/bin/s64basic.rs` | CLI: turn a BASIC program's text into a PRG |
 | `src/repair.rs`    | finding and fixing damage to a disk |
 | `src/compare.rs`   | file-by-file comparison of two listings |
 | `src/bin/s64cmp.rs` | CLI: compare two disks or archives |

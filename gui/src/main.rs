@@ -16,6 +16,7 @@ use eframe::egui;
 use egui::Color32;
 use sector64::compare::{Item as CompareItem, Row as CompareRow, Status as CompareStatus};
 use sector64::repair::{Fix, RepairPlan};
+use sector64::tokenize::{tokenize, TextProblem, Tokenized};
 use sector64::{
     write_lbr, write_lnx, write_p00, write_t64, BamState, BasicDialect, BlockMap, BlockStatus,
     Disk, FileType, GfxKind, GfxSheet, ImportFile, Owner, PicFormat,
@@ -549,6 +550,97 @@ struct Pane {
     pic_cache: Option<PicView>,
 }
 
+/// What the BASIC editor's two load buttons read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BasicSource {
+    File,
+    Selected,
+}
+
+/// The BASIC editor: a program's text, and where it's to go.
+struct BasicEditor {
+    text: String,
+    name: String,
+    dialect: BasicDialect,
+    /// Where the program loads, when that isn't the dialect's usual address.
+    load: Option<u16>,
+    /// The text has changed since it was loaded, saved or added.
+    modified: bool,
+    /// A load button was pressed while the text was modified: press it again
+    /// to lose the changes.
+    confirm: Option<BasicSource>,
+    /// One of its fields had the keyboard last frame (Esc takes it away
+    /// before this frame's widgets can tell).
+    typing: bool,
+    /// The text tokenized as it stands; `None` when it needs doing.
+    checked: Option<Result<Tokenized, Vec<TextProblem>>>,
+}
+
+impl Default for BasicEditor {
+    fn default() -> Self {
+        BasicEditor {
+            text: String::new(),
+            name: String::new(),
+            dialect: BasicDialect::V2,
+            load: None,
+            modified: false,
+            confirm: None,
+            typing: false,
+            checked: None,
+        }
+    }
+}
+
+impl BasicEditor {
+    /// The text tokenized, or what's wrong with it.
+    fn check(&mut self) -> &Result<Tokenized, Vec<TextProblem>> {
+        self.checked
+            .get_or_insert_with(|| tokenize(&self.text, self.dialect, self.load))
+    }
+
+    /// Start again with other text, unmodified.
+    fn set_text(&mut self, text: String, load: Option<u16>) {
+        self.text = text;
+        self.load = load;
+        self.modified = false;
+        self.confirm = None;
+        self.checked = None;
+    }
+
+    /// The program's name as a disk keeps it.
+    fn disk_name(&self) -> String {
+        self.name.trim().to_uppercase().chars().take(16).collect()
+    }
+}
+
+/// Put a BASIC program on `disk`, replacing the program of that name if
+/// there is one. Only an unlocked, plain BASIC PRG is replaced. Returns
+/// whether it was; on an error the disk is unchanged.
+fn put_basic(disk: &mut Disk, name: &str, prg: &[u8]) -> Result<bool, String> {
+    let found = disk.find_entry(name).map_err(|e| e.to_string())?;
+    let mut new = disk.clone();
+    if let Some(e) = &found {
+        let refuse = |why: &str| Err(format!("\"{name}\" is on the disk already and {why}"));
+        if e.locked {
+            return refuse("it's locked");
+        }
+        let old = disk.read_entry(e).ok();
+        let listing = old.as_deref().and_then(sector64::detokenize_basic);
+        match listing {
+            Some(l) if e.file_type == FileType::Prg && l.trailing_bytes == 0 => {}
+            Some(_) if e.file_type == FileType::Prg => {
+                return refuse("has machine code or data after its BASIC");
+            }
+            _ => return refuse("isn't a BASIC program"),
+        }
+        new.scratch(name).map_err(|e| e.to_string())?;
+    }
+    new.write_file(name, FileType::Prg, prg)
+        .map_err(|e| e.to_string())?;
+    *disk = new;
+    Ok(found.is_some())
+}
+
 #[derive(Default)]
 struct App {
     /// The open disk or archive: in dual-pane view, the focused pane, the one
@@ -586,6 +678,9 @@ struct App {
     /// Whether the Copy window is open, and the disk it copies to and from.
     show_copy: bool,
     other: Option<OtherDisk>,
+    /// The BASIC editor: whether its window is open, and its program.
+    show_basic: bool,
+    basic: BasicEditor,
     // preview/validation pane
     /// How the preview pane renders bytes (hex or PETSCII text).
     preview_mode: PreviewMode,
@@ -647,6 +742,12 @@ enum Act {
     Delete,
     Save,
     SaveAs,
+    /// BASIC editor: load its text from a file, or from the selected program.
+    BasicOpen,
+    BasicFromSelected,
+    /// BASIC editor: save its text to a file, or put the program on the disk.
+    BasicSaveText,
+    BasicAdd,
     Validate,
     /// Validation window: apply the fixes that are ticked.
     Repair,
@@ -832,6 +933,19 @@ impl App {
             }
             if let Some(dual) = eframe::get_value::<bool>(s, "dual_pane") {
                 app.dual = dual;
+            }
+            // The editor's program is kept, so quitting never loses it.
+            if let Some((text, name, dialect, load, modified)) =
+                eframe::get_value::<(String, String, u8, Option<u16>, bool)>(s, "basic_editor")
+            {
+                app.basic = BasicEditor {
+                    text,
+                    name,
+                    dialect: BASIC_DIALECTS[usize::from(dialect).min(2)].0,
+                    load,
+                    modified,
+                    ..Default::default()
+                };
             }
             if let Some(dir) = eframe::get_value::<String>(s, "vice_dir") {
                 app.vice_dir = dir;
@@ -1054,6 +1168,10 @@ impl App {
             Act::Delete => self.delete(),
             Act::Save => self.save(false),
             Act::SaveAs => self.save(true),
+            Act::BasicOpen => self.basic_open(),
+            Act::BasicFromSelected => self.basic_from_selected(),
+            Act::BasicSaveText => self.basic_save_text(),
+            Act::BasicAdd => self.basic_add(),
             Act::Validate => self.validate(),
             Act::Repair => self.repair_disk(),
             Act::NewArchive => {
@@ -1610,6 +1728,140 @@ impl App {
         }
     }
 
+    /// BASIC editor: load text from a file.
+    fn basic_open(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("BASIC text", &["txt", "bas"])
+            .add_filter("all files", &["*"])
+            .pick_file()
+        else {
+            return;
+        };
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
+                self.basic.set_text(text, None);
+                self.basic.name = cbm_name_from(&path);
+                self.status = format!("Loaded {}", path.display());
+            }
+            Err(e) => self.status = format!("Open failed: {e}"),
+        }
+    }
+
+    /// BASIC editor: list the selected program.
+    fn basic_from_selected(&mut self) {
+        let node = self.pane.selected.and_then(|i| self.pane.nodes.get(i));
+        let Some(node) = node else {
+            self.status = "Select a BASIC program first".into();
+            return;
+        };
+        let listing = node
+            .data
+            .as_deref()
+            .ok()
+            .and_then(|data| match self.basic_dialect {
+                Some(d) => sector64::detokenize_basic_as(data, d),
+                None => sector64::detokenize_basic(data),
+            });
+        let Some(l) = listing else {
+            self.status = format!(
+                "\"{}\" isn't a BASIC program, so it can't be listed",
+                node.name
+            );
+            return;
+        };
+        let name = node.name.clone();
+        self.status = match l.trailing_bytes {
+            0 => format!("Listed \"{name}\" in the BASIC editor"),
+            n => {
+                format!("Listed \"{name}\" without the {n} bytes of machine code or data after it")
+            }
+        };
+        self.basic.name = name;
+        self.basic.dialect = l.dialect;
+        let load = (l.load_address != l.dialect.load_address()).then_some(l.load_address);
+        self.basic.set_text(l.text, load);
+    }
+
+    /// BASIC editor: save the text to a file.
+    fn basic_save_text(&mut self) {
+        let name = self.basic.disk_name().to_lowercase();
+        let name = if name.is_empty() { "program" } else { &name };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("BASIC text", &["txt", "bas"])
+            .set_file_name(format!("{}.txt", sanitize(name)))
+            .save_file()
+        else {
+            return;
+        };
+        match std::fs::write(&path, &self.basic.text) {
+            Ok(()) => {
+                self.basic.modified = false;
+                self.status = format!("Saved {}", path.display());
+            }
+            Err(e) => self.status = format!("Save failed: {e}"),
+        }
+    }
+
+    /// BASIC editor: put the program on the open disk or new archive.
+    fn basic_add(&mut self) {
+        let name = self.basic.disk_name();
+        if name.is_empty() {
+            self.status = "Enter a name for the program".into();
+            return;
+        }
+        let prg = match self.basic.check() {
+            Ok(t) => t.prg.clone(),
+            Err(problems) => {
+                self.status = format!("Error in {}", problems[0]);
+                return;
+            }
+        };
+        let before = self.pane.snapshot();
+        let replaced = if let Some(ed) = &mut self.pane.disk {
+            match put_basic(&mut ed.disk, &name, &prg) {
+                Ok(replaced) => {
+                    ed.dirty = true;
+                    replaced
+                }
+                Err(e) => {
+                    self.status = format!("Add failed: {e}");
+                    return;
+                }
+            }
+        } else if let Some(stage) = &mut self.pane.archive {
+            let file = ImportFile {
+                name: name.clone(),
+                file_type: FileType::Prg,
+                data: prg,
+            };
+            match stage.iter_mut().find(|f| f.name == name) {
+                Some(f) => {
+                    *f = file;
+                    true
+                }
+                None => {
+                    stage.push(file);
+                    false
+                }
+            }
+        } else {
+            self.status = "Open a disk or start a new archive to put the program on".into();
+            return;
+        };
+        let did = if replaced { "Replaced" } else { "Added" };
+        let done = format!("{did} \"{name}\" from the BASIC editor");
+        self.pane.record(before, &done);
+        self.pane.hex_cache = None;
+        self.pane.gfx_cache = None;
+        self.pane.pic_cache = None;
+        self.pane.refresh();
+        // Selected, it's ready to preview or run.
+        self.pane.selected = self.pane.nodes.iter().position(|n| n.name == name);
+        self.basic.modified = false;
+        self.status = done;
+    }
+
     fn rename(&mut self) {
         let Some(i) = self.pane.selected else {
             self.status = "Select a file to rename".into();
@@ -1902,6 +2154,16 @@ impl eframe::App for App {
         eframe::set_value(storage, "dual_pane", &self.dual);
         eframe::set_value(storage, "recent_files", &self.recent);
         eframe::set_value(storage, "vice_dir", &self.vice_dir);
+        let b = &self.basic;
+        let dialect = BASIC_DIALECTS
+            .iter()
+            .position(|(d, ..)| *d == b.dialect)
+            .unwrap_or(0) as u8;
+        eframe::set_value(
+            storage,
+            "basic_editor",
+            &(&b.text, &b.name, dialect, b.load, b.modified),
+        );
     }
 
     /// Remove the temporary folders of emulators that have already closed;
@@ -2022,6 +2284,8 @@ impl eframe::App for App {
         let mut show_compare = self.show_compare && can_compare;
         let mut compare_all = self.compare_all;
         let can_run = self.vice_plan().is_ok();
+        let mut show_basic = self.show_basic;
+        let mut basic = std::mem::take(&mut self.basic);
         let mut dual = self.dual;
         let back_editable = self.back.editable();
 
@@ -2178,6 +2442,18 @@ impl eframe::App for App {
                         .clicked()
                     {
                         show_copy = !show_copy;
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add(
+                            icon_button(&ic.blank, "BASIC Editor…")
+                                .selected(show_basic)
+                                .shortcut_text(key_hint("Ctrl+B")),
+                        )
+                        .on_hover_text("write a BASIC program, or edit the selected one")
+                        .clicked()
+                    {
+                        show_basic = !show_basic;
                         ui.close_menu();
                     }
                     if dual
@@ -2464,11 +2740,7 @@ impl eframe::App for App {
                                     "guess: BASIC 7.0 for C128 programs, Simons' BASIC when its \
                                  keywords are used, otherwise V2",
                                 );
-                            for (d, label, tip) in [
-                                (BasicDialect::V2, "V2", "Commodore BASIC V2 (C64, VIC-20)"),
-                                (BasicDialect::V7, "7.0", "the C128's BASIC 7.0"),
-                                (BasicDialect::Simons, "SIMONS", "Simons' BASIC (C64)"),
-                            ] {
+                            for (d, label, tip) in BASIC_DIALECTS {
                                 ui.selectable_value(&mut basic_dialect, Some(d), label)
                                     .on_hover_text(tip);
                             }
@@ -2821,6 +3093,56 @@ impl eframe::App for App {
                 });
         }
 
+        // BASIC editor window. Esc leaves the text first, then closes it.
+        if show_basic {
+            if !basic.typing
+                && !show_help
+                && !show_map
+                && !show_copy
+                && !show_compare
+                && !self.show_validation
+                && ctx.input(|i| i.key_pressed(egui::Key::Escape))
+            {
+                show_basic = false;
+            }
+            let screen = ctx.screen_rect();
+            let exists = match (&self.pane.disk, &self.pane.archive) {
+                (Some(ed), _) => ed
+                    .disk
+                    .find_entry(&basic.disk_name())
+                    .is_ok_and(|e| e.is_some()),
+                (None, Some(stage)) => stage.iter().any(|f| f.name == basic.disk_name()),
+                (None, None) => false,
+            };
+            egui::Window::new(
+                egui::RichText::new("BASIC EDITOR")
+                    .color(c64::ACCENT)
+                    .strong(),
+            )
+            .collapsible(false)
+            .resizable(true)
+            .default_size([
+                680.0_f32.min(screen.width() - 40.0),
+                460.0_f32.min(screen.height() - 80.0),
+            ])
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(screen.center())
+            .show(ctx, |ui| {
+                basic_editor_ui(
+                    ui,
+                    &mut basic,
+                    BasicTarget {
+                        editable,
+                        is_archive,
+                        exists,
+                        selected: sel_now.is_some(),
+                    },
+                    &mut show_basic,
+                    &mut acts,
+                );
+            });
+        }
+
         // Unsaved-changes confirmation (before opening another file or quitting).
         if self.confirm.is_some() {
             let mut action: Option<u8> = None; // 0 discard, 1 cancel, 2 save
@@ -2975,6 +3297,9 @@ impl eframe::App for App {
             if i.modifiers.command && i.key_pressed(egui::Key::D) && can_compare {
                 show_compare = !show_compare;
             }
+            if i.modifiers.command && i.key_pressed(egui::Key::B) {
+                show_basic = !show_basic;
+            }
             if i.modifiers.command && i.key_pressed(egui::Key::K) {
                 show_copy = !show_copy;
             }
@@ -3048,6 +3373,8 @@ impl eframe::App for App {
         self.show_copy = show_copy;
         self.show_compare = show_compare;
         self.compare_all = compare_all;
+        self.show_basic = show_basic;
+        self.basic = basic;
         self.dual = dual;
         for act in acts {
             self.apply(act);
@@ -4525,6 +4852,190 @@ fn disk_title(disk: &Disk, header: sector64::Result<sector64::Header>) -> String
     }
 }
 
+/// The BASIC dialects, with a button label and a description each.
+const BASIC_DIALECTS: [(BasicDialect, &str, &str); 3] = [
+    (BasicDialect::V2, "V2", "Commodore BASIC V2 (C64, VIC-20)"),
+    (BasicDialect::V7, "7.0", "the C128's BASIC 7.0"),
+    (BasicDialect::Simons, "SIMONS", "Simons' BASIC (C64)"),
+];
+
+/// Where the BASIC editor's program would go.
+struct BasicTarget {
+    editable: bool,
+    is_archive: bool,
+    /// There's a file of that name already.
+    exists: bool,
+    /// A file is selected in the list.
+    selected: bool,
+}
+
+/// The BASIC editor's contents: name, dialect, the text, what's wrong with
+/// it, and the buttons.
+fn basic_editor_ui(
+    ui: &mut egui::Ui,
+    ed: &mut BasicEditor,
+    target: BasicTarget,
+    open: &mut bool,
+    acts: &mut Vec<Act>,
+) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Name");
+        let name = ui.add(
+            egui::TextEdit::singleline(&mut ed.name)
+                .char_limit(16)
+                .desired_width(150.0),
+        );
+        ed.typing = name.has_focus();
+        ui.separator();
+        for (d, label, tip) in BASIC_DIALECTS {
+            if ui
+                .selectable_label(ed.dialect == d, label)
+                .on_hover_text(tip)
+                .clicked()
+                && ed.dialect != d
+            {
+                ed.dialect = d;
+                ed.load = None;
+                ed.checked = None;
+            }
+        }
+        ui.separator();
+        let sources = [
+            (
+                BasicSource::File,
+                "Open Text…",
+                "load a program's text from a file",
+            ),
+            (
+                BasicSource::Selected,
+                "List Selected",
+                "load the program selected in the list",
+            ),
+        ];
+        for (source, label, tip) in sources {
+            let sure = ed.confirm == Some(source);
+            let label = if sure { "Lose changes?" } else { label };
+            let colour = if sure { c64::WARN } else { c64::TEXT };
+            let usable = source == BasicSource::File || target.selected;
+            if ui
+                .add_enabled(
+                    usable,
+                    egui::Button::new(egui::RichText::new(label).color(colour)),
+                )
+                .on_hover_text(tip)
+                .on_disabled_hover_text("select a BASIC program in the list first")
+                .clicked()
+            {
+                if ed.modified && !ed.text.trim().is_empty() && !sure {
+                    ed.confirm = Some(source);
+                } else {
+                    ed.confirm = None;
+                    acts.push(match source {
+                        BasicSource::File => Act::BasicOpen,
+                        BasicSource::Selected => Act::BasicFromSelected,
+                    });
+                }
+            }
+        }
+    });
+    ui.add_space(2.0);
+
+    // The buttons and messages sit at the bottom; the text gets the rest.
+    egui::TopBottomPanel::bottom("basic_bottom")
+        .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(0.0, 4.0)))
+        .show_inside(ui, |ui| {
+            basic_check_ui(ui, ed);
+            ui.add_space(4.0);
+            let ok = ed.check().is_ok();
+            let named = !ed.disk_name().is_empty();
+            ui.horizontal(|ui| {
+                let to = if target.is_archive { "Archive" } else { "Disk" };
+                let label = if target.exists && named {
+                    format!("Replace on {to}")
+                } else {
+                    format!("Add to {to}")
+                };
+                let tip = if !target.editable {
+                    "open an editable disk or start a new archive first"
+                } else if !named {
+                    "give the program a name first"
+                } else {
+                    "the text has problems, listed above"
+                };
+                if ui
+                    .add_enabled(ok && named && target.editable, egui::Button::new(label))
+                    .on_hover_text("make it a PRG; Undo takes it back")
+                    .on_disabled_hover_text(tip)
+                    .clicked()
+                {
+                    acts.push(Act::BasicAdd);
+                }
+                if ui
+                    .add_enabled(!ed.text.is_empty(), egui::Button::new("Save Text…"))
+                    .on_hover_text("save the text to a file")
+                    .clicked()
+                {
+                    acts.push(Act::BasicSaveText);
+                }
+                if ui.button("Close").clicked() {
+                    *open = false;
+                }
+            });
+        });
+    egui::ScrollArea::both()
+        .id_salt("basic_scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let edit = egui::TextEdit::multiline(&mut ed.text)
+                .id_salt("basic_text")
+                .font(egui::TextStyle::Monospace)
+                .hint_text("10 PRINT \"{CLR}HELLO\"\n20 GOTO 10")
+                .desired_width(f32::INFINITY)
+                .min_size(ui.available_size())
+                .lock_focus(true);
+            let edit = ui.add(edit);
+            ed.typing |= edit.has_focus();
+            if edit.changed() {
+                ed.modified = true;
+                ed.confirm = None;
+                ed.checked = None;
+            }
+        });
+}
+
+/// The line under the BASIC editor's text: what it makes, or what's wrong.
+fn basic_check_ui(ui: &mut egui::Ui, ed: &mut BasicEditor) {
+    if ed.text.trim().is_empty() {
+        ui.label(
+            egui::RichText::new("Type or paste a program, one numbered line per line.")
+                .color(c64::TEXT_DIM),
+        );
+        return;
+    }
+    const SHOWN: usize = 4;
+    let (problems, colour) = match ed.check() {
+        Ok(t) => {
+            let s = if t.lines == 1 { "" } else { "s" };
+            let made = format!(
+                "{} line{s}, {} bytes, loads at ${:04X}",
+                t.lines,
+                t.prg.len(),
+                t.load_address
+            );
+            ui.label(egui::RichText::new(made).color(c64::OK));
+            (&t.warnings, c64::ORPHAN)
+        }
+        Err(p) => (p, c64::WARN),
+    };
+    for p in problems.iter().take(SHOWN) {
+        ui.add(egui::Label::new(egui::RichText::new(p.to_string()).color(colour)).wrap());
+    }
+    if problems.len() > SHOWN {
+        let more = format!("and {} more", problems.len() - SHOWN);
+        ui.label(egui::RichText::new(more).color(colour));
+    }
+}
+
 /// The validation window's contents: the check's results, a checkbox per
 /// fix, and the buttons.
 fn validation_ui(
@@ -5695,6 +6206,69 @@ mod tests {
         assert_eq!(app.pane.undo.len(), undo + 1);
         app.apply(Act::Undo);
         assert_eq!(app.pane.disk.as_ref().unwrap().disk.as_bytes(), broken);
+    }
+
+    #[test]
+    fn basic_editor_adds_lists_and_replaces() {
+        let mut app = app_with_disk();
+        app.basic.text = "10 PRINT \"HI\"\n20 GOTO 10\n".into();
+        app.apply(Act::BasicAdd);
+        assert_eq!(app.status, "Enter a name for the program");
+        app.basic.name = "hello".into();
+        app.basic.modified = true;
+        app.apply(Act::BasicAdd);
+        assert_eq!(app.status, "Added \"HELLO\" from the BASIC editor");
+        assert_eq!(app.pane.selected, Some(0));
+        assert!(!app.basic.modified && app.pane.is_dirty());
+
+        // Listed back, changed and put back: one file still, one Undo each.
+        app.basic = BasicEditor::default();
+        app.apply(Act::BasicFromSelected);
+        assert_eq!(app.basic.text, "10 PRINT \"HI\"\n20 GOTO 10\n");
+        assert_eq!((app.basic.name.as_str(), app.basic.load), ("HELLO", None));
+        app.basic.text.push_str("30 END\n");
+        app.basic.checked = None;
+        app.apply(Act::BasicAdd);
+        assert_eq!(app.status, "Replaced \"HELLO\" from the BASIC editor");
+        assert_eq!(names(&app), ["HELLO"]);
+        let data = app.pane.nodes[0].data.as_ref().unwrap();
+        assert_eq!(sector64::detokenize_basic(data).unwrap().lines, 3);
+        app.apply(Act::Undo);
+        let data = app.pane.nodes[0].data.as_ref().unwrap();
+        assert_eq!(sector64::detokenize_basic(data).unwrap().lines, 2);
+
+        // Nothing but a plain BASIC program is replaced.
+        app.apply(Act::AddBytes("CODE".into(), vec![0, 0xC0, 0x60]));
+        app.basic.name = "CODE".into();
+        app.apply(Act::BasicAdd);
+        assert!(
+            app.status.contains("isn't a BASIC program"),
+            "{}",
+            app.status
+        );
+        let mut stub = app.basic.check().as_ref().unwrap().prg.clone();
+        stub.push(0x60);
+        app.apply(Act::AddBytes("STUB".into(), stub));
+        app.basic.name = "STUB".into();
+        app.apply(Act::BasicAdd);
+        assert!(app.status.contains("machine code"), "{}", app.status);
+
+        // Bad text is refused, saying where.
+        app.basic.text = "10 {NOPE}".into();
+        app.basic.checked = None;
+        app.apply(Act::BasicAdd);
+        assert!(app.status.starts_with("Error in text line 1"), "{}", app.status);
+        assert_eq!(names(&app), ["HELLO", "CODE", "STUB"]);
+
+        // A new archive works too.
+        app.apply(Act::NewArchive);
+        app.basic.set_text("10 END".into(), Some(0x1001));
+        app.basic.name = "vic".into();
+        app.apply(Act::BasicAdd);
+        app.apply(Act::BasicAdd);
+        assert_eq!(names(&app), ["VIC"]);
+        let stage = app.pane.archive.as_ref().unwrap();
+        assert_eq!(stage[0].data[..2], [0x01, 0x10]);
     }
 
     #[test]
