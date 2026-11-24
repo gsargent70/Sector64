@@ -68,12 +68,4 @@ while kill -0 "$pid" 2>/dev/null; do
     sleep 1
 done
 ls -l "$HOME/Library/Application Support/sector64-gui"
-echo "== TEMPORARY: quit with unsaved changes"
-open --env SECTOR64_TEST_DIRTY=1 "$app" --args "$work/disk.d64"
-sleep 10
-pid=$(pgrep -x Sector64)
-osascript -e 'tell application "Sector64" to quit' || echo "(osascript reported the cancel)"
-sleep 4
-screencapture -x "$out/dirty-$(uname -m).png"
-if kill -0 "$pid"; then echo "GUARD WORKS: still running"; kill "$pid"; else echo "GUARD FAILED"; exit 1; fi
 echo "All good."

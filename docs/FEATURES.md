@@ -131,7 +131,7 @@ Checking and inspecting a disk's structure.
 | APP-06 | Dual-pane view: two disks side by side, Tab to switch | M | Done v1.0.9 | |
 | APP-07 | Background loading with a progress bar | M | Idea | |
 | APP-08 | Grow the window to fit the preview or long names | S | Idea | |
-| APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Doing | experimental: no Mac here, so CI builds, tests and starts it |
+| APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Done (unreleased, #47) | experimental: no Mac here, so CI builds, tests and starts it |
 
 ---
 

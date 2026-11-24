@@ -997,9 +997,6 @@ impl App {
             app.open(Path::new(p));
             app.apply(Act::FocusOther);
         }
-        if std::env::var_os("SECTOR64_TEST_DIRTY").is_some() {
-            app.add("DIRTY".into(), b"\x01\x08x");
-        }
         app
     }
 
