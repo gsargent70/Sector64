@@ -718,8 +718,10 @@ A program that loads where the C128 keeps BASIC ($1C01) runs in
 VICE's C128 emulator (x128); everything else runs on a C64
 (x64sc).
 
-Sector64 looks for VICE on your PATH. If it isn't there (usual on
-Windows), it asks for the folder VICE is in, and remembers it.
+Sector64 looks for VICE on your PATH and, on a Mac, where Homebrew
+puts it and in a "vice" folder in Applications. If it isn't there
+(usual on Windows), it asks for the folder VICE is in, and
+remembers it.
 VICE types the LOAD command for you; characters in a name that
 can't be typed are sent as the ? wildcard, so a disk with two
 names that differ only there may load the wrong one.
@@ -804,6 +806,8 @@ early. The most recent few are shown at once.
  17. KEYBOARD SHORTCUTS
 ----------------------------------------------------------------
 
+On a Mac, use Cmd for Ctrl (see "On a Mac" in section 19).
+
     Ctrl+O      Open a file
     Ctrl+S      Save the open disk
     Ctrl+Z      Undo the last edit
@@ -878,7 +882,23 @@ DRAG-AND-DROP ON LINUX (WAYLAND)
   drag-and-drop works. The catch: with display scaling above
   100% an XWayland window may look slightly blurry. Set the
   variable to 0 (or leave it unset) for the native Wayland
-  window. Windows and X11 desktops always support drag-and-drop.
+  window. Windows, macOS and X11 desktops always support it.
+
+ON A MAC
+
+  The Mac version is experimental: nobody on the project has a
+  Mac, so it has only been built, tested and started on GitHub's
+  build machines. Please report what doesn't work.
+
+  - Wherever this manual says Ctrl, use Cmd.
+  - The "delete" key deletes the selected file. F2 and F5 need fn
+    held down on most Mac keyboards.
+  - Open dialogs show every file instead of listing the known
+    types first.
+  - The app isn't signed, so macOS blocks it until you allow it:
+    see README-MACOS.txt in the download.
+  - Double-clicking a disk image in Finder doesn't open it in
+    Sector64 yet. Use File > Open… or drag it onto the window.
 
 A FILE SHOWS "NOT EXTRACTABLE"
 

@@ -5,13 +5,14 @@
 #   sh packaging/itch-publish.sh 1.0.4        # a specific release
 #   sh packaging/itch-publish.sh --dry-run    # list what would be pushed
 #
-# It downloads the release's Linux tarball and Windows zip, checks them
-# against SHA256SUMS, unpacks them and pushes each folder to its own channel
-# (`linux`, `windows`) with --userversion set to the release version. Butler
-# pushes plain folders, not archives, so later releases upload only what
-# changed. Each folder gets an `.itch.toml` so the itch app launches the GUI
-# rather than whichever CLI tool its heuristics pick. A channel whose files
-# haven't changed is skipped (--if-changed), so re-running is harmless.
+# It downloads the release's Linux tarball, Windows zip and macOS zip (releases
+# before 1.0.11 have no macOS one), checks them against SHA256SUMS, unpacks
+# them and pushes each folder to its own channel (`linux`, `windows`, `mac`)
+# with --userversion set to the release version. Butler pushes plain folders,
+# not archives, so later releases upload only what changed. Each folder gets
+# an `.itch.toml` so the itch app launches the GUI rather than whichever CLI
+# tool its heuristics pick. A channel whose files haven't changed is skipped
+# (--if-changed), so re-running is harmless.
 #
 # Needs: curl, sha256sum, tar, unzip and butler (on PATH or $BUTLER; get it
 # from https://itchio.itch.io/butler), logged in once with `butler login` or
@@ -30,7 +31,7 @@ version=
 for arg in "$@"; do
     case "$arg" in
         --dry-run) dry_run=--dry-run ;;
-        -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) echo "error: unknown option '$arg'" >&2; exit 2 ;;
         *) version="${arg#v}" ;;
     esac
@@ -56,34 +57,58 @@ trap 'rm -rf "$work"' EXIT INT TERM
 
 linux="sector64-$version-x86_64-linux.tar.gz"
 windows="sector64-$version-x86_64-windows.zip"
+mac="sector64-$version-universal-macos.zip"
 url="https://github.com/$REPO/releases/download/v$version"
 
 echo "Downloading the v$version release from GitHub…"
-for f in "$linux" "$windows" SHA256SUMS; do
-    curl -fsSL -o "$work/$f" "$url/$f" || {
-        echo "error: couldn't download $url/$f (is v$version released?)" >&2
+fetch() {
+    curl -fsSL -o "$work/$1" "$url/$1" || {
+        echo "error: couldn't download $url/$1 (is v$version released?)" >&2
         exit 1
     }
-done
+}
+fetch SHA256SUMS
+channels="linux windows"
+fetch "$linux"
+fetch "$windows"
+if grep -qF "$mac" "$work/SHA256SUMS"; then
+    channels="$channels mac"
+    fetch "$mac"
+fi
 (cd "$work" && sha256sum -c SHA256SUMS)
 
-mkdir "$work/linux" "$work/windows" "$work/unzip"
+# unpack_zip <zip> <channel>: a zip holds a single top-level folder; push its
+# contents.
+unpack_zip() {
+    mkdir "$work/unzip"
+    unzip -q "$work/$1" -d "$work/unzip"
+    mv "$work"/unzip/* "$work/$2"
+    rmdir "$work/unzip"
+}
+mkdir "$work/linux"
 tar -xzf "$work/$linux" -C "$work/linux" --strip-components=1
-unzip -q "$work/$windows" -d "$work/unzip"
-# The zip holds a single top-level folder; push its contents.
-mv "$work"/unzip/*/* "$work/windows/"
+unpack_zip "$windows" windows
 
-printf '[[actions]]\nname = "Sector64"\npath = "bin/sector64-gui"\n' >"$work/linux/.itch.toml"
-printf '[[actions]]\nname = "Sector64"\npath = "Sector64.exe"\n' >"$work/windows/.itch.toml"
+# itch_toml <channel> <program>
+itch_toml() {
+    printf '[[actions]]\nname = "Sector64"\npath = "%s"\n' "$2" >"$work/$1/.itch.toml"
+}
+itch_toml linux bin/sector64-gui
+itch_toml windows Sector64.exe
+case "$channels" in *mac*)
+    unpack_zip "$mac" mac
+    itch_toml mac Sector64.app
+    ;;
+esac
 
-for channel in linux windows; do
+for channel in $channels; do
     "$BUTLER" validate "$work/$channel" >/dev/null
     echo "Pushing $channel to $TARGET:$channel (v$version)…"
     "$BUTLER" push "$work/$channel" "$TARGET:$channel" --userversion "$version" --if-changed $dry_run
 done
 
 if [ -z "$dry_run" ]; then
-    for channel in linux windows; do
+    for channel in $channels; do
         "$BUTLER" status "$TARGET:$channel"
     done
 fi
