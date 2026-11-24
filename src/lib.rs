@@ -36,6 +36,7 @@ pub mod lha;
 pub mod listing;
 pub mod lzhuf;
 pub mod tap;
+pub mod tokenize;
 pub mod wr3;
 pub mod petscii;
 pub mod picture;

@@ -12,7 +12,7 @@ set -eu
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
 TARGET=x86_64-pc-windows-gnu
-CLI="s64ls s64extract s64val s64write s64pack s64arc s64lha s64wr3 s64cvt s64tap s64cmp"
+CLI="s64ls s64extract s64val s64write s64pack s64arc s64lha s64wr3 s64cvt s64tap s64cmp s64basic"
 
 for tool in cargo x86_64-w64-mingw32-gcc zip; do
     if ! command -v "$tool" >/dev/null 2>&1; then

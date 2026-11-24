@@ -301,3 +301,42 @@ fn dialect_programs_list_like_their_source() {
     assert_eq!(listing.dialect, BasicDialect::Simons);
     assert_eq!(listing.text, simons.to_uppercase());
 }
+
+/// This crate's own tokenizer must turn the same text into the same bytes.
+fn same_as_petcat(version: &str, dialect: BasicDialect, name: &str, source: &str) {
+    let theirs = tokenize_as(version, name, source);
+    let ours = sector64::tokenize::tokenize(source, dialect, None).unwrap();
+    assert_eq!(ours.prg, theirs, "{source}");
+    // And from this crate's own listing of it.
+    let listing = sector64::detokenize_basic_as(&theirs, dialect).unwrap();
+    let again = sector64::tokenize::tokenize(&listing.text, dialect, None).unwrap();
+    assert_eq!(again.prg, theirs, "{}", listing.text);
+}
+
+#[test]
+fn tokenizes_like_petcat() {
+    if !petcat_available() {
+        eprintln!("petcat not found; skipping");
+        return;
+    }
+    use BasicDialect::{Simons, V2, V7};
+    let v2 = r#"10    print "{clr}{down}{rvon}Hi{rvof}{5 down}{CBM-A}{SHIFT-B}{$a1}":rem   print data
+20 data for,"to":for i=1 to 9
+30 goto10:go to 5:fori=atob:a$=ti$:st
+40 print#1,x:input#2,y:get#3,z:open1,8,15
+50 restore:step:str$(:a^2:a@[]_\
+60 rem "a":print
+70 print "open
+80 b=~:x>=y<=z<>w
+"#;
+    same_as_petcat("2", V2, "tok2", v2);
+    let v7 = "10 graphic 1,1:color 1,2:dopen#1:do:loop until joy(2)\n\
+              20 if x then begin:print hex$(x):bend:else fast\n\
+              30 printusing\"#\";a:getkey a$:x=pointer(a)+xor(1,2)\n\
+              40 spc(1):sprcolor:end:bend:key1,\"x\":go64\n";
+    same_as_petcat("70", V7, "tok7", v7);
+    let simons = "10 hires 0,1:circle 160,100,50,50,1:lin:line:inst:insert\n\
+                  20 repeat:get a$:until a$<>\"\":hi col 1:mob set 1:mob off\n\
+                  30 proc done:print at(1,2)\"bye\":end proc:end:on key:on a goto 1\n";
+    same_as_petcat("simon", Simons, "toks", simons);
+}

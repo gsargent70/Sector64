@@ -20,7 +20,7 @@
 //! token by token against VICE's `petcat` tokenizer.
 
 /// BASIC V2 keywords for tokens `$80`–`$CB`, in token order.
-const KEYWORDS: [&str; 76] = [
+pub(crate) const KEYWORDS: [&str; 76] = [
     "END", "FOR", "NEXT", "DATA", "INPUT#", "INPUT", "DIM", "READ", // $80
     "LET", "GOTO", "RUN", "IF", "RESTORE", "GOSUB", "RETURN", "REM", // $88
     "STOP", "ON", "WAIT", "LOAD", "SAVE", "VERIFY", "DEF", "POKE", // $90
@@ -35,7 +35,7 @@ const KEYWORDS: [&str; 76] = [
 
 /// BASIC 7.0's single-byte tokens `$CC`–`$FD` (`$CE` is a prefix, below).
 #[rustfmt::skip]
-const V7_KEYWORDS: [&str; 50] = [
+pub(crate) const V7_KEYWORDS: [&str; 50] = [
     "RGR", "RCLR", "", "JOY", "RDOT", "DEC", "HEX$", "ERR$", // $CC
     "INSTR", "ELSE", "RESUME", "TRAP", "TRON", "TROFF", "SOUND", "VOL", // $D4
     "AUTO", "PUDEF", "GRAPHIC", "PAINT", "CHAR", "BOX", "CIRCLE", "GSHAPE", // $DC
@@ -46,14 +46,14 @@ const V7_KEYWORDS: [&str; 50] = [
 ];
 
 /// BASIC 7.0 functions behind the `$CE` prefix, from `$CE $02`.
-const V7_CE: [&str; 9] = [
+pub(crate) const V7_CE: [&str; 9] = [
     "POT", "BUMP", "PEN", "RSPPOS", "RSPRITE", "RSPCOLOR", "XOR", "RWINDOW", "POINTER",
 ];
 
 /// BASIC 7.0 statements behind the `$FE` prefix, from `$FE $02`; `$FE $20`
 /// and `$FE $22` are unused.
 #[rustfmt::skip]
-const V7_FE: [&str; 37] = [
+pub(crate) const V7_FE: [&str; 37] = [
     "BANK",
     "FILTER",
     "PLAY",
@@ -96,7 +96,7 @@ const V7_FE: [&str; 37] = [
 /// Simons' BASIC keywords `$64 $01`–`$64 $7F`; empty slots are unassigned
 /// and listed as `{$64xx}`.
 #[rustfmt::skip]
-const SIMONS: [&str; 127] = [
+pub(crate) const SIMONS: [&str; 127] = [
     "HIRES", "PLOT", "LINE", "BLOCK", "FCHR", "FCOL", "FILL", // $01
     "REC", "ROT", "DRAW", "CHAR", "HI COL", "INV", "FRAC", "MOVE", // $08
     "PLACE", "UPB", "UPW", "LEFTW", "LEFTB", "DOWNB", "DOWNW", "RIGHTB", // $10
@@ -143,10 +143,10 @@ impl Dialect {
 const BASIC_STARTS: [u16; 6] = [0x0401, 0x0801, 0x1001, 0x1201, 0x1C01, 0x4001];
 
 /// Highest line number BASIC accepts.
-const MAX_LINE_NUMBER: u16 = 63999;
+pub(crate) const MAX_LINE_NUMBER: u16 = 63999;
 
 /// Longest tokenized line accepted (BASIC's own limit is 255 bytes).
-const MAX_LINE_BYTES: usize = 255;
+pub(crate) const MAX_LINE_BYTES: usize = 255;
 
 /// A detokenized BASIC program.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -377,7 +377,9 @@ fn push_char(b: u8, out: &mut String) {
     match b {
         0x20..=0x5F => out.push(crate::petscii::char_of(b)),
         0xC1..=0xDA => out.push(crate::petscii::char_of(b)),
-        0xA0 => out.push(' '),
+        // A shifted space looks like a space; as a no-break one it can be told
+        // apart when the listing is tokenized again.
+        0xA0 => out.push('\u{A0}'),
         _ => out.push_str(&format!("{{${b:02X}}}")),
     }
 }

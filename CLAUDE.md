@@ -3,7 +3,7 @@
 Clean-room, **zero-dependency** Rust toolkit for Commodore disk images and
 archives:
 - core library (`src/`)
-- 11 CLI tools (`src/bin/`, documented in `CLI.md`)
+- 12 CLI tools (`src/bin/`, documented in `CLI.md`)
 - an egui GUI in `gui/` (separate workspace member)
 
 It runs on Linux and Windows. Releases are on GitHub
@@ -65,6 +65,9 @@ It runs on Linux and Windows. Releases are on GitHub
   against programs tokenized by VICE's **`petcat`** (installed with VICE):
   `-w2` BASIC V2, `-w70` C128 BASIC 7.0, `-wsimon` Simons' BASIC, every
   keyword of each. Note: in petcat source π is `~`; `{pi}` is literal text.
+  The same file checks the tokenizer (`src/tokenize.rs`) byte for byte.
+  petcat gets `?` and abbreviations wrong, so those were checked against the
+  C64 and C128 ROMs in VICE (call CRUNCH through `$0304`).
   Simons' slots `$6422 $642A $642B $642D $642F $643C-$643F $6454 $645E` are
   unassigned even in petcat; they list as `{$64xx}`.
 - `arc_samples.rs`'s squeeze plaintext check needs `ARC_PLAINTEXT` pointing at

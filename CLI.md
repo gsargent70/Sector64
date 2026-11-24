@@ -128,6 +128,35 @@ follows broken chains as far as they go and lists the faults at the end.
 It exits non-zero only when a block is in conflict or a chain is broken.
 It works on every disk image, G64 and D2M included.
 
+### `s64basic` — turn BASIC text into a program
+
+```
+s64basic [--dialect=v2|7.0|simons] [--load=HEX] <text> <out.prg>
+```
+
+Tokenizes a BASIC program, one numbered line per line, into a runnable
+PRG: the reverse of `s64extract --list`. The dialect is BASIC V2 unless
+given. The program loads at $0801 ($1C01 for BASIC 7.0) unless `--load`
+or a petcat heading (`;name ==1001==`) says otherwise. Blank lines and
+lines starting with `;` are skipped.
+
+```sh
+s64extract --list games.d64 menu > menu.txt
+# edit menu.txt …
+s64basic menu.txt menu.prg
+s64write add games.d64 menu2 menu.prg
+```
+
+Control codes are written in braces: `{CLR}`, `{5 DOWN}`, `{rvon}`,
+`{SHIFT-A}`, `{CBM-A}`, `{$93}`, `{147}`. `?` and abbreviations work as
+they do on the machine. Letters can be written as `s64extract --list`
+does (capitals are unshifted) or as `petcat` does (small letters are);
+the case the keywords are in decides.
+
+Every problem is reported with its line and nothing is written (exit 1).
+Line numbers out of order are only warned about. Machine code after a
+program isn't in its listing, so it's lost on the way round.
+
 ### `s64cmp` — compare two disks or archives
 
 ```
@@ -307,6 +336,7 @@ s64tap game.tap
 | `s64val`     | Validate a disk, or draw its block map    | stdout + exit|
 | `s64cmp`     | Compare two disks or archives             | stdout + exit|
 | `s64write`   | Create / edit a D64 (format/add/del/ren)  | the image    |
+| `s64basic`   | Turn a BASIC program's text into a PRG    | the PRG      |
 | `s64pack`    | Create a t64/lnx/lbr/p00 archive          | the archive  |
 | `s64arc`     | List / extract ARC or SDA                 | stdout       |
 | `s64lha`     | List / extract LHA (.lzh/.sfx)            | stdout       |
