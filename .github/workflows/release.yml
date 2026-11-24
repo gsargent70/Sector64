@@ -1,6 +1,6 @@
-# Build the prebuilt Linux tarball and the portable Windows zip.
+# Build the prebuilt Linux tarball, the portable Windows zip and the macOS zip.
 #
-# - Pushing a tag `vX.Y.Z` builds both and attaches them, with SHA-256 sums,
+# - Pushing a tag `vX.Y.Z` builds them all and attaches them, with SHA-256 sums,
 #   to the GitHub release for that tag (creating the release if needed).
 # - Pull requests that touch packaging or the build, and manual runs, only
 #   build; the packages are kept as workflow artifacts for inspection.
@@ -72,15 +72,57 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Test
+        run: cargo test --release -p sector64 -p sector64-gui
+      - name: Build package
+        run: sh packaging/build-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.zip
+          if-no-files-found: error
+
+  # Nobody on the project has a Mac, so start the package on both kinds.
+  macos-check:
+    needs: macos
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel, macos-26]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos
+          path: dist
+      - name: Check package
+        run: sh packaging/check-macos.sh dist/*.zip screenshots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshot-${{ matrix.runner }}
+          path: screenshots
+
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [linux, windows]
+    needs: [linux, windows, macos, macos-check]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
+          # Not the macOS screenshots.
+          pattern: "[lwm]*"
           path: dist
           merge-multiple: true
       - name: Checksums

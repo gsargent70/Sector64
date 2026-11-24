@@ -32,7 +32,8 @@ the core plus one front end.
 | CLI-05 | Repair from the command line (`s64val --repair`) | S; core done in DISK-04 |
 | FMT-14 | CMD-native subdirectories: list and map the files inside them | M; today only the top directory is read, so repair never frees blocks on such disks |
 | DISK-07 | Repair broken REL and GEOS files (rebuild side sectors, VLIR index) | L; DISK-04 can only remove them |
-| APP-09 | macOS build: universal .app in a .dmg/zip, built on GitHub's macOS runners, pushed to itch as a `mac` channel | M; needs Mac font paths, VICE .app lookup, ⌘ in shortcut labels; signing and notarization need an Apple Developer account ($99/yr) |
+| APP-10 | Open disk images from Finder (double-click, "Open with", drop on the Dock icon) | M; macOS sends these as Apple events winit 0.30 ignores; follow-up to APP-09 |
+| APP-11 | Sign and notarize the Mac app | S once enrolled; needs an Apple Developer account ($99/yr) |
 
 ---
 
@@ -130,6 +131,7 @@ Checking and inspecting a disk's structure.
 | APP-06 | Dual-pane view: two disks side by side, Tab to switch | M | Done v1.0.9 | |
 | APP-07 | Background loading with a progress bar | M | Idea | |
 | APP-08 | Grow the window to fit the preview or long names | S | Idea | |
+| APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Doing | experimental: no Mac here, so CI builds, tests and starts it |
 
 ---
 

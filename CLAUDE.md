@@ -6,7 +6,7 @@ archives:
 - 12 CLI tools (`src/bin/`, documented in `CLI.md`)
 - an egui GUI in `gui/` (separate workspace member)
 
-It runs on Linux and Windows. Releases are on GitHub
+It runs on Linux, Windows and (experimental) macOS. Releases are on GitHub
 (`gsargent70/Sector64`; latest v1.0.10). Licence: MIT OR Apache-2.0.
 
 ## Build / run / test
@@ -92,13 +92,30 @@ It runs on Linux and Windows. Releases are on GitHub
   the Linux build on the samples. The only expected difference is the `\` vs
   `/` path separator in `s64wr3 extract` messages.
 
+## macOS build
+
+- There is no Mac here. `packaging/build-macos.sh` runs on GitHub's
+  `macos-15` runner and writes `dist/sector64-<ver>-universal-macos.zip`
+  (`Sector64.app`, `bin/`, `doc/`, `README-MACOS.txt`): lipo'd arm64 + x86_64,
+  macOS 11+, ad-hoc signed only (no Developer ID, no notarization).
+- `packaging/check-macos.sh` is the only test it gets: CI runs it on Apple
+  Silicon and Intel runners. It checks the package, runs the CLI tools, starts
+  the app, takes a screenshot (kept as a workflow artifact; look at it) and
+  quits it. Say "experimental, not tried by hand" wherever the Mac version is
+  announced.
+- `gui/src/mac.rs` holds what winit leaves out: ⌘Q asking about unsaved
+  changes, VICE's folders, and not working in `/` when started from Finder.
+  Shortcut labels go through `key_name`, Open dialogs through `open_dialog`
+  (macOS merges all filters and ignores `*`).
+- `gui/assets/sector64.icns` is made by `packaging/make-icns.py`.
+
 ## Releases
 
 - `packaging/build-linux.sh` builds `dist/sector64-<ver>-x86_64-linux.tar.gz`
   (`bin/`, `share/` launcher + icon, `doc/`, `INSTALL.txt`).
-- `.github/workflows/release.yml` builds both packages. On a pushed `v*` tag
+- `.github/workflows/release.yml` builds all three packages. On a pushed `v*` tag
   it checks that the tag matches the crate version, builds Linux on Ubuntu
-  22.04 (glibc 2.35) and Windows with MinGW, and attaches both plus
+  22.04 (glibc 2.35), Windows with MinGW and macOS, and attaches them plus
   `SHA256SUMS` to the release (creating it with generated notes). PRs that
   touch packaging or build files run the build without publishing.
 - To cut a release:
@@ -108,7 +125,7 @@ It runs on Linux and Windows. Releases are on GitHub
      hand-written ones (`gh release edit --notes-file`).
   4. Download the assets and check them against `SHA256SUMS`.
   5. Publish to itch.io: `sh packaging/itch-publish.sh` (page
-     `gsargent/sector64`, channels `linux`/`windows`). It downloads the
+     `gsargent/sector64`, channels `linux`/`windows`/`mac`). It downloads the
      release, checks `SHA256SUMS`, adds an `.itch.toml` so the itch app
      launches the GUI, and pushes with butler (`--if-changed`). It needs
      butler on `PATH` or in `$BUTLER`, logged in (`butler login`, run by the

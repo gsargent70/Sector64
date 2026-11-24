@@ -10,6 +10,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "macos")]
+mod mac;
+
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
@@ -109,7 +112,14 @@ fn find_c64_font() -> Option<Vec<u8>> {
         let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:/Windows".into());
         dirs.push(format!("{windir}/Fonts"));
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        // Font Book installs to the first of these.
+        let home = std::env::var("HOME").unwrap_or_default();
+        dirs.push(format!("{home}/Library/Fonts"));
+        dirs.push("/Library/Fonts".into());
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let home = std::env::var("HOME").unwrap_or_default();
         dirs.push(format!("{home}/.local/share/fonts"));
@@ -298,15 +308,38 @@ fn pixel_image(grid: &[&str; 8], ink: Color32) -> egui::ColorImage {
     }
 }
 
-/// A 16×16-icon button carrying `label` text.
+/// Shortcut keys as this platform names them: "Ctrl+K" is "Cmd+K" on a Mac
+/// (the shortcuts test egui's `command` modifier, which is ⌘ there).
+fn key_name(keys: &str) -> String {
+    if cfg!(target_os = "macos") {
+        keys.replace("Ctrl", "Cmd")
+    } else {
+        keys.to_string()
+    }
+}
+
+/// An Open dialog that lists `exts` first, with an "All files" choice. macOS
+/// dialogs have no such choice: they merge every filter into one and take no
+/// wildcard, which would leave files like Zip-Code's `1!NAME` unselectable,
+/// so there the dialog just shows everything.
+fn open_dialog(name: &str, exts: &[&str]) -> rfd::FileDialog {
+    let dlg = rfd::FileDialog::new();
+    if cfg!(target_os = "macos") {
+        dlg
+    } else {
+        dlg.add_filter(name, exts).add_filter("All files", &["*"])
+    }
+}
+
 /// A menu item's shortcut, set off from its name by a dash ("— Ctrl+K"). The
 /// leading spaces keep a gap before the dash on the menu's widest item, and
 /// the keys are padded to one width (the font is monospaced) so the dashes
 /// line up even though shortcuts are right-aligned.
 fn key_hint(keys: &str) -> String {
-    format!("    — {keys:<6}")
+    format!("    — {:<6}", key_name(keys))
 }
 
+/// A 16×16-icon button carrying `label` text.
 fn icon_button<'a>(tex: &egui::TextureHandle, label: &'a str) -> egui::Button<'a> {
     let img = egui::Image::new(egui::load::SizedTexture::new(
         tex.id(),
@@ -1026,15 +1059,13 @@ impl App {
     fn apply(&mut self, act: Act) {
         match act {
             Act::OpenDialog => {
-                let dlg = rfd::FileDialog::new()
-                    .add_filter(
-                        "Commodore disks & archives",
-                        &[
-                            "d64", "d71", "d81", "g64", "d2m", "arc", "sda", "lha", "lzh", "sfx",
-                            "lbr", "t64", "lnx", "wr3", "p00",
-                        ],
-                    )
-                    .add_filter("All files", &["*"]);
+                let dlg = open_dialog(
+                    "Commodore disks & archives",
+                    &[
+                        "d64", "d71", "d81", "g64", "d2m", "arc", "sda", "lha", "lzh", "sfx",
+                        "lbr", "t64", "lnx", "wr3", "p00",
+                    ],
+                );
                 if let Some(p) = dlg.pick_file() {
                     if self.pane.is_dirty() {
                         self.confirm = Some(Confirm::OpenFile(p));
@@ -1189,9 +1220,7 @@ impl App {
             }
             Act::SaveArchiveAs => self.save_archive(),
             Act::OtherOpen => {
-                let dlg = rfd::FileDialog::new()
-                    .add_filter("disk image", &["d64", "d71", "d81", "d2m"])
-                    .add_filter("All files", &["*"]);
+                let dlg = open_dialog("disk image", &["d64", "d71", "d81", "d2m"]);
                 if let Some(p) = dlg.pick_file() {
                     self.open_other(&p);
                 }
@@ -1730,11 +1759,7 @@ impl App {
 
     /// BASIC editor: load text from a file.
     fn basic_open(&mut self) {
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("BASIC text", &["txt", "bas"])
-            .add_filter("all files", &["*"])
-            .pick_file()
-        else {
+        let Some(path) = open_dialog("BASIC text", &["txt", "bas"]).pick_file() else {
             return;
         };
         match std::fs::read(&path) {
@@ -2191,6 +2216,13 @@ impl eframe::App for App {
         // Guard the window close against unsaved disk edits.
         let other_dirty = self.other.as_ref().is_some_and(|o| o.dirty);
         let any_dirty = self.pane.is_dirty() || self.back.is_dirty() || other_dirty;
+        #[cfg(target_os = "macos")]
+        if mac::quit_refused(any_dirty) {
+            if self.confirm.is_none() {
+                self.confirm = Some(Confirm::Quit);
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
         if ctx.input(|i| i.viewport().close_requested()) && any_dirty {
             if self.confirm.is_none() {
                 self.confirm = Some(Confirm::Quit);
@@ -3327,7 +3359,10 @@ impl eframe::App for App {
                 if i.key_pressed(egui::Key::Enter) && sel_extractable {
                     acts.push(Act::ExtractSelected);
                 }
-                if i.key_pressed(egui::Key::Delete) && editable && has_sel {
+                // A Mac's "delete" key is Backspace.
+                let delete = i.key_pressed(egui::Key::Delete)
+                    || cfg!(target_os = "macos") && i.key_pressed(egui::Key::Backspace);
+                if delete && editable && has_sel {
                     acts.push(Act::Delete);
                 }
                 // F2: rename the selected row in place.
@@ -4790,7 +4825,8 @@ fn vice_names(c128: bool) -> &'static [&'static str] {
 }
 
 /// Find a VICE emulator: in the chosen folder (or its `bin`, as VICE's
-/// Windows download has it), then on the PATH.
+/// Windows and macOS downloads have it), then on the PATH, then (macOS) in
+/// the usual places.
 fn find_vice(names: &[&str], dir: &str) -> Option<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if !dir.is_empty() {
@@ -4800,6 +4836,8 @@ fn find_vice(names: &[&str], dir: &str) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("PATH") {
         dirs.extend(std::env::split_paths(&path));
     }
+    #[cfg(target_os = "macos")]
+    dirs.extend(mac::vice_dirs());
     let ext = std::env::consts::EXE_SUFFIX;
     names.iter().find_map(|n| {
         dirs.iter()
@@ -5404,9 +5442,9 @@ fn copy_window_ui(
             n => format!("Copy to Open Disk ({n})"),
         };
         let tip = if !can_receive {
-            "open an editable disk (or start a new archive) in the main window first"
+            "open an editable disk (or start a new archive) in the main window first".to_string()
         } else {
-            "select files above first (Ctrl-click for several)"
+            key_name("select files above first (Ctrl-click for several)")
         };
         if ui
             .add_enabled(n > 0 && can_receive, egui::Button::new(back))
@@ -5704,12 +5742,23 @@ fn recent_labels(list: &[String]) -> Vec<(String, String)> {
 
 fn main() -> eframe::Result<()> {
     let initial: Vec<String> = std::env::args().skip(1).take(2).collect();
+    // On a Mac the Dock shows the app bundle's icon, which a window icon
+    // would replace; an empty one leaves it alone.
+    let icon = if cfg!(target_os = "macos") {
+        egui::IconData::default()
+    } else {
+        make_icon()
+    };
+    // Finder starts apps in "/", which nobody can write to: files extracted
+    // without choosing a folder go to the home folder instead.
+    #[cfg(target_os = "macos")]
+    mac::leave_root_dir();
     #[allow(unused_mut)]
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_app_id("sector64-gui")
             .with_inner_size([960.0, 640.0])
-            .with_icon(std::sync::Arc::new(make_icon())),
+            .with_icon(std::sync::Arc::new(icon)),
         persist_window: true,
         // See gui/Cargo.toml: wgpu on Windows, OpenGL (glow) everywhere else.
         #[cfg(windows)]
@@ -5730,6 +5779,8 @@ fn main() -> eframe::Result<()> {
         "Sector64",
         options,
         Box::new(move |cc| {
+            #[cfg(target_os = "macos")]
+            mac::guard_quit(&cc.egui_ctx);
             load_c64_font(&cc.egui_ctx);
             apply_c64_theme(&cc.egui_ctx);
             Ok(Box::new(App::new(&initial, cc.storage)))
