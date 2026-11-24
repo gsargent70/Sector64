@@ -85,7 +85,7 @@ Changing disks and building archives.
 | EDIT-03 | Undo and redo | M | Done v1.0.5 | |
 | EDIT-04 | Copy files between two disks (Copy window) | M | Done v1.0.7 | exact names, types, lock flags |
 | EDIT-05 | Copy across panes with F5 | S | Done v1.0.9 | |
-| EDIT-06 | BASIC text → runnable PRG (V2, 7.0, Simons'), the reverse of VIEW-03/04 | L | Done (unreleased, #45) | core `sector64::tokenize`, `s64basic`, GUI BASIC editor; checked against petcat and the C64/C128 ROMs |
+| EDIT-06 | BASIC text → runnable PRG (V2, 7.0, Simons'), the reverse of VIEW-03/04 | L | Done v1.0.10 | core `sector64::tokenize`, `s64basic`, GUI BASIC editor; checked against petcat and the C64/C128 ROMs |
 | EDIT-07 | Directory editing: reorder, separator/"art" entries, disk name and ID, lock/unlock | M | Idea | |
 | EDIT-08 | Proper REL and GEOS copy between disks (side sectors, VLIR records) | M | Idea | both are skipped today |
 
@@ -98,9 +98,9 @@ Checking and inspecting a disk's structure.
 | DISK-01 | Validate: every file chain against the BAM | M | Done v1.0.0 | |
 | DISK-02 | Disk map: every block, coloured by owner | M | Done v1.0.6 | |
 | DISK-03 | Compare Panes: same / differs (first byte) / only on one side | M | Done v1.0.9 | core `sector64::compare` |
-| DISK-04 | Validate **and repair**: rebuild the BAM, free orphaned blocks, drop broken entries, with undo | L | Done (unreleased, #44) | core `sector64::repair`; also ends broken chains and splits cross-linked files; BAM checked against `c1541 -validate` |
+| DISK-04 | Validate **and repair**: rebuild the BAM, free orphaned blocks, drop broken entries, with undo | L | Done v1.0.10 | core `sector64::repair`; also ends broken chains and splits cross-linked files; BAM checked against `c1541 -validate` |
 | DISK-05 | Sector editor: view/edit any track and sector in hex, jump from the disk map, follow chains | L | Idea | |
-| DISK-06 | Compare window: "Copy missing files" button that copies everything that's only on one side across | S | Done (unreleased, #43) | either direction; follow-up to DISK-03 |
+| DISK-06 | Compare window: "Copy missing files" button that copies everything that's only on one side across | S | Done v1.0.10 | either direction; follow-up to DISK-03 |
 
 ## 5. Working with other tools (TOOL)
 
@@ -115,7 +115,7 @@ Checking and inspecting a disk's structure.
 |---|---|---|---|---|
 | CLI-01 | Ten tools: s64ls, s64extract, s64write, s64val, s64pack, s64arc, s64lha, s64wr3, s64cvt, s64tap | L | Done v1.0.0 | see CLI.md |
 | CLI-02 | `s64extract --list` (BASIC listing) and `s64val --map` (block map) | S | Done v1.0.7 | |
-| CLI-03 | Compare two disks or archives from the command line | S | Done (unreleased, #43) | `s64cmp`; core `sector64::listing` reads any disk or archive |
+| CLI-03 | Compare two disks or archives from the command line | S | Done v1.0.10 | `s64cmp`; core `sector64::listing` reads any disk or archive |
 | CLI-04 | `--json` output for scripts | M | Idea | |
 
 ## 7. GUI and app (APP)
@@ -147,3 +147,4 @@ the rows above give each feature's first release.
 - **v1.0.7:** VIEW-05, EDIT-04, CLI-02
 - **v1.0.8:** VIEW-06, VIEW-07, TOOL-01, APP-05
 - **v1.0.9:** EDIT-05, DISK-03, APP-06
+- **v1.0.10:** DISK-04, DISK-06, EDIT-06, CLI-03
