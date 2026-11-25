@@ -34,6 +34,7 @@ the core plus one front end.
 | DISK-07 | Repair broken REL and GEOS files (rebuild side sectors, VLIR index) | L; DISK-04 can only remove them |
 | APP-10 | Open disk images from Finder (double-click, "Open with", drop on the Dock icon) | M; macOS sends these as Apple events winit 0.30 ignores; follow-up to APP-09 |
 | APP-11 | Sign and notarize the Mac app | S once enrolled; needs an Apple Developer account ($99/yr) |
+| APP-12 | Test the Mac GUI by remote control in CI (or a Mac over SSH): file dialogs, drag-and-drop, shortcuts, Run in VICE | M; less urgent now v1.0.11 was tried by hand; follow-up to APP-09; needs the runners to allow scripted clicks and keys, not tried yet |
 
 ---
 
@@ -131,7 +132,7 @@ Checking and inspecting a disk's structure.
 | APP-06 | Dual-pane view: two disks side by side, Tab to switch | M | Done v1.0.9 | |
 | APP-07 | Background loading with a progress bar | M | Idea | |
 | APP-08 | Grow the window to fit the preview or long names | S | Idea | |
-| APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Done v1.0.11 | experimental: no Mac here, so CI builds, tests and starts it |
+| APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Done v1.0.11 | CI builds, tests and starts it; v1.0.11 (Intel) tried by hand on macOS 14, incl. Run in VICE: all worked; Apple Silicon not tried by hand |
 
 ---
 

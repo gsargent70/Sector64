@@ -90,7 +90,7 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
-  # Nobody on the project has a Mac, so start the package on both kinds.
+  # Start the package on both kinds of Mac.
   macos-check:
     needs: macos
     strategy:

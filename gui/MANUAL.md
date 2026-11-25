@@ -886,9 +886,10 @@ DRAG-AND-DROP ON LINUX (WAYLAND)
 
 ON A MAC
 
-  The Mac version is experimental: nobody on the project has a
-  Mac, so it has only been built, tested and started on GitHub's
-  build machines. Please report what doesn't work.
+  The Mac version is experimental. The Intel version has been
+  tried by hand on macOS 14 (Sonoma); the Apple Silicon one has
+  only been built, tested and started on GitHub's build machines.
+  Please report what doesn't work.
 
   - Wherever this manual says Ctrl, use Cmd.
   - The "delete" key deletes the selected file. F2 and F5 need fn
