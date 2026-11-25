@@ -264,10 +264,11 @@ archive as…** a `.t64/.lnx/.lbr/.p00`.
   Unzip it anywhere and run `Sector64.exe`; the `s64*.exe` tools are
   alongside it.
 - `sector64-<ver>-universal-macos.zip` (**experimental**): `Sector64.app` and
-  the CLI tools for macOS 11 or newer, Apple Silicon and Intel. Nobody on the
-  project has a Mac, so it has only been built, tested and started on GitHub's
-  build machines. It isn't signed, so macOS blocks it until you allow it;
-  `README-MACOS.txt` inside says how.
+  the CLI tools for macOS 11 or newer, Apple Silicon and Intel. The Intel
+  version has been tried by hand on macOS 14 (Sonoma); the Apple Silicon one
+  has only been built, tested and started on GitHub's build machines. It isn't
+  signed, so macOS blocks it until you allow it; `README-MACOS.txt` inside
+  says how.
 
 They're built by the `release` GitHub Actions workflow when a `v*` tag is
 pushed. To build them yourself, run `sh packaging/build-linux.sh`,

@@ -104,12 +104,12 @@ cat >"$OUT/README-MACOS.txt" <<'EOF'
 Sector64 for macOS
 ==================
 
-EXPERIMENTAL. Nobody on the project has a Mac, so nobody has used this
-version by hand. GitHub's build machines compile it, run its tests and check
-that it starts, and that's all. If something doesn't work (or does!), please
+EXPERIMENTAL. The Intel version has been tried by hand on macOS 14 (Sonoma).
+The Apple Silicon version hasn't: GitHub's build machines compile it, run its
+tests and check that it starts. If something doesn't work (or does!), please
 say so: https://github.com/gsargent70/Sector64/issues
 
-It runs on macOS 11 or newer, on Apple Silicon and Intel Macs.
+It's built for macOS 11 or newer, on Apple Silicon and Intel Macs.
 
 Opening it the first time
 -------------------------
@@ -119,8 +119,8 @@ allow it. Either:
 
   - Open Sector64.app, dismiss the warning, then go to System Settings >
     Privacy & Security, scroll down to the message about Sector64 and click
-    Open Anyway. (On macOS 14 or older, right-click the app and choose Open
-    instead.)
+    Open Anyway. (On macOS 14 or older, you can also right-click the app and
+    choose Open.)
 
   - Or, in Terminal, clear the download mark from this whole folder, which
     also covers the command-line tools:

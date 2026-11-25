@@ -94,15 +94,16 @@ It runs on Linux, Windows and (experimental) macOS. Releases are on GitHub
 
 ## macOS build
 
-- There is no Mac here. `packaging/build-macos.sh` runs on GitHub's
+- `packaging/build-macos.sh` runs on GitHub's
   `macos-15` runner and writes `dist/sector64-<ver>-universal-macos.zip`
   (`Sector64.app`, `bin/`, `doc/`, `README-MACOS.txt`): lipo'd arm64 + x86_64,
   macOS 11+, ad-hoc signed only (no Developer ID, no notarization).
-- `packaging/check-macos.sh` is the only test it gets: CI runs it on Apple
+- `packaging/check-macos.sh` is the automatic test: CI runs it on Apple
   Silicon and Intel runners. It checks the package, runs the CLI tools, starts
   the app, takes a screenshot (kept as a workflow artifact; look at it) and
-  quits it. Say "experimental, not tried by hand" wherever the Mac version is
-  announced.
+  quits it. The Intel version (v1.0.11) has been tried by hand on macOS 14
+  (Sonoma), Run in VICE included; Apple Silicon has not. Say so, and that it's
+  experimental and unsigned, wherever the Mac version is announced.
 - `gui/src/mac.rs` holds what winit leaves out: ⌘Q asking about unsaved
   changes, VICE's folders, and not working in `/` when started from Finder.
   Shortcut labels go through `key_name`, Open dialogs through `open_dialog`

@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Check a macOS package on a Mac: the release workflow runs this on GitHub's
-# Apple Silicon and Intel machines, because the project has no Mac.
+# Apple Silicon and Intel machines.
 #
 #   sh packaging/check-macos.sh <package.zip> <output folder>
 #
