@@ -139,7 +139,7 @@ Checking and inspecting a disk's structure.
 | APP-08 | Grow the window to fit the preview or long names | S | Idea | |
 | APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Done v1.0.11 | CI builds, tests and starts it; v1.0.11 (Intel) tried by hand on macOS 14, incl. Run in VICE: all worked; Apple Silicon not tried by hand |
 | APP-14 | Menus regrouped as File / Edit / View / Tools / Help; Quit, Select All (Ctrl+A), Preview (Ctrl+P), F1, Help pages for shortcuts and About | S | Done (unreleased, #54) | from the 2026-11 review: File held 19 items |
-| APP-15 | Retire the Copy window: Dual Panes does all it did | S | Doing | Copy window from EDIT-04 (v1.0.7) predates Dual Panes (APP-06, v1.0.9) |
+| APP-15 | Retire the Copy window: Dual Panes does all it did | S | Done (unreleased, #55) | Copy window from EDIT-04 (v1.0.7) predates Dual Panes (APP-06, v1.0.9) |
 | APP-16 | Fix: Up or Down with a filter typed could crash (indexed past the filtered rows) | S | Done (unreleased, #54) | found in the 2026-11 review |
 | APP-13 | Fix: the preview pane left part of a narrow window unpainted (other windows showed through) | S | Done v1.0.12 | its header now wraps to fit; DIS scrolls sideways like HEX; a test runs the whole UI headless at several widths |
 
@@ -147,7 +147,7 @@ Checking and inspecting a disk's structure.
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Now:** APP-14 and APP-16 (#54), APP-15.
+1. **Now:** APP-14 and APP-16 (#54), APP-15 (#55).
 2. **Next:** EDIT-10, APP-17, APP-18, then EDIT-07, FMT-13.
 
 ## Done by release
