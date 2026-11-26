@@ -382,8 +382,9 @@ The pane sizes itself: wide enough for a whole hex line, or for
 mode is on. Long BASIC lines wrap at any character, as they do on
 a C64 screen.
 If the window is too narrow for that and the listing, the pane
-gives way first, down to about 20 characters; hex lines then
-scroll sideways instead of wrapping. If the window is narrower
+gives way first, down to about 20 characters; hex lines and
+disassembly then scroll sideways instead of wrapping, and the
+HEX / TEXT / ... buttons move under the title. If the window is narrower
 still, the listing shortens long names, then hides the BLK /
 PACKED column, then the SIZE column, so text never overlaps.
 Widen the window to bring them back. Files that cannot be decoded (an unsupported archive member) show the

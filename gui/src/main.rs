@@ -2468,6 +2468,14 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.frame_ui(ctx);
+    }
+}
+
+impl App {
+    /// One frame of the whole window: `update` without eframe's `Frame`, so
+    /// tests can run it on a bare context.
+    fn frame_ui(&mut self, ctx: &egui::Context) {
         let mut acts: Vec<Act> = Vec::new();
         if self.icons.is_none() {
             self.icons = Some(Icons::load(ctx));
@@ -3029,44 +3037,59 @@ impl eframe::App for App {
                 .resizable(false)
                 .exact_width(pane_w)
                 .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        let header = match &preview_name {
-                            Some(n) => format!("PREVIEW — {n}"),
-                            None => "PREVIEW".to_string(),
-                        };
-                        // Hex / Text segmented toggle, right-aligned and laid
-                        // out first, so the title is shortened to the space
-                        // left beside it instead of running underneath.
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.selectable_value(&mut preview_mode, PreviewMode::Pic, "PIC")
-                                .on_hover_text(
-                                    "show a Koala Painter, Art Studio or Doodle! picture",
-                                );
-                            ui.selectable_value(&mut preview_mode, PreviewMode::Gfx, "GFX")
-                                .on_hover_text("draw the bytes as sprites or characters");
-                            ui.selectable_value(&mut preview_mode, PreviewMode::Dis, "DIS")
-                                .on_hover_text("disassemble the bytes as 6502 machine code");
-                            ui.selectable_value(&mut preview_mode, PreviewMode::Basic, "BASIC")
-                                .on_hover_text("list a BASIC program, like LIST on a C64");
-                            ui.selectable_value(&mut preview_mode, PreviewMode::Text, "TEXT")
-                                .on_hover_text("show the bytes as PETSCII text");
-                            ui.selectable_value(&mut preview_mode, PreviewMode::Hex, "HEX")
-                                .on_hover_text("show an offset + hex + ASCII dump");
+                    let header = match &preview_name {
+                        Some(n) => format!("PREVIEW — {n}"),
+                        None => "PREVIEW".to_string(),
+                    };
+                    let title = |ui: &mut egui::Ui| {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&header).color(c64::ACCENT).strong(),
+                            )
+                            .truncate(),
+                        );
+                    };
+                    // The mode toggles sit right of the title when there's
+                    // room for them and a few letters of it; otherwise the
+                    // title gets its own line and the toggles wrap, so the
+                    // pane is never wider than the space it was given (that
+                    // left a strip of the window unpainted).
+                    let toggles = preview_toggles_width(ui);
+                    let title_room = 10.0
+                        * ui.fonts(|f| {
+                            f.glyph_width(&egui::TextStyle::Body.resolve(ui.style()), '0')
+                        });
+                    if ui.available_width() >= toggles + title_room {
+                        ui.horizontal(|ui| {
+                            // Laid out first, right-aligned, so the title is
+                            // shortened to the space left beside them.
                             ui.with_layout(
-                                egui::Layout::left_to_right(egui::Align::Center),
+                                egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new(header).color(c64::ACCENT).strong(),
-                                        )
-                                        .truncate(),
+                                    for (mode, label, tip) in PREVIEW_MODES.iter().rev() {
+                                        ui.selectable_value(&mut preview_mode, *mode, *label)
+                                            .on_hover_text(*tip);
+                                    }
+                                    ui.with_layout(
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        title,
                                     );
                                 },
                             );
                         });
-                    });
+                    } else {
+                        title(ui);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                            for (mode, label, tip) in PREVIEW_MODES {
+                                ui.selectable_value(&mut preview_mode, mode, label)
+                                    .on_hover_text(tip);
+                            }
+                        });
+                    }
                     if preview_mode == PreviewMode::Basic {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                             ui.selectable_value(&mut basic_dialect, None, "AUTO")
                                 .on_hover_text(
                                     "guess: BASIC 7.0 for C128 programs, Simons' BASIC when its \
@@ -3079,7 +3102,8 @@ impl eframe::App for App {
                         });
                     }
                     if preview_mode == PreviewMode::Pic {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                             ui.label("format");
                             let name = pic_format.map_or("AUTO", |f| f.name());
                             egui::ComboBox::from_id_salt("pic_format")
@@ -3094,7 +3118,8 @@ impl eframe::App for App {
                         });
                     }
                     if preview_mode == PreviewMode::Gfx {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                             ui.selectable_value(&mut gfx_kind, GfxKind::Sprites, "SPRITES")
                                 .on_hover_text("24×21 sprites, 64 bytes each");
                             ui.selectable_value(&mut gfx_kind, GfxKind::Chars, "CHARS")
@@ -3125,7 +3150,11 @@ impl eframe::App for App {
                                 })
                         })
                         .map(|(_, from, len)| (from, len));
-                    let mut area = egui::ScrollArea::new([hex, true]).id_salt("preview_scroll");
+                    // Hex dumps and disassembly don't wrap: they scroll sideways
+                    // in a narrow pane rather than run past its edge.
+                    let unwrapped = hex || preview_mode == PreviewMode::Dis;
+                    let mut area =
+                        egui::ScrollArea::new([unwrapped, true]).id_salt("preview_scroll");
                     if let Some((from, _)) = mark.filter(|_| self.find.scroll) {
                         let font = egui::TextStyle::Monospace.resolve(ui.style());
                         let row = ui.fonts(|f| f.row_height(&font));
@@ -5111,6 +5140,49 @@ fn sector_ui(
         "This disk is read-only (view only). Arrows move; PgUp/PgDn step through blocks."
     };
     ui.label(egui::RichText::new(hint).color(c64::TEXT_DIM));
+}
+
+/// The preview pane's modes: what each toggle is called and does.
+const PREVIEW_MODES: [(PreviewMode, &str, &str); 6] = [
+    (PreviewMode::Hex, "HEX", "show an offset + hex + ASCII dump"),
+    (PreviewMode::Text, "TEXT", "show the bytes as PETSCII text"),
+    (
+        PreviewMode::Basic,
+        "BASIC",
+        "list a BASIC program, like LIST on a C64",
+    ),
+    (
+        PreviewMode::Dis,
+        "DIS",
+        "disassemble the bytes as 6502 machine code",
+    ),
+    (
+        PreviewMode::Gfx,
+        "GFX",
+        "draw the bytes as sprites or characters",
+    ),
+    (
+        PreviewMode::Pic,
+        "PIC",
+        "show a Koala Painter, Art Studio or Doodle! picture",
+    ),
+];
+
+/// How wide the row of preview mode toggles is.
+fn preview_toggles_width(ui: &egui::Ui) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let pad = 2.0 * ui.spacing().button_padding.x + ui.spacing().item_spacing.x;
+    PREVIEW_MODES
+        .iter()
+        .map(|(_, label, _)| {
+            let w = ui.fonts(|f| {
+                f.layout_no_wrap(label.to_string(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            });
+            w + pad
+        })
+        .sum()
 }
 
 /// Width of the preview pane: wide enough for its content (a full hex line,
@@ -7737,6 +7809,76 @@ mod tests {
     }
 
     /// A small D64 with one file on it.
+    /// Run `frames` frames of the whole window at `width` × 760 and return
+    /// the x positions (sampled every pixel) along a line through the
+    /// middle that no opaque fill covers: places where whatever is behind
+    /// the window would show through.
+    fn unpainted_columns(app: &mut App, ctx: &egui::Context, width: f32) -> Vec<f32> {
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(width, 760.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run(input(), |ctx| app.frame_ui(ctx));
+        for _ in 0..3 {
+            out = ctx.run(input(), |ctx| app.frame_ui(ctx));
+        }
+        fn fills(shape: &egui::Shape, clip: egui::Rect, acc: &mut Vec<egui::Rect>) {
+            match shape {
+                egui::Shape::Rect(r) if r.fill.a() == 255 => {
+                    acc.push(r.rect.intersect(clip));
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| fills(s, clip, acc)),
+                _ => {}
+            }
+        }
+        let mut rects = Vec::new();
+        for cs in &out.shapes {
+            fills(&cs.shape, cs.clip_rect, &mut rects);
+        }
+        let y = 400.0;
+        (0..width as usize)
+            .map(|x| x as f32 + 0.5)
+            .filter(|&x| !rects.iter().any(|r| r.contains(egui::pos2(x, y))))
+            .collect()
+    }
+
+    #[test]
+    fn preview_pane_never_leaves_part_of_the_window_unpainted() {
+        let ctx = egui::Context::default();
+        load_c64_font(&ctx);
+        apply_c64_theme(&ctx);
+        for width in [520.0, 640.0, 760.0, 900.0, 1100.0, 1400.0] {
+            for (mode, ..) in PREVIEW_MODES {
+                let mut app = app_with_disk();
+                app.add("A LONG FILE NAME".into(), &[0x41; 9000]);
+                app.add("B".into(), &[1, 2, 3]);
+                app.pane.selected = Some(0);
+                app.show_preview = true;
+                app.preview_mode = mode;
+                let gaps = unpainted_columns(&mut app, &ctx, width);
+                let label = PREVIEW_MODES.iter().find(|m| m.0 == mode).unwrap().1;
+                assert!(
+                    gaps.is_empty(),
+                    "{width} px wide, {label}: unpainted from x={} to {} ({} px)",
+                    gaps[0],
+                    gaps[gaps.len() - 1],
+                    gaps.len()
+                );
+                // Nothing in the pane runs off the window's edge either.
+                let panel = egui::containers::panel::PanelState::load(&ctx, "preview".into())
+                    .expect("the preview pane was drawn");
+                assert!(
+                    panel.rect.max.x <= width + 0.5,
+                    "{width} px wide, {label}: the pane reaches x={}",
+                    panel.rect.max.x
+                );
+            }
+        }
+    }
+
     fn sample_d64() -> Vec<u8> {
         let mut disk = Disk::format("ZIP TEST", "ZT");
         let data: Vec<u8> = (0..5000u32).map(|i| (i * 7 % 251) as u8).collect();
