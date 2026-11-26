@@ -90,7 +90,7 @@ Changing disks and building archives.
 | EDIT-01 | Create blank D64/D71/D81; add, rename, delete; save | M | Done v1.0.0 | |
 | EDIT-02 | Build a new archive and save it as T64/LNX/LBR/P00 | M | Done v1.0.0 | |
 | EDIT-03 | Undo and redo | M | Done v1.0.5 | |
-| EDIT-04 | Copy files between two disks (Copy window) | M | Done v1.0.7 | exact names, types, lock flags |
+| EDIT-04 | Copy files between two disks (Copy window) | M | Done v1.0.7 | exact names, types, lock flags; the window was retired in APP-15 for Dual Panes |
 | EDIT-05 | Copy across panes with F5 | S | Done v1.0.9 | |
 | EDIT-06 | BASIC text → runnable PRG (V2, 7.0, Simons'), the reverse of VIEW-03/04 | L | Done v1.0.10 | core `sector64::tokenize`, `s64basic`, GUI BASIC editor; checked against petcat and the C64/C128 ROMs |
 | EDIT-07 | Directory editing: reorder, separator/"art" entries, disk name and ID, lock/unlock | M | Idea | |
@@ -139,7 +139,7 @@ Checking and inspecting a disk's structure.
 | APP-08 | Grow the window to fit the preview or long names | S | Idea | |
 | APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Done v1.0.11 | CI builds, tests and starts it; v1.0.11 (Intel) tried by hand on macOS 14, incl. Run in VICE: all worked; Apple Silicon not tried by hand |
 | APP-14 | Menus regrouped as File / Edit / View / Tools / Help; Quit, Select All (Ctrl+A), Preview (Ctrl+P), F1, Help pages for shortcuts and About | S | Done (unreleased, #54) | from the 2026-11 review: File held 19 items |
-| APP-15 | Retire the Copy window: Dual Panes does all it did | S | Planned | Copy window from EDIT-04 (v1.0.7) predates Dual Panes (APP-06, v1.0.9) |
+| APP-15 | Retire the Copy window: Dual Panes does all it did | S | Doing | Copy window from EDIT-04 (v1.0.7) predates Dual Panes (APP-06, v1.0.9) |
 | APP-16 | Fix: Up or Down with a filter typed could crash (indexed past the filtered rows) | S | Done (unreleased, #54) | found in the 2026-11 review |
 | APP-13 | Fix: the preview pane left part of a narrow window unpainted (other windows showed through) | S | Done v1.0.12 | its header now wraps to fit; DIS scrolls sideways like HEX; a test runs the whole UI headless at several widths |
 
@@ -147,7 +147,7 @@ Checking and inspecting a disk's structure.
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Now:** APP-14 and APP-16 (one PR), then APP-15.
+1. **Now:** APP-14 and APP-16 (#54), APP-15.
 2. **Next:** EDIT-10, APP-17, APP-18, then EDIT-07, FMT-13.
 
 ## Done by release
