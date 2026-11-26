@@ -37,7 +37,6 @@ the core plus one front end.
 | APP-12 | Test the Mac GUI by remote control in CI (or a Mac over SSH): file dialogs, drag-and-drop, shortcuts, Run in VICE | M; less urgent now v1.0.11 was tried by hand; follow-up to APP-09; needs the runners to allow scripted clicks and keys, not tried yet |
 | DISK-08 | Sector editor: type text into the PETSCII column, and search the disk for bytes or text | M; follow-up to DISK-05 (today it edits in hex only) |
 | CLI-06 | Search from the command line (`s64find`): text or hex inside the files of disks and archives | S; core done in VIEW-10 |
-| APP-13 | Bug: turning the preview pane on when the window is too narrow for it and the list leaves part of the window unpainted (other windows show through) | S; reported by the user, seen while testing VIEW-10 |
 
 ---
 
@@ -136,12 +135,13 @@ Checking and inspecting a disk's structure.
 | APP-07 | Background loading with a progress bar | M | Idea | |
 | APP-08 | Grow the window to fit the preview or long names | S | Idea | |
 | APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Done v1.0.11 | CI builds, tests and starts it; v1.0.11 (Intel) tried by hand on macOS 14, incl. Run in VICE: all worked; Apple Silicon not tried by hand |
+| APP-13 | Fix: the preview pane left part of a narrow window unpainted (other windows showed through) | S | Done (unreleased, #PR) | its header now wraps to fit; DIS scrolls sideways like HEX; a test runs the whole UI headless at several widths |
 
 ---
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Next:** APP-13 (preview pane bug), EDIT-07, FMT-13.
+1. **Next:** EDIT-07, FMT-13.
 
 ## Done by release
 
