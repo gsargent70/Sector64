@@ -135,7 +135,7 @@ Checking and inspecting a disk's structure.
 | APP-07 | Background loading with a progress bar | M | Idea | |
 | APP-08 | Grow the window to fit the preview or long names | S | Idea | |
 | APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Done v1.0.11 | CI builds, tests and starts it; v1.0.11 (Intel) tried by hand on macOS 14, incl. Run in VICE: all worked; Apple Silicon not tried by hand |
-| APP-13 | Fix: the preview pane left part of a narrow window unpainted (other windows showed through) | S | Done (unreleased, #PR) | its header now wraps to fit; DIS scrolls sideways like HEX; a test runs the whole UI headless at several widths |
+| APP-13 | Fix: the preview pane left part of a narrow window unpainted (other windows showed through) | S | Done (unreleased, #52) | its header now wraps to fit; DIS scrolls sideways like HEX; a test runs the whole UI headless at several widths |
 
 ---
 
