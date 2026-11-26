@@ -142,8 +142,7 @@ the right and the listing makes room for it:
              Panes (two panes side by side, see 13; it takes
              turns with the preview pane) and Disk Map.
     Tools    Validate / Repair, Sector Editor, Compare Panes,
-             Find in Files, BASIC Editor, Run in VICE and the
-             Copy window.
+             Find in Files, BASIC Editor and Run in VICE.
     Help     this manual, its keyboard shortcuts on their own,
              and About (the version you're running).
 - Header row: the disk/archive title and, for disks, blocks
@@ -640,27 +639,24 @@ Repair (section 10) finds most such damage.
  12. COPYING BETWEEN DISKS
 ----------------------------------------------------------------
 
-Choose Tools > Copy Window... (or press Ctrl+K) to open the Copy
-window. It holds a second disk, alongside the one in the main
-window, and copies files between the two.
+Files are copied between two disks with two panes side by side
+(section 13 has the details):
 
-  1. In the Copy window, click Open... to pick the disk to copy
-     to (a D64, D71, D81 or CMD-native D2M), or New ▸ to make a
-     blank D64, D71 or D81. A new disk takes its name and ID
-     from File > New.
-  2. In the main list, select the files to copy (Ctrl-click or
-     Shift-click for several), then click Copy Here.
+  1. Choose View > Dual Panes (or press Ctrl+K).
+  2. Click the right pane (or press Tab) and open the disk to
+     copy to with File > Open (a D64, D71, D81 or CMD-native
+     D2M), or make a blank one with File > New.
+  3. Click the left pane and open the disk or archive to copy
+     from.
+  4. Select the files to copy (Ctrl-click or Shift-click for
+     several, Ctrl+A for all) and press F5.
 
-The main window can show any disk or archive, read-only ones
-included (G64, D2M, Zip-Code, T64, ARC...), so this is also how
-you put files from an archive onto a disk. The second disk stays
-in the Copy window while you open other files in the main
-window, so you can gather files from several sources onto one
-disk.
-
-To copy the other way, select files in the Copy window's list
-and click Copy to Open Disk. That needs an editable disk (or a
-new archive) in the main window, and the main Undo takes it back.
+The pane you copy from can show any disk or archive, read-only
+ones included (G64, D2M, Zip-Code, T64, ARC...), so this is also
+how you put files from an archive onto a disk. Open other files
+in that pane one after another to gather files from several
+sources onto one disk. To copy the other way, focus the other
+pane and press F5 there.
 
 Copies keep each file's name exactly, its type and its lock
 flag. Files that can't be copied are skipped, and the status
@@ -671,19 +667,21 @@ line says why:
   - GEOS files on a GEOS disk: a plain copy would lose the info
     block and VLIR records, which GEOS needs
 
-The Copy window's disk has its own Save, Save As..., Undo (for
-the copies onto it) and Close Disk buttons. While it has unsaved
-changes, Open... and New ▸ are disabled, and Close Disk becomes
-Discard. Quitting with unsaved changes on either disk asks first.
-Esc or Close hides the window without closing its disk.
+Each pane has its own Undo, so Ctrl+Z in the pane a copy went
+into takes it back off. Save that pane's disk with Ctrl+S or
+File > Save As. Quitting with unsaved changes in either pane
+asks first.
+
+(Earlier versions had a separate Copy window for this; Dual
+Panes does everything it did, and Ctrl+K now opens it.)
 
 
 ----------------------------------------------------------------
  13. TWO DISKS SIDE BY SIDE
 ----------------------------------------------------------------
 
-Choose View > Dual Panes to split the window into two panes,
-each with its own disk or archive, like a two-panel file
+Choose View > Dual Panes (Ctrl+K) to split the window into two
+panes, each with its own disk or archive, like a two-panel file
 commander. Choose it again to go back to one pane. Sector64
 remembers which you used last.
 
@@ -717,7 +715,7 @@ Select files in the focused pane (Ctrl-click or Shift-click for
 several) and press F5, or choose Edit > Copy to Other Pane, or
 right-click a file and choose Copy to Other Pane. They are
 copied into the other pane's disk or new archive, the same way
-as the Copy window copies (see 12): exact names, types and lock
+as section 12 describes: exact names, types and lock
 flags, with REL files and name clashes skipped. The other pane
 needs an editable disk (D64, D71, D81 or CMD-native D2M) or a
 new archive. To undo a copy, focus the pane it went into and
@@ -890,7 +888,7 @@ On a Mac, use Cmd for Ctrl (see "On a Mac" in section 19).
     Ctrl+M      Show or hide the disk map
     Ctrl+E      Show or hide the sector editor
     Ctrl+F      Find text or bytes inside the listed files
-    Ctrl+K      Show or hide the Copy window
+    Ctrl+K      Turn Dual Panes on or off
     Ctrl+B      Show or hide the BASIC editor
     Ctrl+D      Compare the two panes' files
     Ctrl+R      Run the disk or selected program in VICE
@@ -903,7 +901,7 @@ On a Mac, use Cmd for Ctrl (see "On a Mac" in section 19).
     Up / Down   Move the selection
     F1          Show or hide this manual
     Esc         Cancel an in-place rename; close the sector
-                editor, the disk map or the Copy window
+                editor, the disk map or another window
 
 Single-key shortcuts are ignored while you are typing in a text
 field (the filter box or a rename).

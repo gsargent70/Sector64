@@ -236,10 +236,9 @@ it in the **Sector Editor**, which shows any track and sector in hex, follows
 block links through a file's chain, and writes typed changes back as one undoable
 edit. **Find in Files** searches every listed file for text (matched in any C64
 case) or hex bytes (with `??` wildcards) and jumps to each match in the hex
-preview or the Sector Editor. The **Copy** window holds a second disk image and
-copies files between the two, from any disk or archive onto a D64/D71/D81/D2M
-and back. **Dual** view splits the window into two panes, each with its own disk
-or archive, and F5 copies the selected files from one to the other. **Compare
+preview or the Sector Editor. **Dual Panes** splits the window into two panes,
+each with its own disk or archive, and F5 copies the selected files from one to
+the other: from any disk or archive onto a D64/D71/D81/D2M or a new archive. **Compare
 Panes** lists which files match byte for byte, which differ (and where),
 and which are on only one side, and can copy the missing ones across. The **BASIC editor** writes a program, or
 lists one from a disk to change, and puts it on the disk as a PRG. **Run in VICE** starts the open disk, or the selected program, in the
