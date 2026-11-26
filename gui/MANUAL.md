@@ -135,8 +135,9 @@ the right and the listing makes room for it:
 
 - Menu bar (top):
     File     New, Open, Open Recent, Add file, Save, Save As,
-             Extract ▸, Copy..., BASIC Editor..., Copy to
-             Other Pane (in dual view), Run in VICE, Undo,
+             Extract ▸, Copy..., BASIC Editor..., Find in
+             Files..., Copy to Other Pane (in dual view),
+             Run in VICE, Undo,
              Redo, Rename and Delete.
     Disk     Validate / Repair, Disk Map, Sector Editor and
              Compare Panes.
@@ -227,6 +228,35 @@ FILTERING
   what you typed (case-insensitive). A (matched/total) count and
   an X button appear while a filter is active; click X to clear
   it. The filter clears automatically when you open a new file.
+
+FINDING TEXT OR BYTES INSIDE FILES
+
+  Choose File > Find in Files... (or press Ctrl+F) to search
+  every file in the listing (the focused pane in dual view).
+
+  - TEXT finds words the way a C64 shows them: letters match in
+    either case, whichever character set wrote them, and a space
+    matches a shifted space too. Files whose names contain the
+    text are listed as well. BASIC keywords are stored as tokens,
+    so search for them in hex, or for the text around them.
+  - HEX finds bytes, such as A9 00 8D. Spaces are optional, a $
+    or 0x before a byte is allowed, and ?? matches any byte:
+    A9 ?? 8D 20 D0 finds every LDA #n : STA $D020.
+
+  Press Enter or Find. Each file with matches is listed with how
+  many there are and the offsets of the first ones. Click an
+  offset to see it:
+  - PREVIEW selects the file and highlights the match in the hex
+    preview, scrolled into view. (The preview shows a file's
+    first 16 KB; the status line says when a match is beyond
+    that.)
+  - SECTOR EDITOR (disk images only) opens the block holding the
+    match in the Sector Editor (section 11), with the cursor on
+    its first byte.
+
+  Search again after editing, or after switching panes: the
+  results belong to the listing they were found in. Esc or Close
+  hides the window.
 
 SELECTING FILES
 
@@ -851,6 +881,7 @@ On a Mac, use Cmd for Ctrl (see "On a Mac" in section 19).
     Ctrl+L      Validate or repair the open disk
     Ctrl+M      Show or hide the disk map
     Ctrl+E      Show or hide the sector editor
+    Ctrl+F      Find text or bytes inside the listed files
     Ctrl+K      Show or hide the Copy window
     Ctrl+B      Show or hide the BASIC editor
     Ctrl+D      Compare the two panes' files

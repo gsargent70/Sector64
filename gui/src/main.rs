@@ -584,6 +584,49 @@ struct Pane {
     pic_cache: Option<PicView>,
 }
 
+/// One file the Find window matched.
+struct FindHit {
+    /// Its row in the listing, and its name then (to notice a changed list).
+    node: usize,
+    name: String,
+    badge: String,
+    /// Whether the name itself matches (text searches only).
+    in_name: bool,
+    /// The first few match offsets, and how many there are in all.
+    offsets: Vec<usize>,
+    total: usize,
+    /// Whether its matches can be shown in the Sector Editor (a plain file
+    /// on a disk image).
+    on_disk: bool,
+}
+
+/// How many offsets the Find window lists per file.
+const FIND_OFFSETS: usize = 24;
+
+/// The Find window: the query, the last search's results, and the match
+/// the hex preview highlights.
+#[derive(Default)]
+struct FindState {
+    query: String,
+    /// Search for hex bytes (`true`) or text.
+    hex: bool,
+    /// Matches open in the Sector Editor instead of the preview.
+    in_sector: bool,
+    hits: Vec<FindHit>,
+    /// What the last search found (or why it couldn't run).
+    summary: String,
+    /// How long a match is, for the highlight.
+    len: usize,
+    /// Which listing the results are for (see `App::sector_source`).
+    source: String,
+    /// The match the hex preview highlights: (row, offset, length).
+    mark: Option<(usize, usize, usize)>,
+    /// Scroll the preview to the mark on the next frame.
+    scroll: bool,
+    /// Put the keyboard in the query box on the next frame.
+    focus: bool,
+}
+
 /// What the BASIC editor's two load buttons read.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BasicSource {
@@ -712,6 +755,9 @@ struct App {
     /// Whether the Sector Editor window is open, and the block it shows.
     show_sector: bool,
     sector: sector::SectorEditor,
+    /// Whether the Find window is open, and its search.
+    show_find: bool,
+    find: FindState,
     /// Whether the Copy window is open, and the disk it copies to and from.
     show_copy: bool,
     other: Option<OtherDisk>,
@@ -822,6 +868,10 @@ enum Act {
     SectorOpen(u8, u8),
     /// Sector Editor: write its staged edits to the disk.
     SectorWrite,
+    /// Find window: search the listing's files.
+    Find,
+    /// Find window: show this file's match at this offset.
+    FindShow(usize, usize),
 }
 
 impl Pane {
@@ -1166,6 +1216,8 @@ impl App {
                 }
             }
             Act::SectorWrite => self.sector_write(),
+            Act::Find => self.run_find(),
+            Act::FindShow(node, offset) => self.find_show(node, offset),
             Act::CompareSelect(l, r) => {
                 let (left, right) = if self.focus_right {
                     (&mut self.back, &mut self.pane)
@@ -1788,6 +1840,135 @@ impl App {
         self.sector.source = src;
     }
 
+    /// Search every file in the focused listing for the Find window's query.
+    fn run_find(&mut self) {
+        let source = self.sector_source();
+        let f = &mut self.find;
+        f.hits.clear();
+        f.mark = None;
+        f.source = source;
+        let pattern = if f.hex {
+            sector64::search::Pattern::hex(&f.query)
+        } else {
+            sector64::search::Pattern::text(&f.query)
+        };
+        let pattern = match pattern {
+            Ok(p) => p,
+            Err(e) => {
+                f.summary = format!("⚠ {e}");
+                return;
+            }
+        };
+        f.len = pattern.len();
+        let map = self.pane.map_disk().map(Disk::block_map);
+        let (mut matches, mut unreadable) = (0, 0);
+        for (i, n) in self.pane.nodes.iter().enumerate() {
+            let in_name = !f.hex && pattern.in_name(&n.name);
+            let (offsets, total, on_disk) = match &n.data {
+                Ok(d) => {
+                    let offsets = pattern.find(d, FIND_OFFSETS);
+                    let chain = map.as_ref().and_then(|m| m.chains.get(i));
+                    let on_disk = chain.is_some_and(|c| {
+                        sector64::search::block_of_offset(c, d.len(), 0).is_some()
+                    });
+                    let total = if offsets.len() < FIND_OFFSETS {
+                        offsets.len()
+                    } else {
+                        pattern.count(d)
+                    };
+                    (offsets, total, on_disk)
+                }
+                Err(_) => {
+                    unreadable += 1;
+                    (Vec::new(), 0, false)
+                }
+            };
+            matches += total;
+            if in_name || total > 0 {
+                f.hits.push(FindHit {
+                    node: i,
+                    name: n.name.clone(),
+                    badge: n.badge.clone(),
+                    in_name,
+                    offsets,
+                    total,
+                    on_disk,
+                });
+            }
+        }
+        let files = self.pane.nodes.len();
+        let plural =
+            |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        f.summary = if f.hits.is_empty() {
+            format!("Nothing found in {}", plural(files, "file", "files"))
+        } else {
+            let in_files = f.hits.iter().filter(|h| h.total > 0).count();
+            let names = f.hits.iter().filter(|h| h.in_name).count();
+            let mut s = format!(
+                "{} in {} of {files}",
+                plural(matches, "match", "matches"),
+                plural(in_files, "file", "files")
+            );
+            if names > 0 {
+                s += &format!(" · {} by name", plural(names, "file", "files"));
+            }
+            s
+        };
+        if unreadable > 0 {
+            f.summary += &format!(
+                " ({} couldn't be read)",
+                plural(unreadable, "file", "files")
+            );
+        }
+    }
+
+    /// Show a Find match: select its file, then either highlight it in the
+    /// hex preview or open its block in the Sector Editor.
+    fn find_show(&mut self, node: usize, offset: usize) {
+        let Some(hit) = self.find.hits.iter().find(|h| h.node == node) else {
+            return;
+        };
+        if self.pane.nodes.get(node).map(|n| &n.name) != Some(&hit.name) {
+            self.status = "The listing has changed since the search; search again".into();
+            return;
+        }
+        let name = hit.name.clone();
+        self.pane.selected = Some(node);
+        self.pane.marked.clear();
+        if self.find.in_sector && hit.on_disk {
+            let len = self.pane.nodes[node].data.as_ref().map_or(0, Vec::len);
+            let block = self
+                .pane
+                .map_disk()
+                .map(Disk::block_map)
+                .and_then(|m| m.chains.get(node).cloned())
+                .and_then(|c| sector64::search::block_of_offset(&c, len, offset));
+            if let Some((t, s, byte)) = block {
+                self.apply(Act::SectorOpen(t, s));
+                if self.show_sector && (self.sector.track, self.sector.sector) == (t, s) {
+                    self.sector.place(byte);
+                    self.status = format!(
+                        "\"{name}\" offset ${offset:04X}: track {t}, sector {s}, byte ${byte:02X}"
+                    );
+                }
+                return;
+            }
+        }
+        self.preview_mode = PreviewMode::Hex;
+        self.show_preview = true;
+        self.dual = false;
+        self.find.mark = Some((node, offset, self.find.len));
+        self.find.scroll = true;
+        self.status = if offset < PREVIEW_CAP {
+            format!("\"{name}\": match at offset ${offset:04X}")
+        } else {
+            format!(
+                "\"{name}\": match at offset ${offset:04X}, past the {} KB the preview shows",
+                PREVIEW_CAP / 1024
+            )
+        };
+    }
+
     /// Write the Sector Editor's staged edits to the open disk, as one undo
     /// step.
     fn sector_write(&mut self) {
@@ -2333,7 +2514,7 @@ impl eframe::App for App {
                 if stale {
                     let text = match &self.pane.nodes[i].data {
                         Ok(d) => match mode {
-                            PreviewMode::Hex => hexdump(d, 16 * 1024),
+                            PreviewMode::Hex => hexdump(d, PREVIEW_CAP),
                             PreviewMode::Text => petscii_text(d, 64 * 1024),
                             PreviewMode::Basic => basic_preview(d, dialect),
                             PreviewMode::Dis => dis_preview(d, self.pane.nodes[i].badge == "prg"),
@@ -2397,6 +2578,10 @@ impl eframe::App for App {
         let has_map = self.pane.map_disk().is_some();
         let mut show_map = self.show_map && has_map;
         let mut show_sector = self.show_sector && has_map;
+        let mut show_find = self.show_find;
+        // Find results (and the match the preview highlights) belong to the
+        // listing they were searched in.
+        let find_live = self.find.source == self.sector_source();
         if show_sector {
             self.sector_sync();
         }
@@ -2575,6 +2760,18 @@ impl eframe::App for App {
                         .clicked()
                     {
                         show_basic = !show_basic;
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add(
+                            icon_button(&ic.blank, "Find in Files…")
+                                .selected(show_find)
+                                .shortcut_text(key_hint("Ctrl+F")),
+                        )
+                        .on_hover_text("look for text or hex bytes inside every file listed")
+                        .clicked()
+                    {
+                        show_find = !show_find;
                         ui.close_menu();
                     }
                     if dual
@@ -2914,52 +3111,80 @@ impl eframe::App for App {
                     // PETSCII text and BASIC listings wrap at the pane's 40
                     // columns, like a C64 screen.
                     let hex = preview_mode == PreviewMode::Hex;
-                    egui::ScrollArea::new([hex, true])
-                        .id_salt("preview_scroll")
-                        .show(ui, |ui| {
-                            if preview.is_empty() {
-                                ui.label(
-                                    egui::RichText::new("Select a file to preview its bytes.")
-                                        .color(c64::TEXT_DIM),
-                                );
-                            } else if let (PreviewMode::Gfx, Some((i, Ok(data), badge))) = (
-                                preview_mode,
-                                self.pane.selected.and_then(|i| {
-                                    self.pane
-                                        .nodes
-                                        .get(i)
-                                        .map(|n| (i, n.data.as_ref(), &n.badge))
-                                }),
-                            ) {
-                                gfx_ui(ui, &mut gfx_cache, i, data, badge, gfx_kind, gfx_multi);
-                            } else if let (PreviewMode::Pic, Some((i, Ok(data)))) = (
-                                preview_mode,
-                                self.pane.selected.and_then(|i| {
-                                    self.pane.nodes.get(i).map(|n| (i, n.data.as_ref()))
-                                }),
-                            ) {
-                                pic_ui(ui, &mut pic_cache, i, data, pic_format);
-                            } else if preview_mode == PreviewMode::Dis {
-                                let job = dis_layout(
-                                    &preview,
-                                    egui::TextStyle::Monospace.resolve(ui.style()),
-                                    ui.visuals().text_color(),
-                                );
-                                ui.add(egui::Label::new(job).extend());
-                            } else if preview_mode == PreviewMode::Basic {
-                                let job = basic_layout(
-                                    &preview,
-                                    egui::TextStyle::Monospace.resolve(ui.style()),
-                                    ui.visuals().text_color(),
-                                    ui.available_width(),
-                                );
-                                ui.add(egui::Label::new(job));
-                            } else {
-                                let label =
-                                    egui::Label::new(egui::RichText::new(&preview).monospace());
-                                ui.add(if hex { label.extend() } else { label.wrap() });
-                            }
-                        });
+                    // A Find match to highlight in this file, and scroll to.
+                    let mark = self
+                        .find
+                        .mark
+                        .filter(|&(n, ..)| {
+                            hex && find_live
+                                && Some(n) == self.pane.selected
+                                // Still the same file (the list can change).
+                                && self.find.hits.iter().any(|h| {
+                                    h.node == n
+                                        && self.pane.nodes.get(n).is_some_and(|x| x.name == h.name)
+                                })
+                        })
+                        .map(|(_, from, len)| (from, len));
+                    let mut area = egui::ScrollArea::new([hex, true]).id_salt("preview_scroll");
+                    if let Some((from, _)) = mark.filter(|_| self.find.scroll) {
+                        let font = egui::TextStyle::Monospace.resolve(ui.style());
+                        let row = ui.fonts(|f| f.row_height(&font));
+                        let line = (from.min(PREVIEW_CAP) / 16) as f32;
+                        area = area.vertical_scroll_offset(((line - 3.0) * row).max(0.0));
+                        self.find.scroll = false;
+                    }
+                    area.show(ui, |ui| {
+                        if preview.is_empty() {
+                            ui.label(
+                                egui::RichText::new("Select a file to preview its bytes.")
+                                    .color(c64::TEXT_DIM),
+                            );
+                        } else if let (PreviewMode::Gfx, Some((i, Ok(data), badge))) = (
+                            preview_mode,
+                            self.pane.selected.and_then(|i| {
+                                self.pane
+                                    .nodes
+                                    .get(i)
+                                    .map(|n| (i, n.data.as_ref(), &n.badge))
+                            }),
+                        ) {
+                            gfx_ui(ui, &mut gfx_cache, i, data, badge, gfx_kind, gfx_multi);
+                        } else if let (PreviewMode::Pic, Some((i, Ok(data)))) = (
+                            preview_mode,
+                            self.pane
+                                .selected
+                                .and_then(|i| self.pane.nodes.get(i).map(|n| (i, n.data.as_ref()))),
+                        ) {
+                            pic_ui(ui, &mut pic_cache, i, data, pic_format);
+                        } else if preview_mode == PreviewMode::Dis {
+                            let job = dis_layout(
+                                &preview,
+                                egui::TextStyle::Monospace.resolve(ui.style()),
+                                ui.visuals().text_color(),
+                            );
+                            ui.add(egui::Label::new(job).extend());
+                        } else if preview_mode == PreviewMode::Basic {
+                            let job = basic_layout(
+                                &preview,
+                                egui::TextStyle::Monospace.resolve(ui.style()),
+                                ui.visuals().text_color(),
+                                ui.available_width(),
+                            );
+                            ui.add(egui::Label::new(job));
+                        } else if let Some((from, len)) = mark {
+                            let job = hex_marked_layout(
+                                &preview,
+                                from,
+                                len,
+                                egui::TextStyle::Monospace.resolve(ui.style()),
+                                ui.visuals().text_color(),
+                            );
+                            ui.add(egui::Label::new(job).extend());
+                        } else {
+                            let label = egui::Label::new(egui::RichText::new(&preview).monospace());
+                            ui.add(if hex { label.extend() } else { label.wrap() });
+                        }
+                    });
                 });
         }
 
@@ -3196,6 +3421,41 @@ impl eframe::App for App {
                     sector_ui(ui, &mut self.sector, &view, &mut show_sector, &mut acts);
                 });
             }
+        }
+
+        // Find window: search the listing's files for text or bytes.
+        if show_find {
+            if !show_help
+                && !show_map
+                && !show_sector
+                && !show_copy
+                && !show_compare
+                && !show_basic
+                && !self.show_validation
+                && ctx.input(|i| i.key_pressed(egui::Key::Escape))
+            {
+                show_find = false;
+            }
+            let source = self.sector_source();
+            let stale = !self.find.source.is_empty() && self.find.source != source;
+            let on_disk = self.pane.map_disk().is_some();
+            let screen = ctx.screen_rect();
+            egui::Window::new(egui::RichText::new("FIND").color(c64::ACCENT).strong())
+                .collapsible(false)
+                .resizable(false)
+                .max_height(screen.height() - 80.0)
+                .pivot(egui::Align2::RIGHT_TOP)
+                .default_pos(screen.right_top() + egui::vec2(-24.0, 70.0))
+                .show(ctx, |ui| {
+                    find_ui(
+                        ui,
+                        &mut self.find,
+                        stale,
+                        on_disk,
+                        &mut show_find,
+                        &mut acts,
+                    );
+                });
         }
 
         // Copy window: a second disk to copy files to and from.
@@ -3476,6 +3736,9 @@ impl eframe::App for App {
             if i.modifiers.command && i.key_pressed(egui::Key::E) && has_map {
                 show_sector = !show_sector;
             }
+            if i.modifiers.command && i.key_pressed(egui::Key::F) {
+                show_find = !show_find;
+            }
             if i.modifiers.command && i.key_pressed(egui::Key::D) && can_compare {
                 show_compare = !show_compare;
             }
@@ -3556,6 +3819,10 @@ impl eframe::App for App {
         self.show_help = show_help;
         self.show_map = show_map;
         self.show_sector = show_sector;
+        if show_find && !self.show_find {
+            self.find.focus = true;
+        }
+        self.show_find = show_find;
         self.show_copy = show_copy;
         self.show_compare = show_compare;
         self.compare_all = compare_all;
@@ -4392,6 +4659,143 @@ fn disk_map_ui(
     (clicked, opened)
 }
 
+/// Draw the Find window: the query and its kind, then each matching file
+/// with its match offsets as buttons.
+fn find_ui(
+    ui: &mut egui::Ui,
+    f: &mut FindState,
+    stale: bool,
+    on_disk: bool,
+    open: &mut bool,
+    acts: &mut Vec<Act>,
+) {
+    let w = 440.0_f32.min(ui.ctx().screen_rect().width() - 60.0);
+    ui.set_width(w);
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut f.hex, false, "TEXT")
+            .on_hover_text("letters match in either case, as the C64 shows them");
+        ui.selectable_value(&mut f.hex, true, "HEX")
+            .on_hover_text("bytes such as A9 00 8D; ?? matches any byte");
+        let hint = if f.hex {
+            "e.g. A9 00 8D ?? D0"
+        } else {
+            "text to look for"
+        };
+        let edit = ui.add(
+            egui::TextEdit::singleline(&mut f.query)
+                .hint_text(hint)
+                .desired_width(f32::INFINITY),
+        );
+        if std::mem::take(&mut f.focus) {
+            edit.request_focus();
+        }
+        if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            acts.push(Act::Find);
+            // Keep the keyboard here, so Enter doesn't also extract a file.
+            edit.request_focus();
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        // Wrap whole choices onto the next line, never inside one.
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        if ui.button("Find").clicked() {
+            acts.push(Act::Find);
+        }
+        ui.label(egui::RichText::new("show in").color(c64::TEXT_DIM));
+        ui.selectable_value(&mut f.in_sector, false, "PREVIEW")
+            .on_hover_text("highlight the match in the hex preview");
+        ui.add_enabled_ui(on_disk, |ui| {
+            ui.selectable_value(&mut f.in_sector, true, "SECTOR EDITOR")
+                .on_hover_text("open the block holding the match, with the cursor on it")
+                .on_disabled_hover_text("only disk images have sectors");
+        });
+    });
+    find_results_ui(ui, f, stale, acts);
+    ui.separator();
+    if ui.button("Close").clicked() {
+        *open = false;
+    }
+}
+
+/// The Find window's summary line and its list of matching files.
+fn find_results_ui(ui: &mut egui::Ui, f: &FindState, stale: bool, acts: &mut Vec<Act>) {
+    let note = if stale {
+        "Another listing is showing; Find searches it."
+    } else if f.summary.is_empty() {
+        "Searches every file in the listing (and, for text, their names)."
+    } else {
+        ""
+    };
+    if !note.is_empty() {
+        ui.add(egui::Label::new(egui::RichText::new(note).color(c64::TEXT_DIM)).wrap());
+        return;
+    }
+    let color = if f.summary.starts_with('⚠') {
+        c64::WARN
+    } else {
+        c64::TEXT_DIM
+    };
+    ui.add(egui::Label::new(egui::RichText::new(&f.summary).color(color)).wrap());
+    if f.hits.is_empty() {
+        return;
+    }
+    ui.separator();
+    let mark = f.mark;
+    egui::ScrollArea::vertical()
+        .id_salt("find_results")
+        .max_height(320.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for h in &f.hits {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(h.badge.to_uppercase()).color(badge_color(&h.badge)),
+                    );
+                    ui.label(egui::RichText::new(&h.name).color(c64::TEXT));
+                    let mut what = Vec::new();
+                    if h.in_name {
+                        what.push("name".to_string());
+                    }
+                    if h.total > 0 {
+                        what.push(format!(
+                            "{} match{}",
+                            h.total,
+                            if h.total == 1 { "" } else { "es" }
+                        ));
+                    }
+                    ui.label(egui::RichText::new(what.join(" · ")).color(c64::TEXT_DIM));
+                });
+                if h.offsets.is_empty() {
+                    continue;
+                }
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(12.0);
+                    for &off in &h.offsets {
+                        let on = mark.is_some_and(|(n, o, _)| n == h.node && o == off);
+                        let tip = if f.in_sector && h.on_disk {
+                            "open the block holding it in the Sector Editor"
+                        } else {
+                            "show it in the hex preview"
+                        };
+                        if ui
+                            .selectable_label(on, format!("${off:04X}"))
+                            .on_hover_text(tip)
+                            .clicked()
+                        {
+                            acts.push(Act::FindShow(h.node, off));
+                        }
+                    }
+                    if h.total > h.offsets.len() {
+                        ui.label(
+                            egui::RichText::new(format!("+{} more", h.total - h.offsets.len()))
+                                .color(c64::TEXT_DIM),
+                        );
+                    }
+                });
+            }
+        });
+}
+
 /// What the Sector Editor shows a block of, and what it may do to it.
 struct SectorView<'a> {
     disk: &'a Disk,
@@ -4753,6 +5157,59 @@ fn preview_width(
     let list_full = cols.row_chars_with_name(name, true, true) as f32 * cw + list_chrome;
     let floor = 20.0 * cw + chrome;
     want.min(screen - list_full).max(floor.min(want))
+}
+
+/// How many bytes the hex preview shows.
+const PREVIEW_CAP: usize = 16 * 1024;
+
+/// The hex preview with bytes `from..from + len` highlighted, in both the
+/// hex and the ASCII part (`text` is [`hexdump`]'s output).
+fn hex_marked_layout(
+    text: &str,
+    from: usize,
+    len: usize,
+    font: egui::FontId,
+    color: Color32,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let plain = egui::TextFormat::simple(font.clone(), color);
+    let marked = egui::TextFormat {
+        background: c64::ACCENT_DIM,
+        color: c64::BRIGHT,
+        ..egui::TextFormat::simple(font, color)
+    };
+    let in_mark = |b: usize| (from..from + len).contains(&b);
+    for (row, line) in text.split_inclusive('\n').enumerate() {
+        // Which byte of the row each character shows, if any: "OOOO: " then
+        // sixteen "XX " (an extra space after the eighth), a space, the text.
+        let byte_at = |c: usize| -> Option<usize> {
+            if (6..6 + 49).contains(&c) {
+                let k = c - 6;
+                let k = if k >= 24 { k - 1 } else { k };
+                (k % 3 < 2).then_some(k / 3)
+            } else if (56..72).contains(&c) {
+                Some(c - 56)
+            } else {
+                None
+            }
+        };
+        let mut run = String::new();
+        let mut run_marked = false;
+        for (c, ch) in line.chars().enumerate() {
+            let m = !line.starts_with('…') && byte_at(c).is_some_and(|i| in_mark(row * 16 + i));
+            if m != run_marked && !run.is_empty() {
+                let fmt = if run_marked { &marked } else { &plain };
+                job.append(&std::mem::take(&mut run), 0.0, fmt.clone());
+            }
+            run_marked = m;
+            run.push(ch);
+        }
+        if !run.is_empty() {
+            let fmt = if run_marked { &marked } else { &plain };
+            job.append(&run, 0.0, fmt.clone());
+        }
+    }
+    job
 }
 
 /// A classic hex + ASCII dump of up to `cap` bytes, 16 per line.
@@ -7011,6 +7468,80 @@ mod tests {
         assert_eq!(sec_byte_at(sec_hex_col(7) + 2), None);
         assert_eq!(sec_hex_col(8), sec_hex_col(7) + 4, "gap after the 8th byte");
         assert_eq!(sec_byte_at(SEC_COLS), None);
+    }
+
+    #[test]
+    fn find_searches_names_and_contents_and_shows_matches() {
+        let mut app = app_with_disk();
+        app.add("HELLO".into(), b"\x01\x08hello world");
+        let mut big = vec![0u8; 600];
+        big[300..303].copy_from_slice(&[0xA9, 0x00, 0x8D]);
+        big[500..503].copy_from_slice(&[0xA9, 0x07, 0x8D]);
+        app.add("CODE".into(), &big);
+        app.add("OTHER".into(), b"nothing");
+
+        app.find.query = "HELLO".into();
+        app.apply(Act::Find);
+        assert_eq!(app.find.hits.len(), 1);
+        let h = &app.find.hits[0];
+        assert!(h.in_name && h.total == 1 && h.offsets == [2]);
+        assert_eq!(app.find.summary, "1 match in 1 file of 3 · 1 file by name");
+
+        app.find.hex = true;
+        app.find.query = "A9 ?? 8D".into();
+        app.apply(Act::Find);
+        assert_eq!(app.find.hits.len(), 1);
+        assert_eq!(app.find.hits[0].offsets, [300, 500]);
+        assert!(app.find.hits[0].on_disk);
+
+        // Shown in the hex preview...
+        app.apply(Act::FindShow(1, 500));
+        assert_eq!(app.pane.selected, Some(1));
+        assert!(app.preview_mode == PreviewMode::Hex && app.show_preview);
+        assert_eq!(app.find.mark, Some((1, 500, 3)));
+        assert!(app.find.scroll);
+
+        // ...or in the Sector Editor: offset 500 is block 2, byte 2 + 246.
+        app.find.in_sector = true;
+        app.apply(Act::FindShow(1, 500));
+        let chain = app.pane.map_disk().unwrap().block_map().chains[1].clone();
+        assert!(app.show_sector);
+        assert_eq!((app.sector.track, app.sector.sector), chain[1]);
+        app.sector_sync();
+        assert_eq!(app.sector.cursor, 248);
+        assert_eq!(&app.sector.buf[248..251], &[0xA9, 0x07, 0x8D]);
+
+        // Bad patterns explain themselves; a changed list is noticed.
+        app.find.query = "A9 0".into();
+        app.apply(Act::Find);
+        assert!(app.find.summary.starts_with('⚠') && app.find.hits.is_empty());
+        app.find.query = "8D".into();
+        app.apply(Act::Find);
+        app.pane.selected = Some(0);
+        app.delete();
+        app.find.in_sector = false;
+        app.apply(Act::FindShow(1, 302));
+        assert_eq!(
+            app.status,
+            "The listing has changed since the search; search again"
+        );
+    }
+
+    #[test]
+    fn hex_preview_highlights_the_match_in_both_columns() {
+        let data: Vec<u8> = (0u8..40).collect();
+        let dump = hexdump(&data, 64);
+        let job = hex_marked_layout(&dump, 7, 3, egui::FontId::monospace(10.0), Color32::WHITE);
+        let marked: String = job
+            .sections
+            .iter()
+            .filter(|s| s.format.background == c64::ACCENT_DIM)
+            .map(|s| &job.text[s.byte_range.clone()])
+            .collect::<Vec<_>>()
+            .join("|");
+        // Bytes 7, 8 and 9 (across the gap after the eighth), then their text.
+        assert_eq!(marked, "07|08|09|...");
+        assert_eq!(job.text, dump);
     }
 
     fn other_names(app: &App) -> Vec<String> {
