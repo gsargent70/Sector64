@@ -102,7 +102,7 @@ Checking and inspecting a disk's structure.
 | DISK-02 | Disk map: every block, coloured by owner | M | Done v1.0.6 | |
 | DISK-03 | Compare Panes: same / differs (first byte) / only on one side | M | Done v1.0.9 | core `sector64::compare` |
 | DISK-04 | Validate **and repair**: rebuild the BAM, free orphaned blocks, drop broken entries, with undo | L | Done v1.0.10 | core `sector64::repair`; also ends broken chains and splits cross-linked files; BAM checked against `c1541 -validate` |
-| DISK-05 | Sector editor: view/edit any track and sector in hex, jump from the disk map, follow chains | L | Done (unreleased, #PR) | GUI; Write is one undo step; read-only disks view only |
+| DISK-05 | Sector editor: view/edit any track and sector in hex, jump from the disk map, follow chains | L | Done (unreleased, #50) | GUI; Write is one undo step; read-only disks view only |
 | DISK-06 | Compare window: "Copy missing files" button that copies everything that's only on one side across | S | Done v1.0.10 | either direction; follow-up to DISK-03 |
 
 ## 5. Working with other tools (TOOL)
