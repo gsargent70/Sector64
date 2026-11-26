@@ -35,6 +35,7 @@ the core plus one front end.
 | APP-10 | Open disk images from Finder (double-click, "Open with", drop on the Dock icon) | M; macOS sends these as Apple events winit 0.30 ignores; follow-up to APP-09 |
 | APP-11 | Sign and notarize the Mac app | S once enrolled; needs an Apple Developer account ($99/yr) |
 | APP-12 | Test the Mac GUI by remote control in CI (or a Mac over SSH): file dialogs, drag-and-drop, shortcuts, Run in VICE | M; less urgent now v1.0.11 was tried by hand; follow-up to APP-09; needs the runners to allow scripted clicks and keys, not tried yet |
+| DISK-08 | Sector editor: type text into the PETSCII column, and search the disk for bytes or text | M; follow-up to DISK-05 (today it edits in hex only) |
 
 ---
 
@@ -101,7 +102,7 @@ Checking and inspecting a disk's structure.
 | DISK-02 | Disk map: every block, coloured by owner | M | Done v1.0.6 | |
 | DISK-03 | Compare Panes: same / differs (first byte) / only on one side | M | Done v1.0.9 | core `sector64::compare` |
 | DISK-04 | Validate **and repair**: rebuild the BAM, free orphaned blocks, drop broken entries, with undo | L | Done v1.0.10 | core `sector64::repair`; also ends broken chains and splits cross-linked files; BAM checked against `c1541 -validate` |
-| DISK-05 | Sector editor: view/edit any track and sector in hex, jump from the disk map, follow chains | L | Idea | |
+| DISK-05 | Sector editor: view/edit any track and sector in hex, jump from the disk map, follow chains | L | Done (unreleased, #50) | GUI; Write is one undo step; read-only disks view only |
 | DISK-06 | Compare window: "Copy missing files" button that copies everything that's only on one side across | S | Done v1.0.10 | either direction; follow-up to DISK-03 |
 
 ## 5. Working with other tools (TOOL)
@@ -138,7 +139,7 @@ Checking and inspecting a disk's structure.
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Next:** DISK-05 (sector editor), EDIT-07, VIEW-10, FMT-13.
+1. **Next:** EDIT-07, VIEW-10, FMT-13.
 
 ## Done by release
 

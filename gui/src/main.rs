@@ -12,6 +12,7 @@
 
 #[cfg(target_os = "macos")]
 mod mac;
+mod sector;
 
 use std::path::{Path, PathBuf};
 
@@ -708,6 +709,9 @@ struct App {
     confirm: Option<Confirm>,
     /// Whether the Disk Map window is open.
     show_map: bool,
+    /// Whether the Sector Editor window is open, and the block it shows.
+    show_sector: bool,
+    sector: sector::SectorEditor,
     /// Whether the Copy window is open, and the disk it copies to and from.
     show_copy: bool,
     other: Option<OtherDisk>,
@@ -814,6 +818,10 @@ enum Act {
     /// Compare window: copy the files missing from the right pane into it
     /// (`true`), or the ones missing from the left pane (`false`).
     CopyMissing(bool),
+    /// Open the Sector Editor at this track and sector.
+    SectorOpen(u8, u8),
+    /// Sector Editor: write its staged edits to the disk.
+    SectorWrite,
 }
 
 impl Pane {
@@ -1002,6 +1010,7 @@ impl App {
 
     fn open(&mut self, path: &Path) {
         self.pane.clear_history();
+        self.sector.source.clear();
         self.pane.nodes.clear();
         self.pane.selected = None;
         self.pane.marked.clear();
@@ -1144,6 +1153,19 @@ impl App {
             }
             Act::CopyToPane => self.copy_to_pane(),
             Act::CopyMissing(to_right) => self.copy_missing(to_right),
+            Act::SectorOpen(t, s) => {
+                let src = self.sector_source();
+                if let Some(disk) = self.pane.map_disk() {
+                    if self.sector.modified() {
+                        self.status = "Write or revert the Sector Editor's changes first".into();
+                    } else {
+                        self.sector.jump(disk, t, s);
+                        self.sector.source = src;
+                        self.show_sector = true;
+                    }
+                }
+            }
+            Act::SectorWrite => self.sector_write(),
             Act::CompareSelect(l, r) => {
                 let (left, right) = if self.focus_right {
                     (&mut self.back, &mut self.pane)
@@ -1167,6 +1189,7 @@ impl App {
             Act::ExtractSelected => self.extract_selected(),
             Act::ExtractAll => self.extract_all(),
             Act::Create => {
+                self.sector.source.clear();
                 let disk = match self.new_fmt {
                     1 => Disk::format_d71(&self.new_name, &self.new_id),
                     2 => Disk::format_d81(&self.new_name, &self.new_id),
@@ -1724,6 +1747,68 @@ impl App {
                 self.status = done;
             }
             Err(e) => self.status = format!("Repair failed, nothing changed: {e}"),
+        }
+    }
+
+    /// Which disk the Sector Editor should show: the focused pane's file.
+    fn sector_source(&self) -> String {
+        format!(
+            "{}|{}",
+            self.pane.opened_path.as_deref().unwrap_or(""),
+            self.focus_right
+        )
+    }
+
+    /// Keep the Sector Editor on the focused pane's disk: when that changes,
+    /// show the same block of the new disk (or its header) and drop any
+    /// unwritten edits; otherwise re-read the block unless edits are staged.
+    fn sector_sync(&mut self) {
+        let src = self.sector_source();
+        let Some(disk) = self.pane.map_disk() else {
+            return;
+        };
+        if self.sector.source == src {
+            self.sector.sync(disk);
+            return;
+        }
+        if self.sector.modified() {
+            self.status = "Another disk is showing, so the Sector Editor's unwritten \
+                           changes were dropped"
+                .into();
+        }
+        let (t, s) = (self.sector.track, self.sector.sector);
+        let (t, s) = if sector::SectorEditor::exists(disk, t, s) {
+            (t, s)
+        } else {
+            let g = disk.geometry();
+            (g.directory_track(), g.header_sector())
+        };
+        self.sector.forget();
+        self.sector.load(disk, t, s);
+        self.sector.source = src;
+    }
+
+    /// Write the Sector Editor's staged edits to the open disk, as one undo
+    /// step.
+    fn sector_write(&mut self) {
+        let before = self.pane.snapshot();
+        let (t, s) = (self.sector.track, self.sector.sector);
+        let Some(ed) = &mut self.pane.disk else {
+            self.status = "This disk is read-only, so its blocks can't be changed".into();
+            return;
+        };
+        match self.sector.write(&mut ed.disk) {
+            Ok(()) => {
+                ed.dirty = true;
+                let done = format!("Wrote track {t}, sector {s}");
+                self.pane.record(before, &done);
+                self.pane.hex_cache = None;
+                self.pane.gfx_cache = None;
+                self.pane.pic_cache = None;
+                self.pane.refresh();
+                self.status = done;
+            }
+            Err(e) => self.status = format!("Couldn't write track {t}, sector {s}: {e}"),
         }
     }
 
@@ -2311,6 +2396,10 @@ impl eframe::App for App {
         let mut show_help = self.show_help;
         let has_map = self.pane.map_disk().is_some();
         let mut show_map = self.show_map && has_map;
+        let mut show_sector = self.show_sector && has_map;
+        if show_sector {
+            self.sector_sync();
+        }
         let mut show_copy = self.show_copy;
         let can_compare = !self.pane.nodes.is_empty() && !self.back.nodes.is_empty();
         let mut show_compare = self.show_compare && can_compare;
@@ -2599,6 +2688,20 @@ impl eframe::App for App {
                         .clicked()
                     {
                         show_map = !show_map;
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(
+                            has_map,
+                            egui::Button::new("Sector Editor")
+                                .selected(show_sector)
+                                .shortcut_text(key_hint("Ctrl+E")),
+                        )
+                        .on_hover_text("view and edit any track and sector in hex")
+                        .on_disabled_hover_text("open a disk image to edit its sectors")
+                        .clicked()
+                    {
+                        show_sector = !show_sector;
                         ui.close_menu();
                     }
                     ui.separator();
@@ -2935,6 +3038,7 @@ impl eframe::App for App {
         if self.show_validation {
             if !show_help
                 && !show_map
+                && !show_sector
                 && !show_copy
                 && !show_compare
                 && ctx.input(|i| i.key_pressed(egui::Key::Escape))
@@ -3014,7 +3118,7 @@ impl eframe::App for App {
             if self.pane.map_cache.is_none() {
                 self.pane.map_cache = self.pane.map_disk().map(Disk::block_map);
             }
-            if !show_help && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if !show_help && !show_sector && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 show_map = false;
             }
             if let Some(map) = &self.pane.map_cache {
@@ -3050,16 +3154,57 @@ impl eframe::App for App {
                             });
                         });
                         ui.separator();
-                        if let Some(i) = disk_map_ui(ui, map, sel_now) {
+                        let (clicked, opened) = disk_map_ui(ui, map, sel_now);
+                        if let Some(i) = clicked {
                             acts.push(Act::Select(i));
+                        }
+                        if let Some((t, s)) = opened {
+                            acts.push(Act::SectorOpen(t, s));
                         }
                     });
             }
         }
 
+        // Sector Editor window: one block in hex, edits staged until written.
+        if show_sector {
+            if self.pane.map_cache.is_none() {
+                self.pane.map_cache = self.pane.map_disk().map(Disk::block_map);
+            }
+            if !show_help && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                show_sector = false;
+            }
+            let writable = self.pane.disk.is_some();
+            if let (Some(disk), Some(map)) = (self.pane.map_disk(), &self.pane.map_cache) {
+                let screen = ctx.screen_rect();
+                egui::Window::new(
+                    egui::RichText::new("SECTOR EDITOR")
+                        .color(c64::ACCENT)
+                        .strong(),
+                )
+                .collapsible(false)
+                .resizable(false)
+                .max_height(screen.height() - 60.0)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .default_pos(screen.center())
+                .show(ctx, |ui| {
+                    let view = SectorView {
+                        disk,
+                        map,
+                        selected: sel_now,
+                        writable,
+                    };
+                    sector_ui(ui, &mut self.sector, &view, &mut show_sector, &mut acts);
+                });
+            }
+        }
+
         // Copy window: a second disk to copy files to and from.
         if show_copy {
-            if !show_help && !show_map && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if !show_help
+                && !show_map
+                && !show_sector
+                && ctx.input(|i| i.key_pressed(egui::Key::Escape))
+            {
                 show_copy = false;
             }
             let screen = ctx.screen_rect();
@@ -3094,6 +3239,7 @@ impl eframe::App for App {
             }
             if !show_help
                 && !show_map
+                && !show_sector
                 && !show_copy
                 && ctx.input(|i| i.key_pressed(egui::Key::Escape))
             {
@@ -3130,6 +3276,7 @@ impl eframe::App for App {
             if !basic.typing
                 && !show_help
                 && !show_map
+                && !show_sector
                 && !show_copy
                 && !show_compare
                 && !self.show_validation
@@ -3326,6 +3473,9 @@ impl eframe::App for App {
             if i.modifiers.command && i.key_pressed(egui::Key::M) && has_map {
                 show_map = !show_map;
             }
+            if i.modifiers.command && i.key_pressed(egui::Key::E) && has_map {
+                show_sector = !show_sector;
+            }
             if i.modifiers.command && i.key_pressed(egui::Key::D) && can_compare {
                 show_compare = !show_compare;
             }
@@ -3405,6 +3555,7 @@ impl eframe::App for App {
         self.show_preview = show_preview;
         self.show_help = show_help;
         self.show_map = show_map;
+        self.show_sector = show_sector;
         self.show_copy = show_copy;
         self.show_compare = show_compare;
         self.compare_all = compare_all;
@@ -4085,13 +4236,18 @@ fn block_tooltip(map: &BlockMap, track: u8, sector: u8) -> String {
 }
 
 /// Draw the disk map: a legend, any chain faults, then a grid with a column
-/// per track and a row per sector. Returns the file whose block was clicked.
-fn disk_map_ui(ui: &mut egui::Ui, map: &BlockMap, selected: Option<usize>) -> Option<usize> {
+/// per track and a row per sector. Returns the file whose block was clicked,
+/// and the block that was double-clicked (to open in the Sector Editor).
+fn disk_map_ui(
+    ui: &mut egui::Ui,
+    map: &BlockMap,
+    selected: Option<usize>,
+) -> (Option<usize>, Option<(u8, u8)>) {
     let tracks = map.tracks.len();
     let rows = map.tracks.iter().map(Vec::len).max().unwrap_or(0);
     if tracks == 0 || rows == 0 {
         ui.label("(this disk has no blocks to map)");
-        return None;
+        return (None, None);
     }
 
     // Legend.
@@ -4147,6 +4303,7 @@ fn disk_map_ui(ui: &mut egui::Ui, map: &BlockMap, selected: Option<usize>) -> Op
     let row_every = if rows > 64 { 16 } else { 5 };
 
     let mut clicked = None;
+    let mut opened = None;
     egui::ScrollArea::both()
         .id_salt("disk_map_scroll")
         .auto_shrink([false, true])
@@ -4223,11 +4380,333 @@ fn disk_map_ui(ui: &mut egui::Ui, map: &BlockMap, selected: Option<usize>) -> Op
             if resp.clicked() {
                 clicked = hovered_file;
             }
+            if resp.double_clicked() {
+                opened = hovered;
+            }
             if let Some((t, s)) = hovered {
-                resp.on_hover_text_at_pointer(block_tooltip(map, t, s));
+                let tip =
+                    block_tooltip(map, t, s) + "\n(double-click to open it in the Sector Editor)";
+                resp.on_hover_text_at_pointer(tip);
             }
         });
-    clicked
+    (clicked, opened)
+}
+
+/// What the Sector Editor shows a block of, and what it may do to it.
+struct SectorView<'a> {
+    disk: &'a Disk,
+    map: &'a BlockMap,
+    /// The listing's selected file (its index in the map's files).
+    selected: Option<usize>,
+    /// Whether the disk can be changed (not a G64 or other read-only one).
+    writable: bool,
+}
+
+/// Columns of the Sector Editor's grid, in characters: a two-digit offset,
+/// sixteen bytes in hex (an extra space after the eighth), then the text.
+const SEC_HEX0: usize = 4;
+const SEC_TEXT0: usize = SEC_HEX0 + 16 * 3 + 1 + 2;
+const SEC_COLS: usize = SEC_TEXT0 + 16;
+
+/// The grid column where byte `i` of a row starts in hex.
+fn sec_hex_col(i: usize) -> usize {
+    SEC_HEX0 + i * 3 + usize::from(i >= 8)
+}
+
+/// The byte (0..16) under grid column `col` of a row, in either the hex or
+/// the text part.
+fn sec_byte_at(col: usize) -> Option<usize> {
+    if (SEC_TEXT0..SEC_COLS).contains(&col) {
+        return Some(col - SEC_TEXT0);
+    }
+    (0..16).find(|&i| (sec_hex_col(i)..sec_hex_col(i) + 2).contains(&col))
+}
+
+/// Draw the Sector Editor: where it is and how to move, who owns the block,
+/// its link, the hex grid, and Write / Revert.
+fn sector_ui(
+    ui: &mut egui::Ui,
+    ed: &mut sector::SectorEditor,
+    v: &SectorView,
+    open: &mut bool,
+    acts: &mut Vec<Act>,
+) {
+    use sector::{SectorEditor, SIZE};
+    let disk = v.disk;
+    let idle = !ed.modified();
+    let busy = "write or revert your changes first";
+    let g = disk.geometry();
+
+    // The grid's font: the usual monospace, smaller if the grid wouldn't fit
+    // the screen (the C64 font is wide). The window is as wide as the grid.
+    let mut font = egui::TextStyle::Monospace.resolve(ui.style());
+    let cw = ui.fonts(|f| f.glyph_width(&font, '0'));
+    let fit = (ui.ctx().screen_rect().width() - 80.0) / (SEC_COLS as f32 * cw);
+    if fit < 1.0 {
+        font.size = (font.size * fit).floor().max(7.0);
+    }
+    let cw = ui.fonts(|f| f.glyph_width(&font, '0'));
+    let rh = ui.fonts(|f| f.row_height(&font)) + 3.0;
+    let size = egui::vec2(SEC_COLS as f32 * cw, 16.0 * rh);
+    ui.set_max_width(size.x);
+
+    ui.horizontal_wrapped(|ui| {
+        let (mut t, mut s) = (ed.track, ed.sector);
+        ui.label("Track");
+        ui.add_enabled(idle, egui::DragValue::new(&mut t).range(1..=g.tracks()))
+            .on_disabled_hover_text(busy);
+        let last = g
+            .sector_count(t)
+            .map_or(0, |n| n.saturating_sub(1))
+            .min(255) as u8;
+        ui.label("Sector");
+        ui.add_enabled(idle, egui::DragValue::new(&mut s).range(0..=last))
+            .on_disabled_hover_text(busy);
+        if (t, s) != (ed.track, ed.sector) {
+            ed.load(disk, t, s.min(last));
+        }
+        let nav = |ui: &mut egui::Ui, ok: bool, text: &str, tip: &str| {
+            ui.add_enabled(idle && ok, egui::Button::new(text))
+                .on_hover_text(tip)
+                .on_disabled_hover_text(if idle { tip } else { busy })
+                .clicked()
+        };
+        let (tr, se) = (ed.track, ed.sector);
+        let prev = SectorEditor::neighbour(disk, tr, se, -1).is_some();
+        if nav(ui, prev, "◀ Prev", "the block before this one (PgUp)") {
+            ed.step(disk, -1);
+        }
+        let next = SectorEditor::neighbour(disk, tr, se, 1).is_some();
+        if nav(ui, next, "Next ▶", "the block after this one (PgDn)") {
+            ed.step(disk, 1);
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        let nav = |ui: &mut egui::Ui, ok: bool, text: &str, tip: &str| {
+            ui.add_enabled(idle && ok, egui::Button::new(text))
+                .on_hover_text(tip)
+                .on_disabled_hover_text(if idle { tip } else { busy })
+                .clicked()
+        };
+        let linked = matches!(ed.link(disk), Some(sector::Link::Next(..)));
+        if nav(
+            ui,
+            linked,
+            "Follow link",
+            "go to the block bytes 0–1 point to",
+        ) {
+            ed.follow(disk);
+        }
+        if nav(
+            ui,
+            ed.can_go_back(),
+            "Back",
+            "return to the block you followed a link from",
+        ) {
+            ed.back(disk);
+        }
+        let first = v
+            .selected
+            .and_then(|i| v.map.chains.get(i))
+            .and_then(|c| c.first().copied());
+        if nav(
+            ui,
+            first.is_some(),
+            "Selected file",
+            "go to the first block of the file selected in the list",
+        ) {
+            if let Some((t, s)) = first {
+                ed.jump(disk, t, s);
+            }
+        }
+    });
+
+    // Who owns the block, and where its link goes.
+    let owner = block_tooltip(v.map, ed.track, ed.sector);
+    let owner: Vec<&str> = owner.lines().skip(1).collect();
+    if !owner.is_empty() {
+        ui.label(egui::RichText::new(owner.join(" · ")).color(c64::TEXT_DIM));
+    }
+    if let Some(err) = &ed.error {
+        ui.label(egui::RichText::new(format!("⚠ can't read this block: {err}")).color(c64::WARN));
+        if ui.button("Close").clicked() {
+            *open = false;
+        }
+        return;
+    }
+    if let Some(link) = ed.link(disk) {
+        let color = if matches!(link, sector::Link::Invalid(..)) {
+            c64::WARN
+        } else {
+            c64::TEXT_DIM
+        };
+        ui.label(
+            egui::RichText::new(format!("Bytes 0–1: {}", sector::describe(link))).color(color),
+        );
+    }
+    ui.add_space(4.0);
+
+    // The grid.
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    if resp.clicked() {
+        resp.request_focus();
+        if let Some(p) = resp.interact_pointer_pos() {
+            let col = ((p.x - rect.min.x) / cw) as usize;
+            let row = ((p.y - rect.min.y) / rh) as usize;
+            if let Some(i) = sec_byte_at(col).filter(|_| row < 16) {
+                ed.place(row * 16 + i);
+            }
+        }
+    }
+    let focused = resp.has_focus();
+    if focused {
+        ui.memory_mut(|m| {
+            m.set_focus_lock_filter(
+                resp.id,
+                egui::EventFilter {
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    tab: false,
+                    escape: false,
+                },
+            )
+        });
+        let events = ui.input(|i| i.events.clone());
+        for e in events {
+            match e {
+                egui::Event::Text(text) => {
+                    for d in text.chars().filter_map(sector::hex_digit) {
+                        if v.writable {
+                            ed.type_digit(d);
+                        }
+                    }
+                }
+                egui::Event::Key {
+                    key, pressed: true, ..
+                } => match key {
+                    egui::Key::ArrowLeft => ed.move_cursor(-1),
+                    egui::Key::ArrowRight => ed.move_cursor(1),
+                    egui::Key::ArrowUp => ed.move_cursor(-16),
+                    egui::Key::ArrowDown => ed.move_cursor(16),
+                    egui::Key::Home => ed.place(ed.cursor / 16 * 16),
+                    egui::Key::End => ed.place(ed.cursor / 16 * 16 + 15),
+                    egui::Key::PageUp if !ed.modified() => {
+                        ed.step(disk, -1);
+                    }
+                    egui::Key::PageDown if !ed.modified() => {
+                        ed.step(disk, 1);
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
+
+    let painter = ui.painter_at(rect.expand(2.0));
+    painter.rect_filled(rect.expand(2.0), 2.0, c64::WELL);
+    let at = |col: usize, row: usize| rect.min + egui::vec2(col as f32 * cw, row as f32 * rh + 1.5);
+    let cursor_fill = if focused {
+        c64::ACCENT_DIM
+    } else {
+        c64::STRIPE
+    };
+    for row in 0..SIZE / 16 {
+        painter.text(
+            at(0, row),
+            egui::Align2::LEFT_TOP,
+            format!("{:02X}", row * 16),
+            font.clone(),
+            c64::TEXT_DIM,
+        );
+        for i in 0..16 {
+            let n = row * 16 + i;
+            let Some(&b) = ed.buf.get(n) else { continue };
+            let color = if ed.changed(n) {
+                c64::ORPHAN
+            } else if n < 2 {
+                c64::ACCENT
+            } else {
+                c64::TEXT
+            };
+            let (hx, tx) = (at(sec_hex_col(i), row), at(SEC_TEXT0 + i, row));
+            if n == ed.cursor {
+                let cell = |p: egui::Pos2, w: f32| {
+                    egui::Rect::from_min_size(p - egui::vec2(0.0, 1.5), egui::vec2(w, rh))
+                };
+                painter.rect_filled(cell(hx, 2.0 * cw), 1.0, cursor_fill);
+                painter.rect_filled(cell(tx, cw), 1.0, cursor_fill);
+                if ed.low_nibble {
+                    let y = hx.y + rh - 2.5;
+                    painter.line_segment(
+                        [egui::pos2(hx.x + cw, y), egui::pos2(hx.x + 2.0 * cw, y)],
+                        egui::Stroke::new(2.0, c64::BRIGHT),
+                    );
+                }
+            }
+            painter.text(
+                hx,
+                egui::Align2::LEFT_TOP,
+                format!("{b:02X}"),
+                font.clone(),
+                color,
+            );
+            painter.text(
+                tx,
+                egui::Align2::LEFT_TOP,
+                sector::text_char(b).to_string(),
+                font.clone(),
+                color,
+            );
+        }
+    }
+    ui.add_space(4.0);
+
+    // Where the cursor is, and Write / Revert.
+    let changed = (0..SIZE).filter(|&i| ed.changed(i)).count();
+    let b = ed.buf.get(ed.cursor).copied().unwrap_or(0);
+    let mut info = format!("Offset ${0:02X} ({0}) = ${1:02X} ({1})", ed.cursor, b);
+    if changed > 0 {
+        info += &format!(
+            " · {changed} byte{} changed",
+            if changed == 1 { "" } else { "s" }
+        );
+    }
+    ui.label(info);
+    ui.horizontal(|ui| {
+        if ui.button("Close").clicked() {
+            *open = false;
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let write_tip = "write the changed bytes to the disk (Undo takes them back; \
+                             Save writes the disk file)";
+            if ui
+                .add_enabled(v.writable && changed > 0, egui::Button::new("Write"))
+                .on_hover_text(write_tip)
+                .on_disabled_hover_text(if v.writable {
+                    "nothing has changed yet"
+                } else {
+                    "this disk is read-only"
+                })
+                .clicked()
+            {
+                acts.push(Act::SectorWrite);
+            }
+            if ui
+                .add_enabled(changed > 0, egui::Button::new("Revert"))
+                .on_hover_text("forget the changes typed into this block")
+                .clicked()
+            {
+                ed.revert();
+            }
+        });
+    });
+    let hint = if v.writable {
+        "Click a byte, then type hex digits. Arrows move; PgUp/PgDn step through blocks."
+    } else {
+        "This disk is read-only (view only). Arrows move; PgUp/PgDn step through blocks."
+    };
+    ui.label(egui::RichText::new(hint).color(c64::TEXT_DIM));
 }
 
 /// Width of the preview pane: wide enough for its content (a full hex line,
@@ -6453,6 +6932,85 @@ mod tests {
         app.redo();
         assert_eq!(app.status, "Nothing to redo");
         assert_eq!(names(&app), ["ONE", "TWO", "NEW"]);
+    }
+
+    #[test]
+    fn sector_editor_writes_one_undoable_block() {
+        let mut app = app_with_disk();
+        app.add("PROG".into(), &[0x11; 300]);
+        let first = app.pane.map_disk().unwrap().block_map().chains[0][0];
+        // Opened from the disk map at the file's first block.
+        app.apply(Act::SectorOpen(first.0, first.1));
+        assert!(app.show_sector);
+        assert_eq!((app.sector.track, app.sector.sector), first);
+        app.sector_sync();
+        app.sector.place(2);
+        app.sector.type_digit(0xA);
+        app.sector.type_digit(0x9);
+        // Not on the disk until Write.
+        let disk = |app: &App| app.pane.disk.as_ref().unwrap().disk.clone();
+        assert_eq!(disk(&app).block(first.0, first.1).unwrap()[2], 0x11);
+        // Jumping elsewhere is refused while edits are staged.
+        app.apply(Act::SectorOpen(18, 0));
+        assert_eq!((app.sector.track, app.sector.sector), first);
+        app.apply(Act::SectorWrite);
+        assert_eq!(
+            app.status,
+            format!("Wrote track {}, sector {}", first.0, first.1)
+        );
+        assert_eq!(disk(&app).block(first.0, first.1).unwrap()[2], 0xA9);
+        assert!(app.pane.is_dirty());
+        let data = app.pane.nodes[0].data.as_ref().unwrap();
+        assert_eq!(data[0], 0xA9, "the listing shows the new bytes");
+
+        app.undo();
+        assert_eq!(disk(&app).block(first.0, first.1).unwrap()[2], 0x11);
+        app.sector_sync();
+        assert_eq!(app.sector.buf[2], 0x11, "the editor follows the undo");
+    }
+
+    #[test]
+    fn sector_editor_drops_edits_for_another_disk_and_is_view_only_on_read_only_ones() {
+        let mut app = app_with_disk();
+        app.show_sector = true;
+        app.sector_sync();
+        // A fresh editor opens on the header block.
+        assert_eq!((app.sector.track, app.sector.sector), (18, 0));
+        app.sector.type_digit(0);
+        assert!(app.sector.modified());
+
+        // A Zip-Code set opens read-only: the staged edits go, Write refuses.
+        let dir = scratch("sector");
+        for (i, part) in sector64::write_zipcode(&sample_d64())
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
+            std::fs::write(dir.join(format!("{}!GAME", i + 1)), part).unwrap();
+        }
+        app.open(&dir.join("1!GAME"));
+        app.sector_sync();
+        assert!(!app.sector.modified());
+        assert_eq!((app.sector.track, app.sector.sector), (18, 0));
+        app.sector.type_digit(1);
+        app.apply(Act::SectorWrite);
+        assert_eq!(
+            app.status,
+            "This disk is read-only, so its blocks can't be changed"
+        );
+    }
+
+    #[test]
+    fn sector_grid_columns_map_back_to_bytes() {
+        for i in 0..16 {
+            assert_eq!(sec_byte_at(sec_hex_col(i)), Some(i));
+            assert_eq!(sec_byte_at(sec_hex_col(i) + 1), Some(i));
+            assert_eq!(sec_byte_at(SEC_TEXT0 + i), Some(i));
+        }
+        assert_eq!(sec_byte_at(0), None);
+        assert_eq!(sec_byte_at(sec_hex_col(7) + 2), None);
+        assert_eq!(sec_hex_col(8), sec_hex_col(7) + 4, "gap after the 8th byte");
+        assert_eq!(sec_byte_at(SEC_COLS), None);
     }
 
     fn other_names(app: &App) -> Vec<String> {

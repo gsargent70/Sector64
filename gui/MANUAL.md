@@ -35,7 +35,7 @@ This manual describes every feature of the graphical browser
        - The unsaved-changes guard
   9. Building an archive
  10. Validating and repairing a disk
- 11. The disk map
+ 11. The disk map and sector editor
  12. Copying between disks
  13. Two disks side by side
  14. Running in VICE
@@ -138,7 +138,8 @@ the right and the listing makes room for it:
              Extract ▸, Copy..., BASIC Editor..., Copy to
              Other Pane (in dual view), Run in VICE, Undo,
              Redo, Rename and Delete.
-    Disk     Validate / Repair, Disk Map and Compare Panes.
+    Disk     Validate / Repair, Disk Map, Sector Editor and
+             Compare Panes.
     Preview  shows or hides the preview pane.
     Dual     splits the window into two panes (see 13); it
              takes turns with the preview pane.
@@ -525,7 +526,7 @@ Close or Esc hides the window.
 
 
 ----------------------------------------------------------------
- 11. THE DISK MAP
+ 11. THE DISK MAP AND SECTOR EDITOR
 ----------------------------------------------------------------
 
 Choose Disk > Disk Map (or press Ctrl+M) to see every
@@ -547,7 +548,8 @@ Zip-Code sets).
 Hover over a block to see its track and sector, and which file
 it belongs to ("block 4 of 12"). The rest of that file's blocks
 are outlined, so you can see how it is spread across the disk.
-Click a block to select its file in the listing.
+Click a block to select its file in the listing; double-click it
+to open it in the Sector Editor.
 
 The line under the title totals each kind. Its free count
 includes the directory track, which the header's "blocks free"
@@ -563,6 +565,40 @@ boot loaders keep data where the directory doesn't point. GEOS
 disks are understood: VLIR records and info blocks belong to
 their file. The map is rebuilt after every edit, undo and redo.
 Esc or Close hides it.
+
+THE SECTOR EDITOR
+
+Choose Disk > Sector Editor (or press Ctrl+E), or double-click a
+block in the disk map, to see one block (256 bytes) in hex, 16
+bytes to a line, with the bytes as PETSCII text on the right.
+
+- Track and Sector pick a block (drag or type in them). Prev and
+  Next (or PgUp / PgDn) step through the disk block by block.
+- Above the grid it says what the block is (the DOS's, a file's
+  "block 4 of 12", or free) and where its first two bytes link:
+  the next block of the chain, or "last block" and how many of
+  its bytes are used. Bytes 0-1 are shown in lavender.
+- Follow link goes to the next block of the chain, so you can
+  walk a file or the directory block by block; Back returns.
+  Selected file jumps to the first block of the file selected in
+  the listing.
+
+To change bytes, click one in the grid (in the hex or the text
+part), then type hex digits: two to a byte, and the cursor moves
+on. The arrow keys move the cursor; Home and End go to the start
+and end of a line. Changed bytes are shown in amber and nothing
+is written yet. Write puts them on the disk as one edit, which
+Undo takes back; Revert forgets them. Until you do one or the
+other, the other blocks can't be opened. As with every edit, the
+disk file itself only changes when you Save.
+
+The editor shows the disk in the focused pane. Read-only disks
+(G64, D2M partitions, Zip-Code sets) can be viewed but not
+changed. Esc or Close hides the window.
+
+Take care: the editor changes exactly the bytes you type, with no
+checks. Wrong links or BAM bytes can break files; Validate /
+Repair (section 10) finds most such damage.
 
 
 ----------------------------------------------------------------
@@ -814,6 +850,7 @@ On a Mac, use Cmd for Ctrl (see "On a Mac" in section 19).
     Ctrl+Y      Redo (also Ctrl+Shift+Z)
     Ctrl+L      Validate or repair the open disk
     Ctrl+M      Show or hide the disk map
+    Ctrl+E      Show or hide the sector editor
     Ctrl+K      Show or hide the Copy window
     Ctrl+B      Show or hide the BASIC editor
     Ctrl+D      Compare the two panes' files
@@ -825,8 +862,8 @@ On a Mac, use Cmd for Ctrl (see "On a Mac" in section 19).
     Delete      Delete / scratch the selected file(s)
     F2          Rename the selected file (in place)
     Up / Down   Move the selection
-    Esc         Cancel an in-place rename; close the disk map
-                or the Copy window
+    Esc         Cancel an in-place rename; close the sector
+                editor, the disk map or the Copy window
 
 Single-key shortcuts are ignored while you are typing in a text
 field (the filter box or a rename).
