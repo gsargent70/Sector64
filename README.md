@@ -231,7 +231,12 @@ multicolour, lined up with the memory a PRG loads to); for an open D64/D71/D81, 
 tick. The **disk map** draws
 every block of any disk image as a track-by-sector grid, coloured by the file
 (or DOS structure) that owns it, with free, orphaned and conflicting blocks
-marked; hover a block to see its file, click to select it. The **Copy** window holds a second disk image and
+marked; hover a block to see its file, click to select it, double-click to open
+it in the **Sector Editor**, which shows any track and sector in hex, follows
+block links through a file's chain, and writes typed changes back as one undoable
+edit. **Find in Files** searches every listed file for text (matched in any C64
+case) or hex bytes (with `??` wildcards) and jumps to each match in the hex
+preview or the Sector Editor. The **Copy** window holds a second disk image and
 copies files between the two, from any disk or archive onto a D64/D71/D81/D2M
 and back. **Dual** view splits the window into two panes, each with its own disk
 or archive, and F5 copies the selected files from one to the other. **Compare

@@ -76,7 +76,7 @@ Seeing inside files without extracting them.
 | VIEW-07 | PIC: Koala, Art Studio, Advanced Art Studio, Doodle! | M | Done v1.0.8 | pixel-checked against VICE |
 | VIEW-08 | geoPaint pictures in PIC | L | Idea | needs a GEOS geoPaint decoder first |
 | VIEW-09 | SID music info: title, author, release, load/init/play addresses, songs | S | Idea | |
-| VIEW-10 | Search by name across a listing, or inside files for text or hex bytes | M | Done (unreleased, #51) | core `sector64::search`; GUI Find window (Ctrl+F) shows matches in the hex preview or the Sector Editor |
+| VIEW-10 | Search by name across a listing, or inside files for text or hex bytes | M | Done v1.0.12 | core `sector64::search`; GUI Find window (Ctrl+F) shows matches in the hex preview or the Sector Editor |
 
 ## 3. Editing (EDIT)
 
@@ -103,7 +103,7 @@ Checking and inspecting a disk's structure.
 | DISK-02 | Disk map: every block, coloured by owner | M | Done v1.0.6 | |
 | DISK-03 | Compare Panes: same / differs (first byte) / only on one side | M | Done v1.0.9 | core `sector64::compare` |
 | DISK-04 | Validate **and repair**: rebuild the BAM, free orphaned blocks, drop broken entries, with undo | L | Done v1.0.10 | core `sector64::repair`; also ends broken chains and splits cross-linked files; BAM checked against `c1541 -validate` |
-| DISK-05 | Sector editor: view/edit any track and sector in hex, jump from the disk map, follow chains | L | Done (unreleased, #50) | GUI; Write is one undo step; read-only disks view only |
+| DISK-05 | Sector editor: view/edit any track and sector in hex, jump from the disk map, follow chains | L | Done v1.0.12 | GUI; Write is one undo step; read-only disks view only |
 | DISK-06 | Compare window: "Copy missing files" button that copies everything that's only on one side across | S | Done v1.0.10 | either direction; follow-up to DISK-03 |
 
 ## 5. Working with other tools (TOOL)
@@ -135,7 +135,7 @@ Checking and inspecting a disk's structure.
 | APP-07 | Background loading with a progress bar | M | Idea | |
 | APP-08 | Grow the window to fit the preview or long names | S | Idea | |
 | APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Done v1.0.11 | CI builds, tests and starts it; v1.0.11 (Intel) tried by hand on macOS 14, incl. Run in VICE: all worked; Apple Silicon not tried by hand |
-| APP-13 | Fix: the preview pane left part of a narrow window unpainted (other windows showed through) | S | Done (unreleased, #52) | its header now wraps to fit; DIS scrolls sideways like HEX; a test runs the whole UI headless at several widths |
+| APP-13 | Fix: the preview pane left part of a narrow window unpainted (other windows showed through) | S | Done v1.0.12 | its header now wraps to fit; DIS scrolls sideways like HEX; a test runs the whole UI headless at several widths |
 
 ---
 
@@ -155,3 +155,4 @@ the rows above give each feature's first release.
 - **v1.0.9:** EDIT-05, DISK-03, APP-06
 - **v1.0.10:** DISK-04, DISK-06, EDIT-06, CLI-03
 - **v1.0.11:** APP-09
+- **v1.0.12:** DISK-05, VIEW-10, APP-13
