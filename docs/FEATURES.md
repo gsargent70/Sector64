@@ -138,9 +138,9 @@ Checking and inspecting a disk's structure.
 | APP-07 | Background loading with a progress bar | M | Idea | |
 | APP-08 | Grow the window to fit the preview or long names | S | Idea | |
 | APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Done v1.0.11 | CI builds, tests and starts it; v1.0.11 (Intel) tried by hand on macOS 14, incl. Run in VICE: all worked; Apple Silicon not tried by hand |
-| APP-14 | Menus regrouped as File / Edit / View / Tools / Help; Quit, Select All (Ctrl+A), Preview (Ctrl+P), F1, Help pages for shortcuts and About | S | Doing | from the 2026-11 review: File held 19 items |
+| APP-14 | Menus regrouped as File / Edit / View / Tools / Help; Quit, Select All (Ctrl+A), Preview (Ctrl+P), F1, Help pages for shortcuts and About | S | Done (unreleased, #54) | from the 2026-11 review: File held 19 items |
 | APP-15 | Retire the Copy window: Dual Panes does all it did | S | Planned | Copy window from EDIT-04 (v1.0.7) predates Dual Panes (APP-06, v1.0.9) |
-| APP-16 | Fix: Up or Down with a filter typed could crash (indexed past the filtered rows) | S | Doing | found in the 2026-11 review |
+| APP-16 | Fix: Up or Down with a filter typed could crash (indexed past the filtered rows) | S | Done (unreleased, #54) | found in the 2026-11 review |
 | APP-13 | Fix: the preview pane left part of a narrow window unpainted (other windows showed through) | S | Done v1.0.12 | its header now wraps to fit; DIS scrolls sideways like HEX; a test runs the whole UI headless at several widths |
 
 ---
