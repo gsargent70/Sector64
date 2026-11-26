@@ -77,7 +77,7 @@ Seeing inside files without extracting them.
 | VIEW-07 | PIC: Koala, Art Studio, Advanced Art Studio, Doodle! | M | Done v1.0.8 | pixel-checked against VICE |
 | VIEW-08 | geoPaint pictures in PIC | L | Idea | needs a GEOS geoPaint decoder first |
 | VIEW-09 | SID music info: title, author, release, load/init/play addresses, songs | S | Idea | |
-| VIEW-10 | Search by name across a listing, or inside files for text or hex bytes | M | Done (unreleased, #PR) | core `sector64::search`; GUI Find window (Ctrl+F) shows matches in the hex preview or the Sector Editor |
+| VIEW-10 | Search by name across a listing, or inside files for text or hex bytes | M | Done (unreleased, #51) | core `sector64::search`; GUI Find window (Ctrl+F) shows matches in the hex preview or the Sector Editor |
 
 ## 3. Editing (EDIT)
 
