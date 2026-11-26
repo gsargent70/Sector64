@@ -37,6 +37,9 @@ the core plus one front end.
 | APP-12 | Test the Mac GUI by remote control in CI (or a Mac over SSH): file dialogs, drag-and-drop, shortcuts, Run in VICE | M; less urgent now v1.0.11 was tried by hand; follow-up to APP-09; needs the runners to allow scripted clicks and keys, not tried yet |
 | DISK-08 | Sector editor: type text into the PETSCII column, and search the disk for bytes or text | M; follow-up to DISK-05 (today it edits in hex only) |
 | CLI-06 | Search from the command line (`s64find`): text or hex inside the files of disks and archives | S; core done in VIEW-10 |
+| EDIT-10 | Add Files: pick several at once, and take each one's type from its extension (`.prg`/`.seq`/`.usr`, P00/S00 headers); dropped files too | S; today one file at a time, and the type is whatever was last picked in File > Add file |
+| APP-17 | New Disk as a small dialog (name, ID, D64/D71/D81) instead of text boxes inside the New submenu | S; from the 2026-11 review |
+| APP-18 | Split `gui/src/main.rs` (8,000 lines; `frame_ui` is 1,400) into modules; one Esc chain instead of eight checks; one "listing changed" reset instead of nine | M; no behaviour change; from the 2026-11 review |
 
 ---
 
@@ -135,13 +138,17 @@ Checking and inspecting a disk's structure.
 | APP-07 | Background loading with a progress bar | M | Idea | |
 | APP-08 | Grow the window to fit the preview or long names | S | Idea | |
 | APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Done v1.0.11 | CI builds, tests and starts it; v1.0.11 (Intel) tried by hand on macOS 14, incl. Run in VICE: all worked; Apple Silicon not tried by hand |
+| APP-14 | Menus regrouped as File / Edit / View / Tools / Help; Quit, Select All (Ctrl+A), Preview (Ctrl+P), F1, Help pages for shortcuts and About | S | Done (unreleased, #54) | from the 2026-11 review: File held 19 items |
+| APP-15 | Retire the Copy window: Dual Panes does all it did | S | Planned | Copy window from EDIT-04 (v1.0.7) predates Dual Panes (APP-06, v1.0.9) |
+| APP-16 | Fix: Up or Down with a filter typed could crash (indexed past the filtered rows) | S | Done (unreleased, #54) | found in the 2026-11 review |
 | APP-13 | Fix: the preview pane left part of a narrow window unpainted (other windows showed through) | S | Done v1.0.12 | its header now wraps to fit; DIS scrolls sideways like HEX; a test runs the whole UI headless at several widths |
 
 ---
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Next:** EDIT-07, FMT-13.
+1. **Now:** APP-14 and APP-16 (one PR), then APP-15.
+2. **Next:** EDIT-10, APP-17, APP-18, then EDIT-07, FMT-13.
 
 ## Done by release
 

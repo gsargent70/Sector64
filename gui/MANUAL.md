@@ -102,7 +102,7 @@ the whole archive.
 Default layout (the preview pane is hidden until you turn it on):
 
   +----------------------------------------------------------+
-  | [=] SECTOR64  File | Disk | Preview | Dual | Help        |  <- menu bar
+  | [=] SECTOR64  File | Edit | View | Tools | Help         |  <- menu bar
   +----------------------------------------------------------+
   | Disk 0 "MY DISK" 1A                          664 free    |  <- header row
   | Filter: [ type to filter by name                       ] |  <- filter box
@@ -116,11 +116,11 @@ Default layout (the preview pane is hidden until you turn it on):
   | 24 item(s) loaded                                        |  <- status line
   +----------------------------------------------------------+
 
-With the preview pane turned on (menu bar > Preview), it opens on
+With the preview pane turned on (View > Preview, or Ctrl+P), it opens on
 the right and the listing makes room for it:
 
   +----------------------------------------------------------+
-  | [=] SECTOR64  File | Disk |[Preview]| Dual | Help        |  <- Preview lit
+  | [=] SECTOR64  File | Edit | View | Tools | Help         |
   +----------------------------------------------------------+
   | Disk 0 "MY DISK" 1A   664 free |  PREVIEW — HELLO        |  <- header | preview
   | Filter: [ filter by name     ] |           HEX | TEXT    |     head + toggle
@@ -134,24 +134,25 @@ the right and the listing makes room for it:
   +----------------------------------------------------------+
 
 - Menu bar (top):
-    File     New, Open, Open Recent, Add file, Save, Save As,
-             Extract ▸, Copy..., BASIC Editor..., Find in
-             Files..., Copy to Other Pane (in dual view),
-             Run in VICE, Undo,
-             Redo, Rename and Delete.
-    Disk     Validate / Repair, Disk Map, Sector Editor and
-             Compare Panes.
-    Preview  shows or hides the preview pane.
-    Dual     splits the window into two panes (see 13); it
-             takes turns with the preview pane.
-    Help     this manual.
+    File     New, Open, Open Recent, Save, Save As, Add file,
+             Extract Selected, Extract All and Quit.
+    Edit     Undo, Redo, Rename, Delete, Select All and Copy
+             to Other Pane (in dual view).
+    View     Preview (shows or hides the preview pane), Dual
+             Panes (two panes side by side, see 13; it takes
+             turns with the preview pane) and Disk Map.
+    Tools    Validate / Repair, Sector Editor, Compare Panes,
+             Find in Files, BASIC Editor, Run in VICE and the
+             Copy window.
+    Help     this manual, its keyboard shortcuts on their own,
+             and About (the version you're running).
 - Header row: the disk/archive title and, for disks, blocks
   free. Shown as the first line of the listing.
 - Filter box: live name filter.
 - Listing: the files, in columns, with colour-coded badges. It
   uses the full width until the preview pane is shown.
 - Preview pane (right): hidden by default; turn it on with the
-  Preview menu item. Shows the selected file's bytes as hex or
+  View > Preview item (Ctrl+P). Shows the selected file's bytes as hex or
   text. It sizes itself to fit (see 6).
 - Bottom bar: the opened file path, the output folder, and the
   status line.
@@ -231,7 +232,7 @@ FILTERING
 
 FINDING TEXT OR BYTES INSIDE FILES
 
-  Choose File > Find in Files... (or press Ctrl+F) to search
+  Choose Tools > Find in Files... (or press Ctrl+F) to search
   every file in the listing (the focused pane in dual view).
 
   - TEXT finds words the way a C64 shows them: letters match in
@@ -402,12 +403,12 @@ runs.)
 
 Then extract:
 
-  - One file:   select it and choose File > Extract ▸ > Extract
-                Selected,
+  - One file:   select it and choose File > Extract Selected,
                 press Enter, or double-click the row.
-  - Several:    Ctrl/Shift-click to mark them, then
-                File > Extract ▸ > Extract Selected.
-  - Everything: File > Extract ▸ > Extract All.
+  - Several:    Ctrl/Shift-click to mark them (Ctrl+A marks
+                every file listed), then File > Extract
+                Selected.
+  - Everything: File > Extract All.
   - From the right-click menu on a row: Extract.
 
 Each file is written into the output folder under a safe version
@@ -442,28 +443,31 @@ ADDING FILES
 
 RENAMING
 
-  Select a file and press F2, or use File > Rename, or the
+  Select a file and press F2, or use Edit > Rename, or the
   right-click Rename. Edit the name in place:
       Enter  commits the new name.
       Esc    (or clicking away) cancels.
 
 DELETING (SCRATCHING)
 
-  Select one or more files and press Delete, or use File >
-  Delete, or the right-click Delete. For a disk this scratches
+  Select one or more files and press Delete, or use Edit >
+  Delete, or the right-click Delete. Edit > Select All (Ctrl+A)
+  marks every file the listing shows, so with a filter typed it
+  marks just the files that match. For a disk this scratches
   the file and frees its blocks.
 
 SAVING
 
   File > Save (Ctrl+S) writes back to the file you opened.
   File > Save As… writes to a new file (and lets you choose the
-  format/name). The title drops the "•modified" mark once saved.
+  format/name). For a new archive, Save As… is how you save it
+  (see 9). The title drops the "•modified" mark once saved.
 
 UNDO AND REDO
 
-  File > Undo (Ctrl+Z) steps back through your edits to a disk or
+  Edit > Undo (Ctrl+Z) steps back through your edits to a disk or
   a new archive: adds, renames and deletes, up to the last 32.
-  File > Redo (Ctrl+Y, or Ctrl+Shift+Z) puts them back. Hover over
+  Edit > Redo (Ctrl+Y, or Ctrl+Shift+Z) puts them back. Hover over
   either menu item to see which edit it would undo or redo; the
   status line says what was undone.
 
@@ -493,7 +497,7 @@ THE UNSAVED-CHANGES GUARD
   1. File > New ▸ > Empty archive.
   2. Add files by dragging them in (on Linux this needs X11; see
      section 19), or File > Add file ▸.
-  3. File > Save archive as… and choose a container format by
+  3. File > Save As… and choose a container format by
      the extension you type:
          .t64   tape image
          .lnx   Lynx
@@ -508,7 +512,7 @@ before you save.
  10. VALIDATING AND REPAIRING A DISK
 ----------------------------------------------------------------
 
-Choose Disk > Validate / Repair (or press Ctrl+L) to check an
+Choose Tools > Validate / Repair (or press Ctrl+L) to check an
 open disk: every file's chain of blocks, the directory, and the
 BAM (the disk's list of free blocks). A window shows the result:
 
@@ -560,7 +564,7 @@ Close or Esc hides the window.
  11. THE DISK MAP AND SECTOR EDITOR
 ----------------------------------------------------------------
 
-Choose Disk > Disk Map (or press Ctrl+M) to see every
+Choose View > Disk Map (or press Ctrl+M) to see every
 block of the open disk in one picture: a column per track, a row
 per sector, each cell coloured by what is stored there. It works
 for every disk image, including read-only ones (G64, D2M,
@@ -599,7 +603,7 @@ Esc or Close hides it.
 
 THE SECTOR EDITOR
 
-Choose Disk > Sector Editor (or press Ctrl+E), or double-click a
+Choose Tools > Sector Editor (or press Ctrl+E), or double-click a
 block in the disk map, to see one block (256 bytes) in hex, 16
 bytes to a line, with the bytes as PETSCII text on the right.
 
@@ -636,7 +640,7 @@ Repair (section 10) finds most such damage.
  12. COPYING BETWEEN DISKS
 ----------------------------------------------------------------
 
-Choose File > Copy... (or press Ctrl+K) to open the Copy
+Choose Tools > Copy Window... (or press Ctrl+K) to open the Copy
 window. It holds a second disk, alongside the one in the main
 window, and copies files between the two.
 
@@ -678,13 +682,13 @@ Esc or Close hides the window without closing its disk.
  13. TWO DISKS SIDE BY SIDE
 ----------------------------------------------------------------
 
-Click Dual in the menu bar to split the window into two panes,
+Choose View > Dual Panes to split the window into two panes,
 each with its own disk or archive, like a two-panel file
-commander. Click Dual again to go back to one pane. Sector64
+commander. Choose it again to go back to one pane. Sector64
 remembers which you used last.
 
   +----------------------------------------------------------+
-  | [=] SECTOR64  File | Disk | Preview |[Dual]| Help        |
+  | [=] SECTOR64  File | Edit | View | Tools | Help         |
   +----------------------------------------------------------+
   |#Disk 0 "GAMES" 1A       #| Disk 0 "BLANK" 01             |
   |#Filter: [             ] #| Filter: [                   ] |
@@ -710,7 +714,7 @@ can also start with two files open side by side:
 COPYING BETWEEN THE PANES
 
 Select files in the focused pane (Ctrl-click or Shift-click for
-several) and press F5, or choose File > Copy to Other Pane, or
+several) and press F5, or choose Edit > Copy to Other Pane, or
 right-click a file and choose Copy to Other Pane. They are
 copied into the other pane's disk or new archive, the same way
 as the Copy window copies (see 12): exact names, types and lock
@@ -721,7 +725,7 @@ press Ctrl+Z.
 
 COMPARING THE PANES
 
-Choose Disk > Compare Panes (Ctrl+D) to see how the two panes'
+Choose Tools > Compare Panes (Ctrl+D) to see how the two panes'
 files compare. It works on any two listings: two disks, or a disk
 and an archive. Files are matched by name, and each row says
 whether the file is:
@@ -750,20 +754,20 @@ undo the copy, focus the pane it went into and press Ctrl+Z.
 
 The preview pane and the second pane take turns. Turning
 Preview on hides the pane that isn't focused, and the preview
-shows the focused pane's selection. Clicking Dual again brings
-the other pane back and hides the preview.
+shows the focused pane's selection. Choosing Dual Panes again
+brings the other pane back and hides the preview.
 
 When you quit, Sector64 asks about unsaved changes in either
-pane. Turning Dual off (or Preview on) hides the other pane but
-keeps its disk open, unsaved changes included, for when you turn
-Dual back on.
+pane. Turning Dual Panes off (or Preview on) hides the other
+pane but keeps its disk open, unsaved changes included, for when
+you turn Dual Panes back on.
 
 
 ----------------------------------------------------------------
  14. RUNNING IN VICE
 ----------------------------------------------------------------
 
-Choose File > Run in VICE (or press Ctrl+R) to try a
+Choose Tools > Run in VICE (or press Ctrl+R) to try a
 program in the VICE emulator, which you install separately
 (vice-emu.sourceforge.io, or your Linux distribution's "vice"
 package).
@@ -798,7 +802,7 @@ names that differ only there may load the wrong one.
  15. THE BASIC EDITOR
 ----------------------------------------------------------------
 
-Choose File > BASIC Editor... (or press Ctrl+B) to write a BASIC
+Choose Tools > BASIC Editor... (or press Ctrl+B) to write a BASIC
 program, or to change one that's on a disk. Type or paste it, one
 numbered line per line:
 
@@ -877,8 +881,11 @@ On a Mac, use Cmd for Ctrl (see "On a Mac" in section 19).
 
     Ctrl+O      Open a file
     Ctrl+S      Save the open disk
+    Ctrl+Q      Quit (asks about unsaved changes first)
     Ctrl+Z      Undo the last edit
     Ctrl+Y      Redo (also Ctrl+Shift+Z)
+    Ctrl+A      Select every file listed
+    Ctrl+P      Show or hide the preview pane
     Ctrl+L      Validate or repair the open disk
     Ctrl+M      Show or hide the disk map
     Ctrl+E      Show or hide the sector editor
@@ -894,6 +901,7 @@ On a Mac, use Cmd for Ctrl (see "On a Mac" in section 19).
     Delete      Delete / scratch the selected file(s)
     F2          Rename the selected file (in place)
     Up / Down   Move the selection
+    F1          Show or hide this manual
     Esc         Cancel an in-place rename; close the sector
                 editor, the disk map or the Copy window
 
