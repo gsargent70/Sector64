@@ -349,6 +349,40 @@ fn icon_button<'a>(tex: &egui::TextureHandle, label: &'a str) -> egui::Button<'a
     egui::Button::image_and_text(img, label)
 }
 
+/// A menu item: `label` with an icon (`blank` for none, so names line up)
+/// and, unless `keys` is empty, its shortcut.
+fn entry<'a>(icon: &egui::TextureHandle, label: &'a str, keys: &str) -> egui::Button<'a> {
+    let b = icon_button(icon, label);
+    if keys.is_empty() {
+        b
+    } else {
+        b.shortcut_text(key_hint(keys))
+    }
+}
+
+/// Add a menu item, enabled or not, with a tooltip for each state (empty
+/// for none). Returns whether it was clicked, closing the menu if so.
+fn menu_entry(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    button: egui::Button<'_>,
+    tip: &str,
+    disabled_tip: &str,
+) -> bool {
+    let mut r = ui.add_enabled(enabled, button);
+    if !tip.is_empty() {
+        r = r.on_hover_text(tip);
+    }
+    if !disabled_tip.is_empty() {
+        r = r.on_disabled_hover_text(disabled_tip);
+    }
+    let clicked = r.clicked();
+    if clicked {
+        ui.close_menu();
+    }
+    clicked
+}
+
 /// The accent colour for a file-type mnemonic badge.
 fn badge_color(mnemonic: &str) -> Color32 {
     match mnemonic {
@@ -482,6 +516,64 @@ enum Confirm {
 
 /// The user manual, embedded so Help works with no external files.
 const MANUAL: &str = include_str!("../MANUAL.md");
+
+/// Where Up (`down` false) or Down moves the selection in the listing's
+/// display `order`: the row's position next to `current`'s, or the first
+/// row when nothing shown is selected. `None` when nothing is shown.
+fn step_in_order(order: &[usize], current: Option<usize>, down: bool) -> Option<usize> {
+    let last = order.len().checked_sub(1)?;
+    let pos = current.and_then(|s| order.iter().position(|&x| x == s));
+    Some(match (pos, down) {
+        (None, _) => 0,
+        (Some(p), true) => (p + 1).min(last),
+        (Some(p), false) => p.saturating_sub(1),
+    })
+}
+
+/// What the Help window shows.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+enum HelpPage {
+    #[default]
+    Manual,
+    Shortcuts,
+    About,
+}
+
+/// The Help window's About page: the name, version and licence.
+fn about_ui(ui: &mut egui::Ui) {
+    ui.add_space(8.0);
+    ui.label(
+        egui::RichText::new(format!("SECTOR64 v{}", env!("CARGO_PKG_VERSION")))
+            .heading()
+            .color(c64::ACCENT)
+            .strong(),
+    );
+    ui.label("A toolkit for Commodore disk images and archives.");
+    ui.add_space(8.0);
+    ui.label(egui::RichText::new("Licence: MIT or Apache-2.0").color(c64::TEXT_DIM));
+    ui.hyperlink_to(
+        "github.com/gsargent70/Sector64",
+        "https://github.com/gsargent70/Sector64",
+    );
+}
+
+/// The text of the manual's section `title` (e.g. "KEYBOARD SHORTCUTS"):
+/// everything between its heading and the next one, trimmed.
+fn manual_section(title: &str) -> &'static str {
+    let rule = "\n----------------------------------------------------------------\n";
+    // A heading is "17. KEYBOARD SHORTCUTS" between two rules.
+    let is_heading = |part: &str| {
+        part.trim()
+            .split_once(". ")
+            .is_some_and(|(_, t)| t == title)
+    };
+    MANUAL
+        .split(rule)
+        .skip_while(|part| !is_heading(part))
+        .nth(1)
+        .map(str::trim)
+        .unwrap_or("")
+}
 
 /// How long a toast stays fully visible before it starts to fade, and how long
 /// the fade-out lasts (seconds).
@@ -784,6 +876,8 @@ struct App {
     show_preview: bool,
     // whether the Help / user-manual window is open
     show_help: bool,
+    // which page the Help window shows
+    help_page: HelpPage,
     // button-icon textures, built lazily on the first frame
     icons: Option<Icons>,
     /// Folder holding VICE's emulators, chosen when they weren't on the PATH.
@@ -870,6 +964,8 @@ enum Act {
     SectorWrite,
     /// Find window: search the listing's files.
     Find,
+    /// Mark every file the listing shows (the filter decides which).
+    SelectAll,
     /// Find window: show this file's match at this offset.
     FindShow(usize, usize),
 }
@@ -1136,6 +1232,18 @@ impl App {
             Act::Select(i) => {
                 self.pane.selected = Some(i);
                 self.pane.marked.clear();
+            }
+            Act::SelectAll => {
+                let order = self.pane.sorted_order(&self.pane.filter);
+                self.pane.marked = order.iter().copied().collect();
+                if !self
+                    .pane
+                    .selected
+                    .is_some_and(|s| self.pane.marked.contains(&s))
+                {
+                    self.pane.selected = order.first().copied();
+                }
+                self.status = format!("Selected {} file(s)", order.len());
             }
             Act::ToggleMark(i) => {
                 if !self.pane.marked.insert(i) {
@@ -2583,6 +2691,8 @@ impl App {
         let mut pic_cache = self.pane.pic_cache.take();
         let mut show_preview = self.show_preview;
         let mut show_help = self.show_help;
+        let mut help_page = self.help_page;
+        let mut quit = false;
         let has_map = self.pane.map_disk().is_some();
         let mut show_map = self.show_map && has_map;
         let mut show_sector = self.show_sector && has_map;
@@ -2609,13 +2719,29 @@ impl App {
                 // The floppy-disk logo, as tall as the title beside it.
                 let h = ui.text_style_height(&egui::TextStyle::Heading) + 4.0;
                 ui.add(egui::Image::new((ic.logo.id(), egui::vec2(h, h))));
-                ui.label(
-                    egui::RichText::new("SECTOR64")
-                        .heading()
-                        .color(c64::ACCENT)
-                        .strong(),
-                );
+                // The title goes when the window is too narrow for it and
+                // every menu; the menus' width is measured as they're drawn.
+                let menus_id = egui::Id::new("menu_bar_menus_width");
+                let menus_w: f32 = ctx.data(|d| d.get_temp(menus_id)).unwrap_or(0.0);
+                let title = egui::RichText::new("SECTOR64")
+                    .heading()
+                    .color(c64::ACCENT)
+                    .strong();
+                let title_w = egui::WidgetText::from(title.clone())
+                    .into_galley(
+                        ui,
+                        Some(egui::TextWrapMode::Extend),
+                        f32::INFINITY,
+                        egui::TextStyle::Heading,
+                    )
+                    .size()
+                    .x;
+                let gap = ui.spacing().item_spacing.x;
+                if title_w + 4.0 * gap + menus_w <= ui.available_width() {
+                    ui.label(title);
+                }
                 ui.separator();
+                let menus_x = ui.cursor().min.x;
 
                 ui.menu_button("File", |ui| {
                     ui.set_min_width(180.0);
@@ -2648,12 +2774,8 @@ impl App {
                             ui.close_menu();
                         }
                     });
-                    if ui
-                        .add(icon_button(&ic.folder, "Open…").shortcut_text(key_hint("Ctrl+O")))
-                        .clicked()
-                    {
+                    if menu_entry(ui, true, entry(&ic.folder, "Open…", "Ctrl+O"), "", "") {
                         acts.push(Act::OpenDialog);
-                        ui.close_menu();
                     }
                     // Open Recent ▸ (newest first; disabled when empty)
                     ui.add_enabled_ui(!self.recent.is_empty(), |ui| {
@@ -2676,6 +2798,30 @@ impl App {
                             },
                         );
                     });
+                    ui.separator();
+                    if menu_entry(
+                        ui,
+                        is_disk,
+                        entry(&ic.floppy, "Save", "Ctrl+S"),
+                        "",
+                        "open a disk image to save it",
+                    ) {
+                        acts.push(Act::Save);
+                    }
+                    if menu_entry(
+                        ui,
+                        is_disk || is_archive,
+                        entry(&ic.floppy, "Save As…", ""),
+                        "",
+                        "open a disk or start a new archive to save it",
+                    ) {
+                        acts.push(if is_archive {
+                            Act::SaveArchiveAs
+                        } else {
+                            Act::SaveAs
+                        });
+                    }
+                    ui.separator();
                     // Add file ▸ (type + pick) — only when a disk/archive is open.
                     ui.add_enabled_ui(editable, |ui| {
                         egui::menu::menu_custom_button(
@@ -2698,269 +2844,249 @@ impl App {
                             },
                         );
                     });
-                    ui.separator();
-                    ui.add_enabled_ui(is_disk, |ui| {
-                        if ui
-                            .add(icon_button(&ic.floppy, "Save").shortcut_text(key_hint("Ctrl+S")))
-                            .clicked()
-                        {
-                            acts.push(Act::Save);
-                            ui.close_menu();
+                    if menu_entry(
+                        ui,
+                        sel_extractable,
+                        entry(&ic.down, "Extract Selected", "Enter"),
+                        "save the selected file(s) into the Output folder",
+                        "select a file to extract it",
+                    ) {
+                        acts.push(Act::ExtractSelected);
+                    }
+                    if menu_entry(
+                        ui,
+                        any_extractable,
+                        entry(&ic.down, "Extract All", ""),
+                        "save every file into the Output folder",
+                        "open a disk or archive first",
+                    ) {
+                        acts.push(Act::ExtractAll);
+                    }
+                    // A Mac has Quit in its application menu already.
+                    if !cfg!(target_os = "macos") {
+                        ui.separator();
+                        if menu_entry(ui, true, entry(&ic.blank, "Quit", "Ctrl+Q"), "", "") {
+                            quit = true;
                         }
-                        if ui.add(icon_button(&ic.floppy, "Save As…")).clicked() {
-                            acts.push(Act::SaveAs);
-                            ui.close_menu();
-                        }
-                    });
-                    if is_archive
-                        && ui
-                            .add(icon_button(&ic.floppy, "Save archive as…"))
-                            .clicked()
-                    {
-                        acts.push(Act::SaveArchiveAs);
-                        ui.close_menu();
                     }
-                    ui.separator();
-                    // Extract ▸ (the selected file(s), or everything).
-                    ui.add_enabled_ui(any_extractable, |ui| {
-                        egui::menu::menu_custom_button(
-                            ui,
-                            icon_button(&ic.down, "Extract ▸"),
-                            |ui| {
-                                ui.set_min_width(170.0);
-                                if ui
-                                    .add_enabled(
-                                        sel_extractable,
-                                        icon_button(&ic.down, "Extract Selected")
-                                            .shortcut_text(key_hint("Enter")),
-                                    )
-                                    .clicked()
-                                {
-                                    acts.push(Act::ExtractSelected);
-                                    ui.close_menu();
-                                }
-                                if ui.add(icon_button(&ic.down, "Extract All")).clicked() {
-                                    acts.push(Act::ExtractAll);
-                                    ui.close_menu();
-                                }
-                            },
-                        );
-                    });
-                    if ui
-                        .add(
-                            icon_button(&ic.blank, "Copy…")
-                                .selected(show_copy)
-                                .shortcut_text(key_hint("Ctrl+K")),
-                        )
-                        .on_hover_text("copy files to and from a second disk")
-                        .clicked()
-                    {
-                        show_copy = !show_copy;
-                        ui.close_menu();
-                    }
-                    if ui
-                        .add(
-                            icon_button(&ic.blank, "BASIC Editor…")
-                                .selected(show_basic)
-                                .shortcut_text(key_hint("Ctrl+B")),
-                        )
-                        .on_hover_text("write a BASIC program, or edit the selected one")
-                        .clicked()
-                    {
-                        show_basic = !show_basic;
-                        ui.close_menu();
-                    }
-                    if ui
-                        .add(
-                            icon_button(&ic.blank, "Find in Files…")
-                                .selected(show_find)
-                                .shortcut_text(key_hint("Ctrl+F")),
-                        )
-                        .on_hover_text("look for text or hex bytes inside every file listed")
-                        .clicked()
-                    {
-                        show_find = !show_find;
-                        ui.close_menu();
-                    }
-                    if dual
-                        && ui
-                            .add_enabled(
-                                has_sel && back_editable,
-                                icon_button(&ic.blank, "Copy to Other Pane")
-                                    .shortcut_text(key_hint("F5")),
-                            )
-                            .on_hover_text("copy the selected files into the other pane")
-                            .on_disabled_hover_text(
-                                "select files, with a disk or new archive open in the other pane",
-                            )
-                            .clicked()
-                    {
-                        acts.push(Act::CopyToPane);
-                        ui.close_menu();
-                    }
-                    if ui
-                        .add_enabled(
-                            can_run,
-                            icon_button(&ic.blank, "Run in VICE").shortcut_text(key_hint("Ctrl+R")),
-                        )
-                        .on_hover_text(
-                            "start this disk in the VICE emulator, loading the selected \
-                             program or else the first one",
-                        )
-                        .on_disabled_hover_text("open a disk or select a program to run it in VICE")
-                        .clicked()
-                    {
-                        acts.push(Act::RunVice);
-                        ui.close_menu();
-                    }
-                    ui.separator();
+                });
+
+                ui.separator();
+                ui.menu_button("Edit", |ui| {
+                    ui.set_min_width(180.0);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     // Undo / Redo, with what they would undo or redo on hover.
                     let undo_next = self.pane.undo.last().map(|s| s.label.clone());
                     let redo_next = self.pane.redo.last().map(|s| s.label.clone());
-                    let undo = ui
-                        .add_enabled(
-                            undo_next.is_some(),
-                            icon_button(&ic.blank, "Undo").shortcut_text(key_hint("Ctrl+Z")),
-                        )
-                        .on_hover_text(undo_next.as_deref().unwrap_or("nothing to undo"));
-                    if undo.clicked() {
+                    if menu_entry(
+                        ui,
+                        undo_next.is_some(),
+                        entry(&ic.blank, "Undo", "Ctrl+Z"),
+                        undo_next.as_deref().unwrap_or(""),
+                        "nothing to undo",
+                    ) {
                         acts.push(Act::Undo);
-                        ui.close_menu();
                     }
-                    let redo = ui
-                        .add_enabled(
-                            redo_next.is_some(),
-                            icon_button(&ic.blank, "Redo").shortcut_text(key_hint("Ctrl+Y")),
-                        )
-                        .on_hover_text(redo_next.as_deref().unwrap_or("nothing to redo"));
-                    if redo.clicked() {
+                    if menu_entry(
+                        ui,
+                        redo_next.is_some(),
+                        entry(&ic.blank, "Redo", "Ctrl+Y"),
+                        redo_next.as_deref().unwrap_or(""),
+                        "nothing to redo",
+                    ) {
                         acts.push(Act::Redo);
-                        ui.close_menu();
                     }
                     ui.separator();
-                    ui.add_enabled_ui(has_sel, |ui| {
-                        // Rename the selected row in place.
-                        if ui
-                            .add(icon_button(&ic.pencil, "Rename").shortcut_text(key_hint("F2")))
-                            .clicked()
-                        {
-                            if let Some(s) = sel_now {
-                                renaming = Some(s);
-                                rename_to = self.pane.nodes[s].name.clone();
-                                rename_focus = true;
-                            }
-                            ui.close_menu();
+                    let pick_tip = "select a file on a disk or new archive";
+                    if menu_entry(
+                        ui,
+                        editable && has_sel,
+                        entry(&ic.pencil, "Rename", "F2"),
+                        "",
+                        pick_tip,
+                    ) {
+                        if let Some(s) = sel_now {
+                            renaming = Some(s);
+                            rename_to = self.pane.nodes[s].name.clone();
+                            rename_focus = true;
                         }
-                        let del = if is_archive { "Remove" } else { "Delete" };
-                        if ui
-                            .add(icon_button(&ic.trash, del).shortcut_text(key_hint("Del")))
-                            .clicked()
-                        {
-                            acts.push(Act::Delete);
-                            ui.close_menu();
-                        }
-                    });
+                    }
+                    let del = if is_archive { "Remove" } else { "Delete" };
+                    if menu_entry(
+                        ui,
+                        editable && has_sel,
+                        entry(&ic.trash, del, "Del"),
+                        "",
+                        pick_tip,
+                    ) {
+                        acts.push(Act::Delete);
+                    }
+                    if menu_entry(
+                        ui,
+                        !self.pane.nodes.is_empty(),
+                        entry(&ic.blank, "Select All", "Ctrl+A"),
+                        "select every file listed (the filter decides which)",
+                        "open a disk or archive first",
+                    ) {
+                        acts.push(Act::SelectAll);
+                    }
+                    ui.separator();
+                    if menu_entry(
+                        ui,
+                        dual && has_sel && back_editable,
+                        entry(&ic.blank, "Copy to Other Pane", "F5"),
+                        "copy the selected files into the other pane",
+                        if dual {
+                            "select files, with a disk or new archive open in the other pane"
+                        } else {
+                            "turn on View > Dual Panes first"
+                        },
+                    ) {
+                        acts.push(Act::CopyToPane);
+                    }
                 });
 
                 ui.separator();
-
-                ui.menu_button("Disk", |ui| {
-                    ui.set_min_width(170.0);
+                ui.menu_button("View", |ui| {
+                    ui.set_min_width(180.0);
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    let disk_tip = "open a D64, D71, D81 or CMD-native D2M to validate it";
-                    if ui
-                        .add_enabled(
-                            is_disk,
-                            egui::Button::new("Validate / Repair")
-                                .shortcut_text(key_hint("Ctrl+L")),
-                        )
-                        .on_hover_text("check every file's blocks against the BAM, and repair them")
-                        .on_disabled_hover_text(disk_tip)
-                        .clicked()
-                    {
-                        acts.push(Act::Validate);
-                        ui.close_menu();
+                    if menu_entry(
+                        ui,
+                        true,
+                        entry(&ic.blank, "Preview", "Ctrl+P").selected(show_preview),
+                        "show or hide the preview pane",
+                        "",
+                    ) {
+                        show_preview = !show_preview;
+                        // The preview takes the other pane's place; Dual
+                        // Panes brings that pane back.
+                        if show_preview {
+                            dual = false;
+                        }
                     }
-                    if ui
-                        .add_enabled(
-                            has_map,
-                            egui::Button::new("Disk Map")
-                                .selected(show_map)
-                                .shortcut_text(key_hint("Ctrl+M")),
-                        )
-                        .on_hover_text("show which file owns each block")
-                        .on_disabled_hover_text("open a disk image to see its map")
-                        .clicked()
-                    {
-                        show_map = !show_map;
-                        ui.close_menu();
-                    }
-                    if ui
-                        .add_enabled(
-                            has_map,
-                            egui::Button::new("Sector Editor")
-                                .selected(show_sector)
-                                .shortcut_text(key_hint("Ctrl+E")),
-                        )
-                        .on_hover_text("view and edit any track and sector in hex")
-                        .on_disabled_hover_text("open a disk image to edit its sectors")
-                        .clicked()
-                    {
-                        show_sector = !show_sector;
-                        ui.close_menu();
-                    }
-                    ui.separator();
-                    if ui
-                        .add_enabled(
-                            can_compare,
-                            egui::Button::new("Compare Panes")
-                                .selected(show_compare)
-                                .shortcut_text(key_hint("Ctrl+D")),
-                        )
-                        .on_hover_text("list which files match, differ, or are on only one side")
-                        .on_disabled_hover_text(
-                            "open a disk or archive in each pane (Dual) to compare them",
-                        )
-                        .clicked()
-                    {
-                        show_compare = !show_compare;
-                        ui.close_menu();
-                    }
-                });
-                ui.separator();
-                if ui
-                    .selectable_label(show_preview, "Preview")
-                    .on_hover_text("show or hide the preview pane")
-                    .clicked()
-                {
-                    show_preview = !show_preview;
-                    // The preview takes the other pane's place; Dual brings
-                    // that pane back.
-                    if show_preview {
-                        dual = false;
-                    }
-                }
-                ui.separator();
-                if ui
-                    .selectable_label(dual, "Dual")
-                    .on_hover_text(
+                    if menu_entry(
+                        ui,
+                        true,
+                        entry(&ic.blank, "Dual Panes", "").selected(dual),
                         "show two disks side by side; Tab switches between them \
                          (hides the preview pane)",
-                    )
-                    .clicked()
-                {
-                    dual = !dual;
-                    if dual {
-                        show_preview = false;
+                        "",
+                    ) {
+                        dual = !dual;
+                        if dual {
+                            show_preview = false;
+                        }
                     }
-                }
+                    ui.separator();
+                    if menu_entry(
+                        ui,
+                        has_map,
+                        entry(&ic.blank, "Disk Map", "Ctrl+M").selected(show_map),
+                        "show which file owns each block",
+                        "open a disk image to see its map",
+                    ) {
+                        show_map = !show_map;
+                    }
+                });
+
                 ui.separator();
-                if ui.button("Help").clicked() {
-                    show_help = true;
-                }
+                ui.menu_button("Tools", |ui| {
+                    ui.set_min_width(180.0);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    if menu_entry(
+                        ui,
+                        is_disk,
+                        entry(&ic.blank, "Validate / Repair", "Ctrl+L"),
+                        "check every file's blocks against the BAM, and repair them",
+                        "open a D64, D71, D81 or CMD-native D2M to validate it",
+                    ) {
+                        acts.push(Act::Validate);
+                    }
+                    if menu_entry(
+                        ui,
+                        has_map,
+                        entry(&ic.blank, "Sector Editor", "Ctrl+E").selected(show_sector),
+                        "view and edit any track and sector in hex",
+                        "open a disk image to edit its sectors",
+                    ) {
+                        show_sector = !show_sector;
+                    }
+                    ui.separator();
+                    if menu_entry(
+                        ui,
+                        can_compare,
+                        entry(&ic.blank, "Compare Panes", "Ctrl+D").selected(show_compare),
+                        "list which files match, differ, or are on only one side",
+                        "open a disk or archive in each pane (Dual Panes) to compare them",
+                    ) {
+                        show_compare = !show_compare;
+                    }
+                    if menu_entry(
+                        ui,
+                        true,
+                        entry(&ic.blank, "Find in Files…", "Ctrl+F").selected(show_find),
+                        "look for text or hex bytes inside every file listed",
+                        "",
+                    ) {
+                        show_find = !show_find;
+                    }
+                    ui.separator();
+                    if menu_entry(
+                        ui,
+                        true,
+                        entry(&ic.blank, "BASIC Editor…", "Ctrl+B").selected(show_basic),
+                        "write a BASIC program, or edit the selected one",
+                        "",
+                    ) {
+                        show_basic = !show_basic;
+                    }
+                    if menu_entry(
+                        ui,
+                        can_run,
+                        entry(&ic.blank, "Run in VICE", "Ctrl+R"),
+                        "start this disk in the VICE emulator, loading the selected \
+                         program or else the first one",
+                        "open a disk or select a program to run it in VICE",
+                    ) {
+                        acts.push(Act::RunVice);
+                    }
+                    ui.separator();
+                    if menu_entry(
+                        ui,
+                        true,
+                        entry(&ic.blank, "Copy Window…", "Ctrl+K").selected(show_copy),
+                        "copy files to and from a second disk",
+                        "",
+                    ) {
+                        show_copy = !show_copy;
+                    }
+                });
+
+                ui.separator();
+                let help = ui.menu_button("Help", |ui| {
+                    ui.set_min_width(180.0);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    for (page, label, keys) in [
+                        (HelpPage::Manual, "Manual", "F1"),
+                        (HelpPage::Shortcuts, "Keyboard Shortcuts", ""),
+                        (HelpPage::About, "About Sector64", ""),
+                    ] {
+                        if menu_entry(ui, true, entry(&ic.blank, label, keys), "", "") {
+                            help_page = page;
+                            show_help = true;
+                        }
+                    }
+                });
+                let menus_w = help.response.rect.max.x - menus_x;
+                ui.ctx().data_mut(|d| d.insert_temp(menus_id, menus_w));
             });
             ui.add_space(2.0);
         });
+        if quit {
+            // Goes through the same unsaved-changes check as the window's
+            // close button.
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
 
         egui::TopBottomPanel::bottom("bottom").show(ctx, |ui| {
             ui.add_space(2.0);
@@ -3326,8 +3452,8 @@ impl App {
             }
         }
 
-        // Help / user manual window — a resizable, scrollable panel showing the
-        // embedded MANUAL.md. Esc or the Close button dismisses it.
+        // Help window: the user manual, its keyboard shortcuts, or what this
+        // program is. Esc or the Close button dismisses it.
         if show_help {
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 show_help = false;
@@ -3346,7 +3472,15 @@ impl App {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("User manual").color(c64::TEXT_DIM));
+                    for (page, label) in [
+                        (HelpPage::Manual, "MANUAL"),
+                        (HelpPage::Shortcuts, "SHORTCUTS"),
+                        (HelpPage::About, "ABOUT"),
+                    ] {
+                        if ui.selectable_label(help_page == page, label).clicked() {
+                            help_page = page;
+                        }
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Close").clicked() {
                             show_help = false;
@@ -3355,13 +3489,23 @@ impl App {
                 });
                 ui.separator();
                 egui::ScrollArea::vertical()
-                    .id_salt("help_scroll")
+                    .id_salt(("help_scroll", help_page))
                     .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(MANUAL).monospace())
-                                .wrap_mode(egui::TextWrapMode::Extend),
-                        );
+                    .show(ui, |ui| match help_page {
+                        HelpPage::Manual => {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(MANUAL).monospace())
+                                    .wrap_mode(egui::TextWrapMode::Extend),
+                            );
+                        }
+                        HelpPage::Shortcuts => {
+                            let text = manual_section("KEYBOARD SHORTCUTS");
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(text).monospace())
+                                    .wrap_mode(egui::TextWrapMode::Extend),
+                            );
+                        }
+                        HelpPage::About => about_ui(ui),
                     });
             });
         }
@@ -3786,6 +3930,24 @@ impl App {
             if self.dual && i.key_pressed(egui::Key::F5) {
                 acts.push(Act::CopyToPane);
             }
+            if i.modifiers.command && i.key_pressed(egui::Key::P) {
+                show_preview = !show_preview;
+                if show_preview {
+                    dual = false;
+                }
+            }
+            // A Mac's application menu handles Cmd+Q itself.
+            if !cfg!(target_os = "macos") && i.modifiers.command && i.key_pressed(egui::Key::Q) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            if i.key_pressed(egui::Key::F1) {
+                if show_help && help_page == HelpPage::Manual {
+                    show_help = false;
+                } else {
+                    help_page = HelpPage::Manual;
+                    show_help = true;
+                }
+            }
             if !typing {
                 // Undo / redo (text fields keep Ctrl+Z for their own text).
                 if i.modifiers.command && i.key_pressed(egui::Key::Z) {
@@ -3797,6 +3959,10 @@ impl App {
                 }
                 if i.modifiers.command && i.key_pressed(egui::Key::Y) {
                     acts.push(Act::Redo);
+                }
+                // Text fields keep Ctrl+A for selecting their own text.
+                if i.modifiers.command && i.key_pressed(egui::Key::A) && n > 0 {
+                    acts.push(Act::SelectAll);
                 }
                 if i.key_pressed(egui::Key::Enter) && sel_extractable {
                     acts.push(Act::ExtractSelected);
@@ -3814,14 +3980,12 @@ impl App {
                     rename_focus = true;
                 }
                 // Arrow keys move through the current display order.
-                let cur_pos = sel_now.and_then(|s| order.iter().position(|&x| x == s));
-                if n > 0 && i.key_pressed(egui::Key::ArrowDown) {
-                    let p = cur_pos.map_or(0, |p| (p + 1).min(n - 1));
-                    acts.push(Act::Select(order[p]));
-                }
-                if n > 0 && i.key_pressed(egui::Key::ArrowUp) {
-                    let p = cur_pos.map_or(0, |p| p.saturating_sub(1));
-                    acts.push(Act::Select(order[p]));
+                // The filter can hide rows, so clamp to what's shown.
+                if i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp) {
+                    let down = i.key_pressed(egui::Key::ArrowDown);
+                    if let Some(p) = step_in_order(&order, sel_now, down) {
+                        acts.push(Act::Select(order[p]));
+                    }
                 }
             }
         });
@@ -3846,6 +4010,7 @@ impl App {
         self.pane.pic_cache = pic_cache;
         self.show_preview = show_preview;
         self.show_help = show_help;
+        self.help_page = help_page;
         self.show_map = show_map;
         self.show_sector = show_sector;
         if show_find && !self.show_find {
@@ -8023,6 +8188,200 @@ mod tests {
                 assert!(!nodes.is_empty());
             }
             _ => panic!("a Zip-Code set must open as a read-only disk"),
+        }
+    }
+
+    #[test]
+    fn arrow_keys_stay_inside_the_filtered_listing() {
+        // Up and Down step through the rows shown, and stop at the ends.
+        let order = [4, 1, 7];
+        assert_eq!(step_in_order(&order, None, true), Some(0));
+        assert_eq!(step_in_order(&order, Some(1), true), Some(2));
+        assert_eq!(step_in_order(&order, Some(7), true), Some(2));
+        assert_eq!(step_in_order(&order, Some(4), false), Some(0));
+        assert_eq!(step_in_order(&order, Some(9), false), Some(0));
+        assert_eq!(step_in_order(&[], Some(3), true), None);
+
+        // These used to index past the end of the filtered list and panic.
+        let ctx = egui::Context::default();
+        let mut app = app_with_disk();
+        for name in ["ALPHA", "BETA", "GAMMA", "DELTA"] {
+            app.add(name.into(), &[1, 2, 3]);
+        }
+        let press = |app: &mut App, key: egui::Key| {
+            let input = egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| app.frame_ui(ctx));
+        };
+        app.pane.filter = "zzz".into();
+        app.pane.selected = Some(0);
+        press(&mut app, egui::Key::ArrowDown);
+        press(&mut app, egui::Key::ArrowUp);
+        app.pane.filter = "ta".into(); // BETA and DELTA
+        let beta = names(&app).iter().position(|n| n == "BETA").unwrap();
+        let delta = names(&app).iter().position(|n| n == "DELTA").unwrap();
+        app.pane.selected = Some(delta);
+        press(&mut app, egui::Key::ArrowDown);
+        assert_eq!(
+            app.pane.selected,
+            Some(delta),
+            "stays on the last row shown"
+        );
+        press(&mut app, egui::Key::ArrowUp);
+        assert_eq!(app.pane.selected, Some(beta));
+    }
+
+    #[test]
+    fn select_all_marks_the_files_the_filter_shows() {
+        let mut app = app_with_disk();
+        for name in ["ALPHA", "BETA", "GAMMA", "DELTA"] {
+            app.add(name.into(), &[1, 2, 3]);
+        }
+        app.pane.filter = "ta".into();
+        app.apply(Act::SelectAll);
+        let marked: Vec<String> = app
+            .pane
+            .marked
+            .iter()
+            .map(|&i| app.pane.nodes[i].name.clone())
+            .collect();
+        assert_eq!(marked.len(), 2);
+        assert!(marked.contains(&"BETA".to_string()) && marked.contains(&"DELTA".to_string()));
+        assert!(app.pane.marked.contains(&app.pane.selected.unwrap()));
+        app.pane.filter.clear();
+        app.apply(Act::SelectAll);
+        assert_eq!(app.pane.marked.len(), 4);
+    }
+
+    #[test]
+    fn help_shows_the_manuals_shortcut_section() {
+        let keys = manual_section("KEYBOARD SHORTCUTS");
+        assert!(keys.contains("Ctrl+O") && keys.contains("F1"), "{keys}");
+        assert!(
+            !keys.contains("KEYBOARD SHORTCUTS"),
+            "the heading is left out"
+        );
+        assert!(
+            !keys.contains("SETTINGS THAT PERSIST"),
+            "stops at the next section"
+        );
+        assert_eq!(manual_section("NO SUCH SECTION"), "");
+    }
+
+    /// Every text the UI drew in `out`, with where it was drawn.
+    fn drawn_texts(out: &egui::FullOutput) -> Vec<(String, egui::Rect)> {
+        fn walk(shape: &egui::Shape, acc: &mut Vec<(String, egui::Rect)>) {
+            match shape {
+                egui::Shape::Text(t) => {
+                    acc.push((t.galley.text().to_string(), t.visual_bounding_rect()))
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, acc)),
+                _ => {}
+            }
+        }
+        let mut acc = Vec::new();
+        for cs in &out.shapes {
+            walk(&cs.shape, &mut acc);
+        }
+        acc
+    }
+
+    #[test]
+    fn the_title_gives_way_to_the_menus_in_a_narrow_window() {
+        for (w, title) in [(1100.0, true), (520.0, false)] {
+            let ctx = egui::Context::default();
+            load_c64_font(&ctx);
+            apply_c64_theme(&ctx);
+            let mut app = app_with_disk();
+            let input = || egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(w, 640.0),
+                )),
+                ..Default::default()
+            };
+            let _ = ctx.run(input(), |ctx| app.frame_ui(ctx));
+            let out = ctx.run(input(), |ctx| app.frame_ui(ctx));
+            let texts = drawn_texts(&out);
+            let shown = |name: &str| {
+                texts
+                    .iter()
+                    .any(|(t, r)| t == name && r.max.x <= w && r.min.y < 40.0)
+            };
+            assert_eq!(shown("SECTOR64"), title, "{w} px wide");
+            for menu in ["File", "Edit", "View", "Tools", "Help"] {
+                assert!(shown(menu), "{w} px wide: {menu} is cut off");
+            }
+        }
+    }
+
+    #[test]
+    fn every_menu_opens_whole_inside_a_narrow_window() {
+        let menus: [(&str, &[&str]); 5] = [
+            ("File", &["New ▸", "Open…", "Save As…", "Extract All"]),
+            (
+                "Edit",
+                &["Undo", "Redo", "Rename", "Select All", "Copy to Other Pane"],
+            ),
+            ("View", &["Preview", "Dual Panes", "Disk Map"]),
+            (
+                "Tools",
+                &["Validate / Repair", "Find in Files…", "Run in VICE"],
+            ),
+            ("Help", &["Manual", "Keyboard Shortcuts", "About Sector64"]),
+        ];
+        let (w, h) = (520.0, 640.0);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+        for (menu, items) in menus {
+            let ctx = egui::Context::default();
+            load_c64_font(&ctx);
+            apply_c64_theme(&ctx);
+            let mut app = app_with_disk();
+            app.add("HELLO".into(), &[1, 2, 3]);
+            let frame = |app: &mut App, events: Vec<egui::Event>| {
+                let input = egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                };
+                ctx.run(input, |ctx| app.frame_ui(ctx))
+            };
+            // The first frame measures the menus, the second lays them out.
+            frame(&mut app, vec![]);
+            let out = frame(&mut app, vec![]);
+            let (_, at) = drawn_texts(&out)
+                .into_iter()
+                .find(|(t, _)| t == menu)
+                .unwrap_or_else(|| panic!("no {menu} menu in the bar"));
+            let pos = at.center();
+            let button = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame(&mut app, vec![egui::Event::PointerMoved(pos), button(true)]);
+            frame(&mut app, vec![button(false)]);
+            let out = frame(&mut app, vec![]);
+            let texts = drawn_texts(&out);
+            for item in items {
+                let (_, r) = texts
+                    .iter()
+                    .find(|(t, _)| t == item)
+                    .unwrap_or_else(|| panic!("{menu} has no \"{item}\""));
+                assert!(
+                    screen.contains_rect(*r),
+                    "{menu} > {item} is drawn at {r:?}, outside the {w}x{h} window"
+                );
+            }
         }
     }
 }
