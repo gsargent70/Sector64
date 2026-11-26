@@ -36,6 +36,8 @@ the core plus one front end.
 | APP-11 | Sign and notarize the Mac app | S once enrolled; needs an Apple Developer account ($99/yr) |
 | APP-12 | Test the Mac GUI by remote control in CI (or a Mac over SSH): file dialogs, drag-and-drop, shortcuts, Run in VICE | M; less urgent now v1.0.11 was tried by hand; follow-up to APP-09; needs the runners to allow scripted clicks and keys, not tried yet |
 | DISK-08 | Sector editor: type text into the PETSCII column, and search the disk for bytes or text | M; follow-up to DISK-05 (today it edits in hex only) |
+| CLI-06 | Search from the command line (`s64find`): text or hex inside the files of disks and archives | S; core done in VIEW-10 |
+| APP-13 | Bug: turning the preview pane on when the window is too narrow for it and the list leaves part of the window unpainted (other windows show through) | S; reported by the user, seen while testing VIEW-10 |
 
 ---
 
@@ -75,7 +77,7 @@ Seeing inside files without extracting them.
 | VIEW-07 | PIC: Koala, Art Studio, Advanced Art Studio, Doodle! | M | Done v1.0.8 | pixel-checked against VICE |
 | VIEW-08 | geoPaint pictures in PIC | L | Idea | needs a GEOS geoPaint decoder first |
 | VIEW-09 | SID music info: title, author, release, load/init/play addresses, songs | S | Idea | |
-| VIEW-10 | Search by name across a listing, or inside files for text or hex bytes | M | Idea | |
+| VIEW-10 | Search by name across a listing, or inside files for text or hex bytes | M | Done (unreleased, #51) | core `sector64::search`; GUI Find window (Ctrl+F) shows matches in the hex preview or the Sector Editor |
 
 ## 3. Editing (EDIT)
 
@@ -139,7 +141,7 @@ Checking and inspecting a disk's structure.
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Next:** EDIT-07, VIEW-10, FMT-13.
+1. **Next:** APP-13 (preview pane bug), EDIT-07, FMT-13.
 
 ## Done by release
 
