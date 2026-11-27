@@ -307,6 +307,7 @@ cargo run --bin s64val -- --map disk.d64                 # draw the block map
 cargo run --bin s64basic -- menu.txt menu.prg            # BASIC text to a PRG
 cargo run --bin s64cmp -- a.d64 b.d64                    # compare two disks
 cargo run --bin s64conv -- disk.d64 disk.d81             # convert to another format
+cargo run --bin s64find -- "high score" *.d64            # search inside the files
 cargo run --bin s64write -- format disk.d64 "my disk" 01 # create a blank image
 cargo run --bin s64write -- add disk.d64 hello hello.prg # write a host file in
 cargo run --bin s64write -- move disk.d64 hello 1        # first in the directory
@@ -386,6 +387,8 @@ against a real disk.
 | `src/bin/s64cmp.rs` | CLI: compare two disks or archives |
 | `src/convert.rs`   | one disk or archive written out as another format |
 | `src/bin/s64conv.rs` | CLI: convert a disk or archive to another format |
+| `src/search.rs`    | text (any C64 case) and hex-pattern search inside files |
+| `src/bin/s64find.rs` | CLI: search disks and archives for text or bytes |
 | `src/diredit.rs`   | directory editing: reorder, separators, lock, disk name and ID |
 | `src/bin/s64write.rs` | CLI: format, add, delete, rename, and edit the directory |
 | `src/bin/s64pack.rs` | CLI: create a T64/LNX/LBR/P00 archive |
