@@ -1682,3 +1682,39 @@ fn esc_closes_one_window_per_press_front_first() {
     esc(&mut app);
     assert!(!app.show_basic && app.show_find);
 }
+
+#[test]
+fn any_listing_change_forgets_what_was_worked_out_from_the_old_one() {
+    let mut app = app_with_disk();
+    app.add("ONE".into(), &[1, 8, 0]);
+    app.add("TWO".into(), &[1, 8, 1]);
+    let stale = |app: &mut App| {
+        app.pane.hex_cache = Some((0, PreviewMode::Hex, None, "old".into()));
+        app.pane.map_cache = app.pane.map_disk().map(Disk::block_map);
+        app.pane.marked.insert(1);
+    };
+    let forgotten = |app: &App| {
+        app.pane.hex_cache.is_none() && app.pane.map_cache.is_none() && app.pane.marked.is_empty()
+    };
+    // An edit, an undo, and starting something new all go through refresh.
+    stale(&mut app);
+    app.add("THREE".into(), &[1, 8, 2]);
+    assert!(forgotten(&app));
+    stale(&mut app);
+    app.apply(Act::Undo);
+    assert!(forgotten(&app));
+    app.pane.disk.as_mut().unwrap().dirty = false;
+    stale(&mut app);
+    app.apply(Act::NewArchive);
+    assert!(forgotten(&app));
+
+    // A read-only disk (G64, D2M) opened before is gone too, so the disk
+    // map doesn't show it behind a new archive or disk.
+    for act in [Act::NewArchive, Act::Create] {
+        let mut app = App::default();
+        app.pane.ro_disk = Some(Disk::format("OLD", "01"));
+        app.pane.read_only_disk = true;
+        app.apply(act);
+        assert!(app.pane.ro_disk.is_none());
+    }
+}

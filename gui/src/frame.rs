@@ -65,9 +65,7 @@ impl App {
                 }
             }
             _ => {
-                self.pane.hex_cache = None;
-                self.pane.gfx_cache = None;
-                self.pane.pic_cache = None;
+                self.pane.drop_previews();
             }
         }
         let preview = self

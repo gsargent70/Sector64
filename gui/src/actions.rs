@@ -58,19 +58,14 @@ impl App {
         self.sector.source.clear();
         self.pane.nodes.clear();
         self.pane.selected = None;
-        self.pane.marked.clear();
         self.pane.filter.clear();
         self.pane.disk = None;
         self.pane.archive = None;
         self.pane.read_only_disk = false;
         self.pane.ro_disk = None;
-        self.pane.map_cache = None;
         self.pane.title.clear();
-        self.pane.hex_cache = None;
-        self.pane.gfx_cache = None;
-        self.pane.pic_cache = None;
+        self.pane.forget_derived();
         self.validation.clear();
-        self.pane.renaming = None;
         match open_path(path) {
             Ok(Opened::Disk(disk)) => {
                 self.pane.disk = Some(EditDisk {
@@ -287,6 +282,7 @@ impl App {
         };
         self.pane.clear_history();
         self.pane.read_only_disk = false;
+        self.pane.ro_disk = None;
         self.pane.archive = None;
         self.pane.disk = Some(EditDisk {
             disk,
@@ -294,10 +290,6 @@ impl App {
             dirty: true,
         });
         self.pane.selected = None;
-        self.pane.marked.clear();
-        self.pane.hex_cache = None;
-        self.pane.gfx_cache = None;
-        self.pane.pic_cache = None;
         self.pane.refresh();
         self.pane.opened_path = None;
         self.status = format!("Created a blank {kind} image (unsaved); Save As… to keep it");
@@ -308,13 +300,10 @@ impl App {
         self.pane.clear_history();
         self.pane.disk = None;
         self.pane.read_only_disk = false;
+        self.pane.ro_disk = None;
         self.pane.archive = Some(Vec::new());
         self.pane.archive_saved = None;
         self.pane.selected = None;
-        self.pane.marked.clear();
-        self.pane.hex_cache = None;
-        self.pane.gfx_cache = None;
-        self.pane.pic_cache = None;
         self.pane.refresh();
         self.pane.opened_path = None;
         self.status = "New archive — add files, then Save As…".into();
@@ -626,9 +615,6 @@ impl App {
                     if n == 1 { "" } else { "es" }
                 );
                 self.pane.record(before, &done);
-                self.pane.hex_cache = None;
-                self.pane.gfx_cache = None;
-                self.pane.pic_cache = None;
                 self.pane.refresh();
                 self.validate();
                 self.status = done;
@@ -818,9 +804,6 @@ impl App {
                 ed.dirty = true;
                 let done = format!("Wrote track {t}, sector {s}");
                 self.pane.record(before, &done);
-                self.pane.hex_cache = None;
-                self.pane.gfx_cache = None;
-                self.pane.pic_cache = None;
                 self.pane.refresh();
                 self.status = done;
             }
@@ -1035,9 +1018,6 @@ impl App {
         let did = if replaced { "Replaced" } else { "Added" };
         let done = format!("{did} \"{name}\" from the BASIC editor");
         self.pane.record(before, &done);
-        self.pane.hex_cache = None;
-        self.pane.gfx_cache = None;
-        self.pane.pic_cache = None;
         self.pane.refresh();
         // Selected, it's ready to preview or run.
         self.pane.selected = self.pane.nodes.iter().position(|n| n.name == name);

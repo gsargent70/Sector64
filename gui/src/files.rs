@@ -194,9 +194,6 @@ pub(crate) fn copy_rows(src: &Pane, dest: &mut Pane, rows: &[usize], dest_name: 
             before,
             &format!("Copied {} file(s) from the other pane", done.len()),
         );
-        dest.hex_cache = None;
-        dest.gfx_cache = None;
-        dest.pic_cache = None;
         dest.refresh();
     }
     copy_report(&done, &failed, dest_name)

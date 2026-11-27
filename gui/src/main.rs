@@ -436,11 +436,26 @@ impl Pane {
                 self.selected = None;
             }
         }
-        // The list was rebuilt; any in-place rename is finished and marks are
-        // dropped (indices may have shifted). The disk may have changed too.
+        // The list was rebuilt: everything worked out from the old one goes.
+        self.forget_derived();
+    }
+
+    /// Forget what was worked out from the listing as it was: the preview
+    /// pane's views, the disk map, the marks and any rename in progress
+    /// (indices may have shifted, and the disk may have changed).
+    fn forget_derived(&mut self) {
+        self.drop_previews();
         self.map_cache = None;
         self.renaming = None;
         self.marked.clear();
+    }
+
+    /// Drop the preview pane's views; they're made again for the file
+    /// selected next.
+    fn drop_previews(&mut self) {
+        self.hex_cache = None;
+        self.gfx_cache = None;
+        self.pic_cache = None;
     }
 
     /// The editable content as it is now, if a disk or new archive is open.
@@ -463,9 +478,6 @@ impl Pane {
             }
             Snapshot::Archive(files) => self.archive = Some(files),
         }
-        self.hex_cache = None;
-        self.gfx_cache = None;
-        self.pic_cache = None;
         self.refresh();
     }
 
