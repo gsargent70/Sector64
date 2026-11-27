@@ -15,7 +15,7 @@ use crate::petscii;
 const ZIPCODE_SPLITS: [(u8, u8); 4] = [(1, 8), (9, 16), (17, 25), (26, 35)];
 
 /// One file extracted from a container.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportFile {
     pub name: String,
     pub file_type: FileType,

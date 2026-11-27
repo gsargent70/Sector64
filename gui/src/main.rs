@@ -656,6 +656,9 @@ struct Pane {
     map_cache: Option<BlockMap>,
     // staging list when building a new archive
     archive: Option<Vec<ImportFile>>,
+    /// What the new archive held when it was last saved, to tell whether it
+    /// has unsaved changes (undo can step back to exactly what was saved).
+    archive_saved: Option<Vec<ImportFile>>,
     /// Edits that Undo steps back through, newest last.
     undo: Vec<UndoStep>,
     /// Edits that Redo re-applies, newest last; cleared by any new edit.
@@ -960,9 +963,30 @@ impl Pane {
             .or(self.ro_disk.as_ref())
     }
 
-    /// Whether the open disk has unsaved edits.
+    /// Whether the open disk has unsaved edits, or the new archive has files
+    /// that aren't saved as they are now.
     fn is_dirty(&self) -> bool {
-        self.disk.as_ref().is_some_and(|e| e.dirty)
+        self.disk.as_ref().is_some_and(|e| e.dirty) || self.archive_unsaved()
+    }
+
+    /// The new archive holds files, and they differ from what was saved.
+    fn archive_unsaved(&self) -> bool {
+        self.archive
+            .as_ref()
+            .is_some_and(|a| !a.is_empty() && self.archive_saved.as_ref() != Some(a))
+    }
+
+    /// How the unsaved-changes prompt names what this pane would lose:
+    /// the focused pane (`this`) or the other one, in single or dual view.
+    fn unsaved_name(&self, this: bool, dual: bool) -> &'static str {
+        match (this, dual, self.archive.is_some()) {
+            (true, false, false) => "the open disk",
+            (true, false, true) => "the new archive",
+            (true, true, false) => "this pane's disk",
+            (true, true, true) => "this pane's new archive",
+            (false, _, false) => "the other pane's disk",
+            (false, _, true) => "the other pane's new archive",
+        }
     }
 
     /// Node indices in display order: filtered by `filter` (case-insensitive
@@ -1009,7 +1033,9 @@ impl Pane {
             self.title = format!("{title}{dirty}");
             self.nodes = nodes;
         } else if let Some(stage) = &self.archive {
-            self.title = format!("New archive — {} file(s) (unsaved)", stage.len());
+            let saved = self.archive_saved.as_ref() == Some(stage);
+            let state = if saved { "saved" } else { "unsaved" };
+            self.title = format!("New archive — {} file(s) ({state})", stage.len());
             self.nodes = stage
                 .iter()
                 .map(|f| Node {
@@ -1246,6 +1272,11 @@ impl App {
                 }
             }
             Act::CopiedPath => self.status = "Copied path to clipboard".into(),
+            // (Only drops on a pane with nothing editable open get here, but
+            // check anyway.)
+            Act::OpenDropped(p, _) if self.pane.is_dirty() => {
+                self.confirm = Some(Confirm::OpenFile(p))
+            }
             Act::OpenDropped(p, ignored) => {
                 self.open(&p);
                 if ignored > 0 && !self.status.starts_with("Error") {
@@ -1381,6 +1412,7 @@ impl App {
         self.pane.disk = None;
         self.pane.read_only_disk = false;
         self.pane.archive = Some(Vec::new());
+        self.pane.archive_saved = None;
         self.pane.selected = None;
         self.pane.marked.clear();
         self.pane.hex_cache = None;
@@ -1583,6 +1615,16 @@ impl App {
         self.status = copy_rows(src, dest, &missing, side);
     }
 
+    /// Save this pane: the disk where it came from (or Save As if it's
+    /// new), or the new archive through Save As.
+    fn save_pane(&mut self) {
+        if self.pane.archive.is_some() {
+            self.save_archive();
+        } else {
+            self.save(false);
+        }
+    }
+
     fn save_archive(&mut self) {
         let Some(stage) = &self.pane.archive else {
             return;
@@ -1620,7 +1662,11 @@ impl App {
             }
         };
         match std::fs::write(&path, &bytes) {
-            Ok(()) => self.status = format!("Saved {} ({} bytes)", path.display(), bytes.len()),
+            Ok(()) => {
+                self.pane.archive_saved = self.pane.archive.clone();
+                self.pane.refresh();
+                self.status = format!("Saved {} ({} bytes)", path.display(), bytes.len());
+            }
             Err(e) => self.status = format!("Save failed: {e}"),
         }
     }
@@ -3606,19 +3652,15 @@ impl App {
                 let back_dirty = quitting && self.back.is_dirty();
                 let mut which = Vec::new();
                 if self.pane.is_dirty() {
-                    which.push(if self.dual {
-                        "this pane's disk"
-                    } else {
-                        "the open disk"
-                    });
+                    which.push(self.pane.unsaved_name(true, self.dual));
                 }
                 if back_dirty {
-                    which.push("the other pane's disk");
+                    which.push(self.back.unsaved_name(false, self.dual));
                 }
                 ui.label(unsaved_message(&which));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if (is_disk || back_dirty) && ui.button("💾 Save first").clicked() {
+                    if ui.button("💾 Save first").clicked() {
                         action = Some(2);
                     }
                     if ui.button("Discard").clicked() {
@@ -3639,6 +3681,7 @@ impl App {
                             if let Some(ed) = &mut pane.disk {
                                 ed.dirty = false;
                             }
+                            pane.archive_saved = pane.archive.clone();
                         }
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -3647,13 +3690,13 @@ impl App {
                 Some(1) => self.confirm = None,
                 Some(2) => {
                     if self.pane.is_dirty() {
-                        self.save(false);
+                        self.save_pane();
                     }
                     let quitting = matches!(self.confirm, Some(Confirm::Quit));
                     if quitting && self.back.is_dirty() {
                         // Save it as the focused pane, then swap back.
                         std::mem::swap(&mut self.pane, &mut self.back);
-                        self.save(false);
+                        self.save_pane();
                         std::mem::swap(&mut self.pane, &mut self.back);
                     }
                     let unsaved = self.pane.is_dirty() || quitting && self.back.is_dirty();
@@ -7737,6 +7780,11 @@ mod tests {
         app.undo();
         assert_eq!(names(&app), ["A"]);
         app.apply(Act::NewArchive);
+        assert!(
+            matches!(app.confirm, Some(Confirm::NewArchive)),
+            "asks first"
+        );
+        app.new_archive(); // what Discard does
         assert!(app.pane.undo.is_empty() && app.pane.redo.is_empty());
     }
 
@@ -8095,6 +8143,53 @@ mod tests {
             walk(&cs.shape, &mut acc);
         }
         acc
+    }
+
+    #[test]
+    fn a_new_archive_with_files_counts_as_unsaved_until_saved() {
+        let mut app = App::default();
+        app.apply(Act::NewArchive);
+        assert!(!app.pane.is_dirty(), "an empty archive has nothing to lose");
+        app.add("ONE".into(), &[1, 8, 0]);
+        assert!(app.pane.is_dirty());
+        assert!(app.pane.title.ends_with("(unsaved)"), "{}", app.pane.title);
+        assert_eq!(
+            unsaved_message(&[app.pane.unsaved_name(true, false)]),
+            "The new archive has unsaved changes."
+        );
+
+        // Open, New disk and New archive all ask first.
+        app.apply(Act::OpenDropped(PathBuf::from("x.d64"), 0));
+        assert!(matches!(app.confirm, Some(Confirm::OpenFile(_))));
+        for act in [Act::Create, Act::NewArchive] {
+            app.confirm = None;
+            app.apply(act);
+            assert!(app.confirm.is_some());
+            assert_eq!(app.pane.nodes.len(), 1, "nothing replaced yet");
+        }
+        app.confirm = None;
+
+        // Once saved (as save_archive records it), it's clean, until it
+        // changes; undoing back to what was saved makes it clean again.
+        app.pane.archive_saved = app.pane.archive.clone();
+        app.pane.refresh();
+        assert!(!app.pane.is_dirty());
+        assert!(app.pane.title.ends_with("(saved)"), "{}", app.pane.title);
+        app.add("TWO".into(), &[1, 8, 1]);
+        assert!(app.pane.is_dirty());
+        app.apply(Act::Undo);
+        assert!(!app.pane.is_dirty());
+
+        // In dual view the prompt says which pane's archive.
+        assert_eq!(app.pane.unsaved_name(true, true), "this pane's new archive");
+        assert_eq!(
+            app.pane.unsaved_name(false, true),
+            "the other pane's new archive"
+        );
+        assert_eq!(
+            App::default().pane.unsaved_name(false, true),
+            "the other pane's disk"
+        );
     }
 
     #[test]

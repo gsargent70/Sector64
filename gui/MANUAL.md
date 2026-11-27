@@ -499,13 +499,16 @@ UNDO AND REDO
 
 THE UNSAVED-CHANGES GUARD
 
-  If a disk has unsaved edits and you try to open another file,
-  start a new disk or archive, or close the window, Sector64 asks
-  first:
-      Save first   — saves, then continues.
+  If a disk has unsaved edits, or a new archive has files that
+  aren't saved, and you try to open another file, start a new
+  disk or archive, or close the window, Sector64 asks first:
+      Save first   — saves, then continues. A new archive asks
+                     where to save it, as Save As… does.
       Discard      — throws the edits away and continues.
       Cancel       — stays where you are.
-  Closing the window is held until you answer.
+  Closing the window is held until you answer. A new archive's
+  title says "(unsaved)" or "(saved)"; undoing back to what was
+  saved counts as saved.
 
 
 ----------------------------------------------------------------
