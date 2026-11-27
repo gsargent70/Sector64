@@ -7,7 +7,7 @@ archives:
 - an egui GUI in `gui/` (separate workspace member)
 
 It runs on Linux, Windows and (experimental) macOS. Releases are on GitHub
-(`gsargent70/Sector64`; latest v1.0.12). Licence: MIT OR Apache-2.0.
+(`gsargent70/Sector64`; latest v1.0.13). Licence: MIT OR Apache-2.0.
 
 ## Build / run / test
 
