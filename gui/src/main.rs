@@ -500,6 +500,10 @@ enum Confirm {
     OpenFile(PathBuf),
     /// Quit once the user discards changes.
     Quit,
+    /// Start the new disk set up in the New Disk dialog.
+    NewDisk,
+    /// Start a new, empty archive.
+    NewArchive,
 }
 
 /// The user manual, embedded so Help works with no external files.
@@ -840,6 +844,8 @@ struct App {
     find: FindState,
     /// The BASIC editor: whether its window is open, and its program.
     show_basic: bool,
+    /// The New Disk dialog is open.
+    show_new_disk: bool,
     basic: BasicEditor,
     // preview/validation pane
     /// How the preview pane renders bytes (hex or PETSCII text).
@@ -1317,24 +1323,8 @@ impl App {
             Act::Sort(key) => self.pane.cycle_sort(key),
             Act::ExtractSelected => self.extract_selected(),
             Act::ExtractAll => self.extract_all(),
-            Act::Create => {
-                self.sector.source.clear();
-                let disk = match self.new_fmt {
-                    1 => Disk::format_d71(&self.new_name, &self.new_id),
-                    2 => Disk::format_d81(&self.new_name, &self.new_id),
-                    _ => Disk::format(&self.new_name, &self.new_id),
-                };
-                self.pane.clear_history();
-                self.pane.disk = Some(EditDisk {
-                    disk,
-                    path: None,
-                    dirty: true,
-                });
-                self.pane.selected = None;
-                self.pane.refresh();
-                self.pane.opened_path = None;
-                self.status = "Created a blank image (unsaved)".into();
-            }
+            Act::Create if self.pane.is_dirty() => self.confirm = Some(Confirm::NewDisk),
+            Act::Create => self.create_disk(),
             Act::AddFile => {
                 if let Some(paths) = rfd::FileDialog::new().pick_files() {
                     self.add_paths(&paths);
@@ -1351,22 +1341,54 @@ impl App {
             Act::BasicAdd => self.basic_add(),
             Act::Validate => self.validate(),
             Act::Repair => self.repair_disk(),
-            Act::NewArchive => {
-                self.pane.clear_history();
-                self.pane.disk = None;
-                self.pane.read_only_disk = false;
-                self.pane.archive = Some(Vec::new());
-                self.pane.selected = None;
-                self.pane.hex_cache = None;
-                self.pane.gfx_cache = None;
-                self.pane.pic_cache = None;
-                self.pane.refresh();
-                self.pane.opened_path = None;
-                self.status = "New archive — add files, then Save As…".into();
-            }
+            Act::NewArchive if self.pane.is_dirty() => self.confirm = Some(Confirm::NewArchive),
+            Act::NewArchive => self.new_archive(),
             Act::SaveArchiveAs => self.save_archive(),
             Act::RunVice => self.run_vice(),
         }
+    }
+
+    /// Replace this pane's contents with a blank disk, set up in the New
+    /// Disk dialog (`new_name`, `new_id`, `new_fmt`).
+    fn create_disk(&mut self) {
+        self.sector.source.clear();
+        let (disk, kind) = match self.new_fmt {
+            1 => (Disk::format_d71(&self.new_name, &self.new_id), "D71"),
+            2 => (Disk::format_d81(&self.new_name, &self.new_id), "D81"),
+            _ => (Disk::format(&self.new_name, &self.new_id), "D64"),
+        };
+        self.pane.clear_history();
+        self.pane.read_only_disk = false;
+        self.pane.archive = None;
+        self.pane.disk = Some(EditDisk {
+            disk,
+            path: None,
+            dirty: true,
+        });
+        self.pane.selected = None;
+        self.pane.marked.clear();
+        self.pane.hex_cache = None;
+        self.pane.gfx_cache = None;
+        self.pane.pic_cache = None;
+        self.pane.refresh();
+        self.pane.opened_path = None;
+        self.status = format!("Created a blank {kind} image (unsaved); Save As… to keep it");
+    }
+
+    /// Replace this pane's contents with a new, empty archive.
+    fn new_archive(&mut self) {
+        self.pane.clear_history();
+        self.pane.disk = None;
+        self.pane.read_only_disk = false;
+        self.pane.archive = Some(Vec::new());
+        self.pane.selected = None;
+        self.pane.marked.clear();
+        self.pane.hex_cache = None;
+        self.pane.gfx_cache = None;
+        self.pane.pic_cache = None;
+        self.pane.refresh();
+        self.pane.opened_path = None;
+        self.status = "New archive — add files, then Save As…".into();
     }
 
     /// What Run in VICE would start, or why there's nothing to run.
@@ -2526,6 +2548,7 @@ impl App {
         let mut compare_all = self.compare_all;
         let can_run = self.vice_plan().is_ok();
         let mut show_basic = self.show_basic;
+        let mut show_new_disk = self.show_new_disk;
         let mut basic = std::mem::take(&mut self.basic);
         let mut dual = self.dual;
         let back_editable = self.back.editable();
@@ -2564,31 +2587,27 @@ impl App {
                     ui.set_min_width(180.0);
                     // Grow the menu to fit rather than wrap an item's name.
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    // New ▸ (disk formats + empty archive)
+                    // New ▸ (a disk image, set up in a dialog, or an archive)
                     egui::menu::menu_custom_button(ui, icon_button(&ic.doc, "New ▸"), |ui| {
                         ui.set_min_width(200.0);
-                        ui.label(egui::RichText::new("New disk image").color(c64::TEXT_DIM));
-                        ui.horizontal(|ui| {
-                            ui.label("name");
-                            ui.add(egui::TextEdit::singleline(&mut new_name).desired_width(120.0));
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("id  ");
-                            ui.add(egui::TextEdit::singleline(&mut new_id).desired_width(40.0));
-                        });
-                        ui.horizontal(|ui| {
-                            for (i, label) in ["D64", "D71", "D81"].iter().enumerate() {
-                                if ui.button(*label).clicked() {
-                                    new_fmt = i;
-                                    acts.push(Act::Create);
-                                    ui.close_menu();
-                                }
-                            }
-                        });
-                        ui.separator();
-                        if ui.button("Empty archive").clicked() {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                        if menu_entry(
+                            ui,
+                            true,
+                            entry(&ic.floppy, "Disk Image…", "Ctrl+N"),
+                            "a blank D64, D71 or D81: pick its name, ID and format",
+                            "",
+                        ) {
+                            show_new_disk = true;
+                        }
+                        if menu_entry(
+                            ui,
+                            true,
+                            entry(&ic.blank, "Empty Archive", ""),
+                            "add files to it, then Save As… a T64, LNX, LBR or P00",
+                            "",
+                        ) {
                             acts.push(Act::NewArchive);
-                            ui.close_menu();
                         }
                     });
                     if menu_entry(ui, true, entry(&ic.folder, "Open…", "Ctrl+O"), "", "") {
@@ -3229,6 +3248,43 @@ impl App {
             }
         }
 
+        // New Disk dialog. It takes Esc and Enter for itself, so nothing
+        // behind it closes or extracts while it's open.
+        if show_new_disk {
+            let (cancel, enter) = ctx.input_mut(|i| {
+                (
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                )
+            });
+            let mut create = enter;
+            let mut close = cancel;
+            // Put the cursor in the name field when the dialog opens.
+            let was_open = egui::Id::new("new_disk_was_open");
+            let first = !ctx.data_mut(|d| d.get_temp(was_open).unwrap_or(false));
+            ctx.data_mut(|d| d.insert_temp(was_open, true));
+            egui::Window::new(
+                egui::RichText::new("NEW DISK IMAGE")
+                    .color(c64::ACCENT)
+                    .strong(),
+            )
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                let form = (&mut new_name, &mut new_id, &mut new_fmt);
+                new_disk_ui(ui, form, first, &mut create, &mut close)
+            });
+            if create {
+                acts.push(Act::Create);
+                close = true;
+            }
+            if close {
+                show_new_disk = false;
+                ctx.data_mut(|d| d.remove::<bool>(was_open));
+            }
+        }
+
         // Validation window: what the check found, and the fixes it offers.
         if self.show_validation {
             if !show_help
@@ -3576,6 +3632,8 @@ impl App {
             match action {
                 Some(0) => match self.confirm.take() {
                     Some(Confirm::OpenFile(p)) => self.open(&p),
+                    Some(Confirm::NewDisk) => self.create_disk(),
+                    Some(Confirm::NewArchive) => self.new_archive(),
                     Some(Confirm::Quit) => {
                         for pane in [&mut self.pane, &mut self.back] {
                             if let Some(ed) = &mut pane.disk {
@@ -3602,6 +3660,8 @@ impl App {
                     if !unsaved {
                         match self.confirm.take() {
                             Some(Confirm::OpenFile(p)) => self.open(&p),
+                            Some(Confirm::NewDisk) => self.create_disk(),
+                            Some(Confirm::NewArchive) => self.new_archive(),
                             Some(Confirm::Quit) => {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close)
                             }
@@ -3661,6 +3721,9 @@ impl App {
         ctx.input(|i| {
             if i.modifiers.command && i.key_pressed(egui::Key::O) {
                 acts.push(Act::OpenDialog);
+            }
+            if i.modifiers.command && i.key_pressed(egui::Key::N) {
+                show_new_disk = true;
             }
             if i.modifiers.command && i.key_pressed(egui::Key::S) && is_disk {
                 acts.push(Act::Save);
@@ -3786,6 +3849,7 @@ impl App {
         self.show_compare = show_compare;
         self.compare_all = compare_all;
         self.show_basic = show_basic;
+        self.show_new_disk = show_new_disk;
         self.basic = basic;
         self.dual = dual;
         for act in acts {
@@ -6373,6 +6437,65 @@ fn node_file(node: &Node) -> Result<ImportFile, String> {
 
 /// What the unsaved-changes prompt says, given which disks have unsaved
 /// changes (e.g. "the open disk").
+/// The disk formats File > New > Disk Image offers, by `new_fmt`.
+const NEW_DISK_FORMATS: [(&str, &str); 3] = [
+    ("D64", "1541, 664 blocks free"),
+    ("D71", "1571, 1328 blocks free"),
+    ("D81", "1581, 3160 blocks free"),
+];
+
+/// The New Disk dialog's contents: name, ID, format, and Create / Cancel.
+/// `first` is true on the frame it opens, to put the cursor in the name.
+fn new_disk_ui(
+    ui: &mut egui::Ui,
+    (name, id, fmt): (&mut String, &mut String, &mut usize),
+    first: bool,
+    create: &mut bool,
+    close: &mut bool,
+) {
+    // One line per format: grow the window rather than wrap them.
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    egui::Grid::new("new_disk_grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label("Disk name");
+            let field = ui.add(
+                egui::TextEdit::singleline(name)
+                    .char_limit(16)
+                    .desired_width(180.0),
+            );
+            if first {
+                field.request_focus();
+            }
+            ui.end_row();
+            ui.label("ID");
+            ui.add(
+                egui::TextEdit::singleline(id)
+                    .char_limit(2)
+                    .desired_width(40.0),
+            )
+            .on_hover_text("two characters, shown after the name in the directory");
+            ui.end_row();
+        });
+    // The formats go below, across the whole width, so the dialog still
+    // fits a narrow window.
+    ui.add_space(8.0);
+    ui.label("Format");
+    for (i, (label, about)) in NEW_DISK_FORMATS.iter().enumerate() {
+        ui.radio_value(fmt, i, format!("{label}  {about}"));
+    }
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        if ui.button("Create").clicked() {
+            *create = true;
+        }
+        if ui.button("Cancel").clicked() {
+            *close = true;
+        }
+    });
+}
+
 fn unsaved_message(which: &[&str]) -> String {
     let list = match which {
         [] => "Nothing".to_string(),
@@ -6967,6 +7090,7 @@ mod tests {
 
         // Into a new archive, with the bytes and type.
         app.apply(Act::FocusOther);
+        app.pane.disk.as_mut().unwrap().dirty = false; // or it asks first
         app.apply(Act::NewArchive);
         app.apply(Act::FocusOther);
         app.apply(Act::Select(1));
@@ -7147,6 +7271,7 @@ mod tests {
         assert_eq!(names(&app), ["HELLO", "CODE", "STUB"]);
 
         // A new archive works too.
+        app.pane.disk.as_mut().unwrap().dirty = false; // or it asks first
         app.apply(Act::NewArchive);
         app.basic.set_text("10 END".into(), Some(0x1001));
         app.basic.name = "vic".into();
@@ -7970,6 +8095,114 @@ mod tests {
             walk(&cs.shape, &mut acc);
         }
         acc
+    }
+
+    #[test]
+    fn ctrl_n_opens_the_new_disk_dialog_and_enter_creates_the_disk() {
+        let ctx = egui::Context::default();
+        load_c64_font(&ctx);
+        apply_c64_theme(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(520.0, 640.0));
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let frame = |app: &mut App, events: Vec<egui::Event>| {
+            let modifiers = match events.first() {
+                Some(egui::Event::Key { modifiers, .. }) => *modifiers,
+                _ => egui::Modifiers::NONE,
+            };
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                modifiers,
+                ..Default::default()
+            };
+            ctx.run(input, |ctx| app.frame_ui(ctx))
+        };
+        let mut app = App::default();
+        let _ = frame(&mut app, vec![key(egui::Key::N, egui::Modifiers::COMMAND)]);
+        assert!(app.show_new_disk);
+        // It fits in a narrow window, with the cursor in the name field.
+        // (egui takes a few frames to size a new window and centre it.)
+        for _ in 0..3 {
+            let _ = frame(&mut app, vec![]);
+        }
+        let out = frame(&mut app, vec![]);
+        let texts = drawn_texts(&out);
+        for want in [
+            "NEW DISK IMAGE",
+            "Disk name",
+            "D81  1581, 3160 blocks free",
+            "Create",
+        ] {
+            let (_, rect) = texts
+                .iter()
+                .find(|(t, _)| t == want)
+                .unwrap_or_else(|| panic!("{want:?} isn't drawn"));
+            assert!(screen.contains_rect(*rect), "{want:?} at {rect:?}");
+            assert!(rect.height() < 24.0, "{want:?} wraps: {rect:?}");
+        }
+        assert!(ctx.wants_keyboard_input(), "the name field has the cursor");
+
+        // Esc closes it and makes nothing.
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(!app.show_new_disk && app.pane.disk.is_none());
+
+        // Enter creates the disk as set up.
+        let _ = frame(&mut app, vec![key(egui::Key::N, egui::Modifiers::COMMAND)]);
+        app.new_name = "GAMES".into();
+        app.new_id = "G1".into();
+        app.new_fmt = 2;
+        let _ = frame(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        assert!(!app.show_new_disk);
+        let ed = app.pane.disk.as_ref().expect("a disk was created");
+        let header = ed.disk.header().unwrap();
+        assert_eq!((header.name.as_str(), header.id.as_str()), ("GAMES", "G1"));
+        assert_eq!(ed.disk.track_count(), 80, "a D81");
+        assert!(ed.dirty);
+        assert!(
+            app.status.starts_with("Created a blank D81 image"),
+            "{}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn new_disk_formats_say_how_many_blocks_are_free() {
+        for (i, (_, about)) in NEW_DISK_FORMATS.iter().enumerate() {
+            let mut app = App {
+                new_fmt: i,
+                ..Default::default()
+            };
+            app.apply(Act::Create);
+            let free = app.pane.disk.as_ref().unwrap().disk.blocks_free().unwrap();
+            assert!(
+                about.ends_with(&format!(" {free} blocks free")),
+                "{about}: {free}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_disk_or_archive_asks_before_replacing_unsaved_changes() {
+        for act in [Act::Create, Act::NewArchive] {
+            let mut app = app_with_disk();
+            app.add("KEEP ME".into(), &[1, 8, 0]);
+            assert!(app.pane.is_dirty());
+            app.apply(act);
+            assert!(matches!(
+                app.confirm,
+                Some(Confirm::NewDisk | Confirm::NewArchive)
+            ));
+            assert_eq!(app.pane.nodes.len(), 1, "nothing replaced yet");
+        }
     }
 
     #[test]

@@ -426,9 +426,15 @@ full editor. Changes are made in memory; the title shows
 
 CREATING A NEW DISK
 
-  File > New ▸. Type a disk name and a two-character ID, then
-  click D64, D71, or D81. A freshly formatted, empty image is
-  created (unsaved). Use Save As… to write it to a file.
+  File > New ▸ > Disk Image… (or press Ctrl+N) opens the New
+  Disk dialog:
+      Disk name   up to 16 characters
+      ID          two characters, shown after the name
+      Format      D64 (1541, 664 blocks free), D71 (1571, 1328)
+                  or D81 (1581, 3160)
+  Click Create or press Enter; Esc or Cancel closes it. A freshly
+  formatted, empty image is created (unsaved). Use Save As… to
+  write it to a file.
 
 ADDING FILES
 
@@ -493,8 +499,9 @@ UNDO AND REDO
 
 THE UNSAVED-CHANGES GUARD
 
-  If a disk has unsaved edits and you try to open another file or
-  close the window, Sector64 asks first:
+  If a disk has unsaved edits and you try to open another file,
+  start a new disk or archive, or close the window, Sector64 asks
+  first:
       Save first   — saves, then continues.
       Discard      — throws the edits away and continues.
       Cancel       — stays where you are.
@@ -505,7 +512,7 @@ THE UNSAVED-CHANGES GUARD
  9. BUILDING AN ARCHIVE
 ----------------------------------------------------------------
 
-  1. File > New ▸ > Empty archive.
+  1. File > New ▸ > Empty Archive.
   2. Add files by dragging them in (on Linux this needs X11; see
      section 19), or File > Add Files ▸.
   3. File > Save As… and choose a container format by
@@ -889,6 +896,7 @@ early. The most recent few are shown at once.
 
 On a Mac, use Cmd for Ctrl (see "On a Mac" in section 19).
 
+    Ctrl+N      New disk image (opens the New Disk dialog)
     Ctrl+O      Open a file
     Ctrl+S      Save the open disk
     Ctrl+Q      Quit (asks about unsaved changes first)
