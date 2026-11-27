@@ -134,7 +134,7 @@ the right and the listing makes room for it:
   +----------------------------------------------------------+
 
 - Menu bar (top):
-    File     New, Open, Open Recent, Save, Save As, Add file,
+    File     New, Open, Open Recent, Save, Save As, Add Files,
              Extract Selected, Extract All and Quit.
     Edit     Undo, Redo, Rename, Delete, Select All and Copy
              to Other Pane (in dual view).
@@ -435,10 +435,22 @@ ADDING FILES
   With a disk open, either:
     - Drag host files onto the window (on Linux this needs X11;
       see section 19), or
-    - File > Add file ▸, choose the type (prg / seq / usr), then
-      Add file… and pick a file.
-  The file is given a Commodore name derived from its host name
-  (uppercased, 16 characters max). A toast confirms the add.
+    - File > Add Files ▸ > Add Files… and pick one or more
+      files (Ctrl-click or Shift-click to pick several).
+  Each file's name says what it becomes:
+    - game.prg, notes.seq, x.usr, old.del: that type, named
+      GAME, NOTES… (the name without its extension).
+    - PC64 files (.P00, .S00, .U00, .D00): the name stored
+      inside the file, and the type its extension's letter
+      gives.
+    - Anything else: the type picked under "other files as"
+      in File > Add Files ▸ (prg, seq or usr), keeping its whole
+      name, so a file extracted as GAME V1.2 comes back as
+      GAME V1.2.
+  Names are uppercased and cut to 16 characters. REL files
+  (.rel, .R00) can't be added. Everything added at once is one
+  undo step, and a toast says what was added and anything that
+  couldn't be.
 
 RENAMING
 
@@ -495,7 +507,7 @@ THE UNSAVED-CHANGES GUARD
 
   1. File > New ▸ > Empty archive.
   2. Add files by dragging them in (on Linux this needs X11; see
-     section 19), or File > Add file ▸.
+     section 19), or File > Add Files ▸.
   3. File > Save As… and choose a container format by
      the extension you type:
          .t64   tape image
@@ -949,7 +961,7 @@ DRAG-AND-DROP ON LINUX (WAYLAND)
   Sector64 runs as a native Wayland window, and files dropped on
   it never arrive: the windowing library it uses does not yet
   support drag-and-drop on Wayland. Use File > Open… and
-  File > Add file ▸ instead, or start Sector64 through X11:
+  File > Add Files ▸ instead, or start Sector64 through X11:
 
       SECTOR64_X11=1 sector64-gui
 
