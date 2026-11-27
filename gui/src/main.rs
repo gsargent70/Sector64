@@ -888,12 +888,12 @@ enum Act {
     ExtractAll,
     Create,
     AddFile,
-    AddBytes(String, Vec<u8>),
+    /// Add these host files, each typed by its extension or P00 header.
+    AddPaths(Vec<PathBuf>),
     /// A file was dropped on the window with nothing editable open: open it.
     /// The count is how many other dropped files were ignored.
     OpenDropped(PathBuf, usize),
     /// Show a status message.
-    Status(String),
     /// Open a file from the recent-files list.
     OpenRecent(PathBuf),
     /// Empty the recent-files list.
@@ -1249,7 +1249,6 @@ impl App {
                     );
                 }
             }
-            Act::Status(msg) => self.status = msg,
             Act::OpenRecent(p) => {
                 if !p.exists() {
                     // Just the name: a full path would push the message
@@ -1337,17 +1336,11 @@ impl App {
                 self.status = "Created a blank image (unsaved)".into();
             }
             Act::AddFile => {
-                if let Some(p) = rfd::FileDialog::new().pick_file() {
-                    match std::fs::read(&p) {
-                        Ok(bytes) => {
-                            let name = cbm_name_from(&p);
-                            self.apply(Act::AddBytes(name, bytes));
-                        }
-                        Err(e) => self.status = format!("read failed: {e}"),
-                    }
+                if let Some(paths) = rfd::FileDialog::new().pick_files() {
+                    self.add_paths(&paths);
                 }
             }
-            Act::AddBytes(name, bytes) => self.add(name, &bytes),
+            Act::AddPaths(paths) => self.add_paths(&paths),
             Act::Rename => self.rename(),
             Act::Delete => self.delete(),
             Act::Save => self.save(false),
@@ -1870,34 +1863,91 @@ impl App {
         }
     }
 
-    fn add(&mut self, name: String, bytes: &[u8]) {
-        let ft = match self.add_type {
+    /// The type File > Add Files gives a file whose extension doesn't say.
+    fn fallback_type(&self) -> FileType {
+        match self.add_type {
             1 => FileType::Seq,
             2 => FileType::Usr,
             _ => FileType::Prg,
+        }
+    }
+
+    /// Add one file of the fallback type (the tests' shortcut).
+    #[cfg(test)]
+    fn add(&mut self, name: String, bytes: &[u8]) {
+        let file = ImportFile {
+            name,
+            file_type: self.fallback_type(),
+            data: bytes.to_vec(),
         };
+        self.add_imports(vec![Ok(file)]);
+    }
+
+    /// Add host files: each one's name and type come from its file name
+    /// (`game.prg`, `notes.seq`) or its PC64 header (`.P00`, `.S00`).
+    fn add_paths(&mut self, paths: &[PathBuf]) {
+        let fallback = self.fallback_type();
+        let files = paths
+            .iter()
+            .map(|p| {
+                let shown = p.file_name().map_or_else(
+                    || p.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
+                std::fs::read(p)
+                    .map_err(|e| e.to_string())
+                    .and_then(|bytes| host_import(p, bytes, fallback))
+                    .map_err(|e| format!("{shown} ({e})"))
+            })
+            .collect();
+        self.add_imports(files);
+    }
+
+    /// Put files on the open disk or new archive as one undo step, and say
+    /// what was added and what couldn't be.
+    fn add_imports(&mut self, files: Vec<std::result::Result<ImportFile, String>>) {
         let before = self.pane.snapshot();
-        let done = format!("Added \"{name}\" ({} bytes)", bytes.len());
-        if let Some(ed) = &mut self.pane.disk {
-            match ed.disk.write_file(&name, ft, bytes) {
-                Ok(()) => {
-                    ed.dirty = true;
-                    self.pane.record(before, &done);
-                    self.pane.refresh();
-                    self.status = done;
+        let mut added: Vec<(String, usize)> = Vec::new();
+        let mut failed: Vec<String> = Vec::new();
+        for file in files {
+            let file = match file {
+                Ok(f) => f,
+                Err(e) => {
+                    failed.push(e);
+                    continue;
                 }
-                Err(e) => self.status = format!("Add failed: {e}"),
+            };
+            let put = if let Some(ed) = &mut self.pane.disk {
+                ed.disk
+                    .write_file(&file.name, file.file_type, &file.data)
+                    .map(|()| ed.dirty = true)
+                    .map_err(|e| e.to_string())
+            } else if let Some(stage) = &mut self.pane.archive {
+                stage.push(file.clone());
+                Ok(())
+            } else {
+                Err("open a disk or start a new archive first".into())
+            };
+            match put {
+                Ok(()) => added.push((file.name, file.data.len())),
+                Err(e) => failed.push(format!("\"{}\" ({e})", file.name)),
             }
-        } else if let Some(stage) = &mut self.pane.archive {
-            stage.push(ImportFile {
-                name: name.clone(),
-                file_type: ft,
-                data: bytes.to_vec(),
-            });
+        }
+        let done = match added.as_slice() {
+            [] => String::new(),
+            [(name, len)] => format!("Added \"{name}\" ({len} bytes)"),
+            many => format!("Added {} files", many.len()),
+        };
+        if !added.is_empty() {
             self.pane.record(before, &done);
             self.pane.refresh();
-            self.status = done;
         }
+        self.status = match (done.is_empty(), failed.as_slice()) {
+            (_, []) => done,
+            (true, [one]) => format!("Cannot add {one}"),
+            (true, many) => format!("Cannot add {} files: {}", many.len(), many.join(", ")),
+            (false, some) => format!("{done}; cannot add {}", some.join(", ")),
+        };
     }
 
     /// BASIC editor: load text from a file.
@@ -2589,14 +2639,22 @@ impl App {
                         });
                     }
                     ui.separator();
-                    // Add file ▸ (type + pick) — only when a disk/archive is open.
+                    // Add Files ▸ (pick several; the type for files whose
+                    // name doesn't give one) — only with a disk/archive open.
                     ui.add_enabled_ui(editable, |ui| {
                         egui::menu::menu_custom_button(
                             ui,
-                            icon_button(&ic.plus, "Add file ▸"),
+                            icon_button(&ic.plus, "Add Files ▸"),
                             |ui| {
-                                ui.set_min_width(160.0);
-                                ui.label(egui::RichText::new("as type").color(c64::TEXT_DIM));
+                                ui.set_min_width(200.0);
+                                ui.label(
+                                    egui::RichText::new("other files as").color(c64::TEXT_DIM),
+                                )
+                                .on_hover_text(
+                                    "a file named .prg, .seq, .usr or .del, or a PC64 \
+                                         .P00/.S00/.U00 file, gets the type it names; \
+                                         any other file gets this one",
+                                );
                                 ui.horizontal(|ui| {
                                     for (i, t) in ["prg", "seq", "usr"].iter().enumerate() {
                                         if ui.selectable_label(add_type == i, *t).clicked() {
@@ -2604,7 +2662,7 @@ impl App {
                                         }
                                     }
                                 });
-                                if ui.add(icon_button(&ic.plus, "Add file…")).clicked() {
+                                if ui.add(icon_button(&ic.plus, "Add Files…")).clicked() {
                                     acts.push(Act::AddFile);
                                     ui.close_menu();
                                 }
@@ -3576,13 +3634,8 @@ impl App {
                 drop_editable = back_editable;
             }
         }
-        if drop_editable {
-            for p in dropped {
-                match std::fs::read(&p) {
-                    Ok(bytes) => acts.push(Act::AddBytes(cbm_name_from(&p), bytes)),
-                    Err(e) => acts.push(Act::Status(format!("Can't add {}: {e}", p.display()))),
-                }
-            }
+        if drop_editable && !dropped.is_empty() {
+            acts.push(Act::AddPaths(dropped));
         } else if let Some(first) = dropped.first() {
             acts.push(Act::OpenDropped(first.clone(), dropped.len() - 1));
         }
@@ -5608,6 +5661,67 @@ fn cbm_name_from(path: &Path) -> String {
     stem.to_uppercase().chars().take(16).collect()
 }
 
+/// What a host file becomes on a disk: its Commodore name, type and data.
+///
+/// - `.prg`, `.seq`, `.usr`, `.del` (any case) set the type, and the name is
+///   the rest of the file name.
+/// - PC64 files (`.P00`, `.S00`, `.U00`, `.D00`) keep the name in their
+///   header, and the type is the extension's letter.
+/// - Anything else gets `fallback`, and keeps its whole file name, so a file
+///   extracted as `GAME V1.2` comes back with its dot.
+///
+/// REL files are refused: adding one would need its record length and side
+/// sectors, which a plain host file doesn't carry.
+fn host_import(
+    path: &Path,
+    bytes: Vec<u8>,
+    fallback: FileType,
+) -> std::result::Result<ImportFile, String> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let named = |file_type| ImportFile {
+        name: cbm_name_from(path),
+        file_type,
+        data: bytes.clone(),
+    };
+    let pc64 = match ext.as_bytes() {
+        [t @ (b'p' | b's' | b'u' | b'r' | b'd'), b'0'..=b'9', b'0'..=b'9'] => Some(*t),
+        _ => None,
+    };
+    match (ext.as_str(), pc64) {
+        ("prg", _) => Ok(named(FileType::Prg)),
+        ("seq", _) => Ok(named(FileType::Seq)),
+        ("usr", _) => Ok(named(FileType::Usr)),
+        ("del", _) => Ok(named(FileType::Del)),
+        ("rel", _) | (_, Some(b'r')) => Err("REL files can't be added".into()),
+        (_, Some(t)) => {
+            let mut f = sector64::parse_p00(&bytes)
+                .map_err(|_| "not a PC64 file: its C64File header is missing".to_string())?;
+            f.file_type = match t {
+                b's' => FileType::Seq,
+                b'u' => FileType::Usr,
+                b'd' => FileType::Del,
+                _ => FileType::Prg,
+            };
+            if f.name.is_empty() {
+                f.name = cbm_name_from(path);
+            }
+            Ok(f)
+        }
+        _ => {
+            let whole = path.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+            Ok(ImportFile {
+                name: whole.to_uppercase().chars().take(16).collect(),
+                file_type: fallback,
+                data: bytes,
+            })
+        }
+    }
+}
+
 /// Replace characters unsafe in a host file name.
 fn sanitize(name: &str) -> String {
     let n: String = name
@@ -6807,7 +6921,7 @@ mod tests {
     #[test]
     fn tab_focus_swaps_the_panes_only_in_dual_view() {
         let mut app = app_with_disk();
-        app.apply(Act::AddBytes("ONE".into(), vec![1, 8, 0]));
+        app.add("ONE".into(), &[1, 8, 0]);
         app.apply(Act::FocusOther);
         assert_eq!(names(&app), ["ONE"], "single view: nothing to focus");
         app.dual = true;
@@ -6827,8 +6941,8 @@ mod tests {
     fn f5_copies_into_the_other_panes_disk_or_archive() {
         let mut app = app_with_disk();
         app.dual = true;
-        app.apply(Act::AddBytes("ONE".into(), vec![1, 8, 0]));
-        app.apply(Act::AddBytes("TWO".into(), vec![1, 8, 1]));
+        app.add("ONE".into(), &[1, 8, 0]);
+        app.add("TWO".into(), &[1, 8, 1]);
         app.pane.marked.extend([0, 1]);
         // Nothing open in the other pane yet.
         app.apply(Act::CopyToPane);
@@ -6868,11 +6982,11 @@ mod tests {
     fn compare_rows_select_the_file_in_both_panes() {
         let mut app = app_with_disk();
         app.dual = true;
-        app.apply(Act::AddBytes("A".into(), vec![1, 8, 0]));
-        app.apply(Act::AddBytes("B".into(), vec![1, 8, 1]));
+        app.add("A".into(), &[1, 8, 0]);
+        app.add("B".into(), &[1, 8, 1]);
         app.apply(Act::FocusOther);
         app.apply(Act::Create);
-        app.apply(Act::AddBytes("B".into(), vec![1, 8, 2]));
+        app.add("B".into(), &[1, 8, 2]);
         // The focused pane is now the right one.
         app.pane.marked.insert(0);
         app.apply(Act::CompareSelect(Some(1), Some(0)));
@@ -6898,12 +7012,12 @@ mod tests {
         let mut app = app_with_disk();
         app.dual = true;
         for name in ["A", "BOTH", "C"] {
-            app.apply(Act::AddBytes(name.into(), vec![1, 8, 0]));
+            app.add(name.into(), &[1, 8, 0]);
         }
         app.apply(Act::FocusOther);
         app.apply(Act::Create);
-        app.apply(Act::AddBytes("BOTH".into(), vec![1, 8, 9]));
-        app.apply(Act::AddBytes("D".into(), vec![1, 8, 0]));
+        app.add("BOTH".into(), &[1, 8, 9]);
+        app.add("D".into(), &[1, 8, 0]);
 
         // The right pane has the focus, so this copies into it.
         let undo = app.pane.undo.len();
@@ -7010,7 +7124,7 @@ mod tests {
         assert_eq!(sector64::detokenize_basic(data).unwrap().lines, 2);
 
         // Nothing but a plain BASIC program is replaced.
-        app.apply(Act::AddBytes("CODE".into(), vec![0, 0xC0, 0x60]));
+        app.add("CODE".into(), &[0, 0xC0, 0x60]);
         app.basic.name = "CODE".into();
         app.apply(Act::BasicAdd);
         assert!(
@@ -7020,7 +7134,7 @@ mod tests {
         );
         let mut stub = app.basic.check().as_ref().unwrap().prg.clone();
         stub.push(0x60);
-        app.apply(Act::AddBytes("STUB".into(), stub));
+        app.add("STUB".into(), &stub);
         app.basic.name = "STUB".into();
         app.apply(Act::BasicAdd);
         assert!(app.status.contains("machine code"), "{}", app.status);
@@ -7082,6 +7196,85 @@ mod tests {
         assert!(!is_c128_load(&[0x01]));
         assert_eq!(safe_file_name("my game/v2*"), "my game_v2_");
         assert_eq!(safe_file_name(".."), "program");
+    }
+
+    #[test]
+    fn host_files_take_their_type_from_their_name_or_pc64_header() {
+        let get = |name: &str, bytes: &[u8]| {
+            host_import(Path::new(name), bytes.to_vec(), FileType::Usr)
+                .map(|f| (f.name, f.file_type, f.data))
+        };
+        assert_eq!(
+            get("game.prg", b"\x01\x08"),
+            Ok(("GAME".into(), FileType::Prg, vec![1, 8]))
+        );
+        assert_eq!(get("/x/Notes.SEQ", b"hi").map(|f| f.1), Ok(FileType::Seq));
+        assert_eq!(get("a.usr", b"").map(|f| f.1), Ok(FileType::Usr));
+        assert_eq!(get("old.del", b"").map(|f| f.1), Ok(FileType::Del));
+        // No type in the name: the fallback, and the whole name is kept.
+        assert_eq!(
+            get("GAME V1.2", b"x").map(|f| (f.0, f.1)),
+            Ok(("GAME V1.2".into(), FileType::Usr))
+        );
+        assert_eq!(
+            get("a very long file name.txt", b"").map(|f| f.0.len()),
+            Ok(16)
+        );
+        // PC64: the header's name, the extension's type, the data after it.
+        let mut p00 = b"C64File\0".to_vec();
+        p00.extend(b"MY NOTES\0\0\0\0\0\0\0\0");
+        p00.extend([0, 0, b'h', b'i']);
+        assert_eq!(
+            get("mynote~1.s00", &p00),
+            Ok(("MY NOTES".into(), FileType::Seq, b"hi".to_vec()))
+        );
+        assert_eq!(get("x.P01", &p00).map(|f| f.1), Ok(FileType::Prg));
+        assert!(get("x.p00", b"not a pc64 file").is_err());
+        assert!(get("x.rel", b"").is_err());
+        assert!(get("x.r00", &p00).is_err());
+    }
+
+    #[test]
+    fn adding_several_files_is_one_undo_step_and_reports_what_failed() {
+        let dir = std::env::temp_dir().join(format!("s64-add-files-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let paths: Vec<PathBuf> = ["intro.prg", "readme.seq", "data.rel"]
+            .iter()
+            .map(|n| {
+                let p = dir.join(n);
+                std::fs::write(&p, [1, 8, 0]).unwrap();
+                p
+            })
+            .collect();
+        let mut app = app_with_disk();
+        app.apply(Act::AddPaths(paths));
+        std::fs::remove_dir_all(&dir).unwrap();
+        let listed: Vec<(&str, &str)> = app
+            .pane
+            .nodes
+            .iter()
+            .map(|n| (n.name.as_str(), n.badge.as_str()))
+            .collect();
+        assert_eq!(listed, [("INTRO", "prg"), ("README", "seq")]);
+        assert_eq!(
+            app.status,
+            "Added 2 files; cannot add data.rel (REL files can't be added)"
+        );
+        assert!(ToastKind::of(&app.status) == ToastKind::Error);
+        assert_eq!(app.pane.undo.len(), 1);
+        app.apply(Act::Undo);
+        assert!(app.pane.nodes.is_empty());
+
+        // Into a new archive too; a file that can't be read is named.
+        let mut app = App::default();
+        app.apply(Act::NewArchive);
+        app.apply(Act::AddPaths(vec![dir.join("gone.prg")]));
+        assert!(
+            app.status.starts_with("Cannot add gone.prg ("),
+            "{}",
+            app.status
+        );
+        assert!(app.pane.undo.is_empty());
     }
 
     #[test]

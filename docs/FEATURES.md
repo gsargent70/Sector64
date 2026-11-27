@@ -37,7 +37,6 @@ the core plus one front end.
 | APP-12 | Test the Mac GUI by remote control in CI (or a Mac over SSH): file dialogs, drag-and-drop, shortcuts, Run in VICE | M; less urgent now v1.0.11 was tried by hand; follow-up to APP-09; needs the runners to allow scripted clicks and keys, not tried yet |
 | DISK-08 | Sector editor: type text into the PETSCII column, and search the disk for bytes or text | M; follow-up to DISK-05 (today it edits in hex only) |
 | CLI-06 | Search from the command line (`s64find`): text or hex inside the files of disks and archives | S; core done in VIEW-10 |
-| EDIT-10 | Add Files: pick several at once, and take each one's type from its extension (`.prg`/`.seq`/`.usr`, P00/S00 headers); dropped files too | S; today one file at a time, and the type is whatever was last picked in File > Add file |
 | APP-17 | New Disk as a small dialog (name, ID, D64/D71/D81) instead of text boxes inside the New submenu | S; from the 2026-11 review |
 | APP-18 | Split `gui/src/main.rs` (8,000 lines; `frame_ui` is 1,400) into modules; one Esc chain instead of eight checks; one "listing changed" reset instead of nine | M; no behaviour change; from the 2026-11 review |
 
@@ -95,6 +94,7 @@ Changing disks and building archives.
 | EDIT-06 | BASIC text → runnable PRG (V2, 7.0, Simons'), the reverse of VIEW-03/04 | L | Done v1.0.10 | core `sector64::tokenize`, `s64basic`, GUI BASIC editor; checked against petcat and the C64/C128 ROMs |
 | EDIT-07 | Directory editing: reorder, separator/"art" entries, disk name and ID, lock/unlock | M | Idea | |
 | EDIT-08 | Proper REL and GEOS copy between disks (side sectors, VLIR records) | M | Idea | both are skipped today |
+| EDIT-10 | Add Files: pick several at once; each one's type from its name (`.prg`/`.seq`/`.usr`/`.del`) or PC64 header (`.P00`/`.S00`/`.U00`/`.D00`), dropped files too; one undo step | S | Done (unreleased, #56) | other files keep their whole name and get the "other files as" type; REL (`.rel`, `.R00`) refused, see EDIT-08 |
 
 ## 4. Disk tools (DISK)
 
@@ -147,8 +147,8 @@ Checking and inspecting a disk's structure.
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Now:** APP-14 and APP-16 (#54), APP-15 (#55).
-2. **Next:** EDIT-10, APP-17, APP-18, then EDIT-07, FMT-13.
+1. **Now:** APP-14 and APP-16 (#54), APP-15 (#55), EDIT-10 (#56).
+2. **Next:** APP-17, APP-18, then EDIT-07, FMT-13.
 
 ## Done by release
 
