@@ -21,7 +21,7 @@ It runs on Linux, Windows and (experimental) macOS. Releases are on GitHub
   - `cargo clippy --workspace --all-targets`: must be clean.
   - `cargo test --workspace`
   - rustfmt **on the files you touched**. `main` is not yet fully
-    rustfmt-clean (e.g. `examples/`, `gui/src/main.rs`), so
+    rustfmt-clean (e.g. `examples/`; the GUI crate is), so
     `cargo fmt --all --check` fails on lines you didn't write. Don't
     reformat unrelated code in a feature PR.
 - **GUI dependencies are pinned for the 1.90 MSRV:** eframe 0.29 (default
@@ -42,6 +42,14 @@ It runs on Linux, Windows and (experimental) macOS. Releases are on GitHub
 - The GUI pins its C64 style to **both** egui themes and forces dark mode
   (`apply_c64_theme`). Otherwise a light-themed OS reverts it to egui's
   stock light style.
+- GUI layout: `gui/src/main.rs` holds the state types (`App`, `Pane`,
+  `Act`…) and `main()`; `actions.rs` is `App::apply` and the operations,
+  `frame.rs` is `App::frame_ui` (one frame), and `listing`, `preview`,
+  `tools`, `basic_ui`, `dialogs`, `files`, `vice`, `widgets` hold the rest.
+  Modules `use crate::*`; shared items are `pub(crate)`. Tests are in
+  `tests.rs`. Esc goes through one chain in `frame.rs` (front window
+  first); any listing change goes through `Pane::refresh`, which drops
+  the previews, disk map, marks and rename.
 - The user manual is `gui/MANUAL.md`, embedded with `include_str!` and shown
   by the Help menu. Update it with GUI changes.
 - **CLI output:** use `outln!` (from `src/bin/common/mod.rs`, pulled in with

@@ -923,8 +923,8 @@ On a Mac, use Cmd for Ctrl (see "On a Mac" in section 19).
     F2          Rename the selected file (in place)
     Up / Down   Move the selection
     F1          Show or hide this manual
-    Esc         Cancel an in-place rename; close the sector
-                editor, the disk map or another window
+    Esc         Cancel an in-place rename; close the window
+                in front (one window per press)
 
 Single-key shortcuts are ignored while you are typing in a text
 field (the filter box or a rename).
