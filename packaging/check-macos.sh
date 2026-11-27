@@ -30,7 +30,7 @@ for f in "$app/Contents/MacOS/Sector64" "$bin"/*; do
     codesign --verify --strict "$f"
 done
 n=$(find "$bin" -type f | wc -l)
-test "$n" -eq 12 || { echo "error: $n tools, expected 12" >&2; exit 1; }
+test "$n" -eq 13 || { echo "error: $n tools, expected 13" >&2; exit 1; }
 
 echo "== command-line tools ($(uname -m))"
 cd "$work"
@@ -45,6 +45,8 @@ grep -q HELLO ls.txt
 cmp hello.prg back.prg
 cp disk.d64 copy.d64
 "$bin/s64cmp" disk.d64 copy.d64
+"$bin/s64conv" disk.d64 disk.d81
+"$bin/s64cmp" disk.d64 disk.d81
 "$bin/s64pack" hello.t64 hello.prg
 "$bin/s64ls" hello.t64 >/dev/null 2>&1 || true
 

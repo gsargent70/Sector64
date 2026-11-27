@@ -374,3 +374,57 @@ pub(crate) fn recent_labels(list: &[String]) -> Vec<(String, String)> {
         })
         .collect()
 }
+
+/// A listing's readable rows as the files `convert_files` takes, and the
+/// unreadable ones with why. Rows without a type the converter knows (LHA
+/// and Wraptor members) become PRG files.
+pub(crate) fn listed_files(
+    nodes: &[Node],
+) -> (Vec<sector64::listing::ListedFile>, Vec<(String, String)>) {
+    let unreadable = nodes
+        .iter()
+        .filter_map(|n| n.data.as_ref().err().map(|e| (n.name.clone(), e.clone())))
+        .collect();
+    let files = nodes
+        .iter()
+        .filter(|n| n.data.is_ok())
+        .map(|n| sector64::listing::ListedFile {
+            name: n.name.clone(),
+            kind: match n.badge.to_ascii_lowercase().as_str() {
+                "seq" => "seq",
+                "usr" => "usr",
+                "del" => "del",
+                "rel" => "rel",
+                _ => "prg",
+            },
+            data: Ok(n.data.clone().unwrap_or_default()),
+            packed: None,
+        })
+        .collect();
+    (files, unreadable)
+}
+
+/// The status line after File > Convert To wrote `file`.
+pub(crate) fn convert_report(file: &str, c: &sector64::convert::Converted) -> String {
+    let n = c.copied.len();
+    let mut s = format!(
+        "Converted to {file}: {n} file{}",
+        if n == 1 { "" } else { "s" }
+    );
+    let separators = c.notes.iter().filter(|n| n.1.contains("separator")).count();
+    if separators > 0 {
+        s += &format!(", {separators} separator line(s) left out");
+    }
+    if c.notes.iter().any(|n| n.1.contains("stored as PRG")) {
+        s += "; SEQ and USR files are PRG in a T64 (LNX and LBR keep the type)";
+    }
+    if !c.skipped.is_empty() {
+        let left: Vec<String> = c
+            .skipped
+            .iter()
+            .map(|(name, why)| format!("\"{name}\" ({why})"))
+            .collect();
+        s += &format!("; cannot convert {}", left.join(", "));
+    }
+    s
+}

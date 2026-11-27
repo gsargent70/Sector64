@@ -306,6 +306,7 @@ cargo run --bin s64extract -- --list disk.d64 MENU       # list a BASIC program
 cargo run --bin s64val -- --map disk.d64                 # draw the block map
 cargo run --bin s64basic -- menu.txt menu.prg            # BASIC text to a PRG
 cargo run --bin s64cmp -- a.d64 b.d64                    # compare two disks
+cargo run --bin s64conv -- disk.d64 disk.d81             # convert to another format
 cargo run --bin s64write -- format disk.d64 "my disk" 01 # create a blank image
 cargo run --bin s64write -- add disk.d64 hello hello.prg # write a host file in
 cargo run --bin s64write -- rename disk.d64 hello hi     # rename
@@ -378,6 +379,9 @@ against a real disk.
 | `src/repair.rs`    | finding and fixing damage to a disk |
 | `src/compare.rs`   | file-by-file comparison of two listings |
 | `src/bin/s64cmp.rs` | CLI: compare two disks or archives |
+| `src/convert.rs`   | one disk or archive written out as another format |
+| `src/bin/s64conv.rs` | CLI: convert a disk or archive to another format |
+| `src/diredit.rs`   | directory editing: reorder, separators, lock, disk name and ID |
 | `src/bin/s64write.rs` | CLI: format, add, delete, rename |
 | `src/bin/s64pack.rs` | CLI: create a T64/LNX/LBR/P00 archive |
 | `src/arc.rs`       | Commodore ARC + SDA walk, stored + crunch (LZW+RLE) decode |

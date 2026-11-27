@@ -1572,7 +1572,10 @@ fn the_title_gives_way_to_the_menus_in_a_narrow_window() {
 #[test]
 fn every_menu_opens_whole_inside_a_narrow_window() {
     let menus: [(&str, &[&str]); 5] = [
-        ("File", &["New ▸", "Open…", "Save As…", "Extract All"]),
+        (
+            "File",
+            &["New ▸", "Open…", "Save As…", "Convert To ▸", "Extract All"],
+        ),
         (
             "Edit",
             &[
@@ -1852,4 +1855,49 @@ fn a_new_archive_reorders_too() {
     assert_eq!(app.pane.selected, Some(0));
     app.apply(Act::Undo);
     assert_eq!(app.pane.nodes[0].name, "ONE");
+}
+
+#[test]
+fn convert_reports_what_went_across_and_what_did_not() {
+    use sector64::convert::{convert_disk, convert_files, Target};
+    let mut app = app_with_disk();
+    app.add_type = 1; // SEQ
+    app.add("NOTES".into(), b"text");
+    app.add_type = 0;
+    app.add("GAME".into(), &[1, 8, 0]);
+    app.apply(Act::AddSeparator);
+    let disk = &app.pane.disk.as_ref().unwrap().disk;
+    let c = convert_disk(disk, Target::T64).unwrap();
+    assert_eq!(
+        convert_report("x.t64", &c),
+        "Converted to x.t64: 2 files, 1 separator line(s) left out; SEQ and USR files are \
+         PRG in a T64 (LNX and LBR keep the type)"
+    );
+    assert_eq!(
+        convert_report("x.d81", &convert_disk(disk, Target::D81).unwrap()),
+        "Converted to x.d81: 3 files"
+    );
+
+    // From a listing: an unreadable member is set aside with its reason.
+    let mut nodes = std::mem::take(&mut app.pane.nodes);
+    // (The separator went first: nothing was selected.)
+    nodes[1].data = Err("bad crunch".into());
+    nodes[2].badge = "lha".into(); // no type recorded: becomes a PRG
+    let (files, unreadable) = listed_files(&nodes);
+    assert_eq!(
+        unreadable,
+        [("NOTES".to_string(), "bad crunch".to_string())]
+    );
+    assert_eq!(
+        files.iter().map(|f| f.kind).collect::<Vec<_>>(),
+        ["del", "prg"]
+    );
+    let mut c = convert_files("LIST", &files, Target::Lnx);
+    c.skipped.splice(0..0, unreadable);
+    let report = convert_report("x.lnx", &c);
+    assert!(
+        report.ends_with("; cannot convert \"NOTES\" (bad crunch)"),
+        "{report}"
+    );
+    assert!(ToastKind::of(&report) == ToastKind::Error);
 }

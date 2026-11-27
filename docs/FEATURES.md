@@ -1,7 +1,7 @@
 # Sector64 feature list
 
 Sector64 is a clean-room, dependency-free Rust toolkit for Commodore disk
-images and archives, with a C64-styled GUI and twelve command-line tools. This
+images and archives, with a C64-styled GUI and thirteen command-line tools. This
 is the project's single list of features: what's built, what's planned, and
 ideas for later.
 
@@ -61,7 +61,7 @@ ends).
 | FMT-10 | TAP datasette images | M | Done v1.0.0 | |
 | FMT-11 | Write T64, LNX, LBR and P00 archives | M | Done v1.0.0 | |
 | FMT-12 | Write to D64/D71/D81 and CMD-native D2M | L | Done v1.0.0 | DNP BAM bit-order fix in v1.0.6 |
-| FMT-13 | Format conversion in one step (e.g. D64 → D81, archive or T64 → disk) | M | Idea | |
+| FMT-13 | Format conversion in one step (e.g. D64 → D81, archive or T64 → disk) | M | Done (unreleased, #62) | core `sector64::convert` (`convert_disk`, `convert_files`); CLI `s64conv` (13th tool); GUI File > Convert To; disk to disk keeps names, locks, separators, name and ID; a T64 stores every file as PRG (c1541's `tape` reads them so), so it notes SEQ/USR; REL and GEOS skipped with the reason (EDIT-08) |
 
 ## 2. Browse and preview (VIEW)
 
@@ -150,8 +150,8 @@ Checking and inspecting a disk's structure.
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Now:** EDIT-07 (#61), FMT-13.
-2. **Next:** DISK-08, CLI-06.
+1. **Now:** EDIT-07 (#61), FMT-13 (#62).
+2. **Next:** CLI-07, DISK-08, CLI-06.
 
 ## Done by release
 
