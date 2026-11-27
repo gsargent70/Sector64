@@ -1,14 +1,23 @@
 //! `s64write` — create and edit D64 images from the shell.
 //!
 //! ```text
-//! s64write format <image.d64> <disk name> <id>
-//! s64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]
-//! s64write delete <image.d64> <cbm name>
-//! s64write rename <image.d64> <old name> <new name>
+//! s64write format    <image> <disk name> <id> [d64|d71|d81]
+//! s64write add       <image> <cbm name> <host file> [prg|seq|usr]
+//! s64write delete    <image> <entry>
+//! s64write rename    <image> <entry> <new name>
+//! s64write name      <image> <disk name> <id>
+//! s64write lock      <image> <entry>
+//! s64write unlock    <image> <entry>
+//! s64write move      <image> <entry> <position|last>
+//! s64write separator <image> [<after entry>]
+//! s64write import    <image> <archive.t64|.lnx|.lbr|.p00>
+//! s64write unzip     <out.d64> <zipcode base>
 //! ```
 //!
 //! `add` stores the host file's raw bytes (for a PRG, that includes its two-byte
-//! load address). Edits are written back to the same image file.
+//! load address). Edits are written back to the same image file. An `<entry>`
+//! is a file's name (the first with it, any case) or `#N`, the Nth entry in
+//! directory order: separators share a name, so `#N` picks one.
 
 #[macro_use]
 mod common;
@@ -32,17 +41,31 @@ fn main() -> ExitCode {
         }
         Some("delete") if strs.len() == 3 => cmd_delete(&strs[1], &strs[2]),
         Some("rename") if strs.len() == 4 => cmd_rename(&strs[1], &strs[2], &strs[3]),
+        Some("name") if strs.len() == 4 => cmd_name(&strs[1], &strs[2], &strs[3]),
+        Some(c @ ("lock" | "unlock")) if strs.len() == 3 => {
+            cmd_lock(&strs[1], &strs[2], c == "lock")
+        }
+        Some("move") if strs.len() == 4 => cmd_move(&strs[1], &strs[2], &strs[3]),
+        Some("separator") if strs.len() == 2 || strs.len() == 3 => {
+            cmd_separator(&strs[1], strs.get(2).map(String::as_str))
+        }
         Some("import") if strs.len() == 3 => cmd_import(&strs[1], &strs[2]),
         Some("unzip") if strs.len() == 3 => cmd_unzip(&strs[1], &strs[2]),
         _ => {
             eprintln!(
                 "usage:\n  \
-                 s64write format <image> <disk name> <id> [d64|d71|d81]\n  \
-                 s64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]\n  \
-                 s64write delete <image.d64> <cbm name>\n  \
-                 s64write rename <image.d64> <old name> <new name>\n  \
-                 s64write import <image.d64> <archive.t64|.lnx|.lbr|.p00>\n  \
-                 s64write unzip  <out.d64> <zipcode base>   (reads 1!base..4!base)"
+                 s64write format    <image> <disk name> <id> [d64|d71|d81]\n  \
+                 s64write add       <image> <cbm name> <host file> [prg|seq|usr]\n  \
+                 s64write delete    <image> <entry>\n  \
+                 s64write rename    <image> <entry> <new name>\n  \
+                 s64write name      <image> <disk name> <id>\n  \
+                 s64write lock      <image> <entry>\n  \
+                 s64write unlock    <image> <entry>\n  \
+                 s64write move      <image> <entry> <position|last>\n  \
+                 s64write separator <image> [<after entry>]\n  \
+                 s64write import    <image> <archive.t64|.lnx|.lbr|.p00>\n  \
+                 s64write unzip     <out.d64> <zipcode base>   (reads 1!base..4!base)\n\
+                 An <entry> is a file's name or #N, the Nth entry in directory order."
             );
             return ExitCode::from(2);
         }
@@ -111,10 +134,42 @@ fn cmd_add(image: &str, name: &str, host: &str, ty: Option<&str>) -> Result<Stri
     ))
 }
 
-fn cmd_delete(image: &str, name: &str) -> Result<String, String> {
+/// The directory index an `<entry>` argument names: `#N` (1-based) or the
+/// first entry with that name, in any case.
+fn entry_index(disk: &Disk, entry: &str) -> Result<usize, String> {
+    let dir = disk.directory().map_err(|e| e.to_string())?;
+    if let Some(n) = entry
+        .strip_prefix('#')
+        .and_then(|n| n.parse::<usize>().ok())
+    {
+        return match n {
+            1.. if n <= dir.len() => Ok(n - 1),
+            _ => Err(format!(
+                "there's no entry #{n}: the directory has {}",
+                dir.len()
+            )),
+        };
+    }
+    let want = entry.to_ascii_uppercase();
+    dir.iter()
+        .position(|e| e.name.to_ascii_uppercase() == want)
+        .ok_or_else(|| format!("no file named \"{entry}\""))
+}
+
+/// The name an entry's messages use.
+fn entry_name(disk: &Disk, index: usize) -> String {
+    disk.directory()
+        .ok()
+        .and_then(|d| d.get(index).map(|e| e.name.clone()))
+        .unwrap_or_default()
+}
+
+fn cmd_delete(image: &str, entry: &str) -> Result<String, String> {
     let mut disk = load(image)?;
+    let i = entry_index(&disk, entry)?;
+    let name = entry_name(&disk, i);
     let freed = disk
-        .scratch(name)
+        .scratch_entry(i)
         .map_err(|e| format!("deleting \"{name}\": {e}"))?;
     save(image, &disk)?;
     Ok(format!(
@@ -194,10 +249,63 @@ fn cmd_unzip(out_image: &str, base: &str) -> Result<String, String> {
     Ok(format!("unzipped {base} to {out_image} ({} bytes)", d64.len()))
 }
 
-fn cmd_rename(image: &str, old: &str, new: &str) -> Result<String, String> {
+fn cmd_rename(image: &str, entry: &str, new: &str) -> Result<String, String> {
     let mut disk = load(image)?;
-    disk.rename(old, new)
+    let i = entry_index(&disk, entry)?;
+    let old = entry_name(&disk, i);
+    disk.rename_entry(i, new)
         .map_err(|e| format!("renaming \"{old}\": {e}"))?;
     save(image, &disk)?;
     Ok(format!("renamed \"{old}\" to \"{new}\""))
+}
+
+fn cmd_name(image: &str, name: &str, id: &str) -> Result<String, String> {
+    let mut disk = load(image)?;
+    disk.set_header(name, id).map_err(|e| e.to_string())?;
+    save(image, &disk)?;
+    Ok(format!("named the disk \"{name}\", ID {id}"))
+}
+
+fn cmd_lock(image: &str, entry: &str, lock: bool) -> Result<String, String> {
+    let mut disk = load(image)?;
+    let i = entry_index(&disk, entry)?;
+    disk.set_locked(i, lock).map_err(|e| e.to_string())?;
+    save(image, &disk)?;
+    let done = if lock { "locked" } else { "unlocked" };
+    Ok(format!("{done} \"{}\"", entry_name(&disk, i)))
+}
+
+fn cmd_move(image: &str, entry: &str, to: &str) -> Result<String, String> {
+    let mut disk = load(image)?;
+    let i = entry_index(&disk, entry)?;
+    let n = disk.directory().map_err(|e| e.to_string())?.len();
+    let to = match to {
+        "last" => n,
+        _ => to
+            .parse::<usize>()
+            .ok()
+            .filter(|p| (1..=n).contains(p))
+            .ok_or_else(|| format!("the position must be 1 to {n}, or last"))?,
+    };
+    disk.move_entry(i, to - 1).map_err(|e| e.to_string())?;
+    save(image, &disk)?;
+    Ok(format!("moved \"{}\" to #{to}", entry_name(&disk, to - 1)))
+}
+
+fn cmd_separator(image: &str, after: Option<&str>) -> Result<String, String> {
+    let mut disk = load(image)?;
+    let after = match after {
+        Some(entry) => Some(entry_index(&disk, entry)?),
+        // At the end of the directory.
+        None => disk
+            .directory()
+            .map_err(|e| e.to_string())?
+            .len()
+            .checked_sub(1),
+    };
+    let at = disk
+        .add_separator(sector64::SEPARATOR, after)
+        .map_err(|e| e.to_string())?;
+    save(image, &disk)?;
+    Ok(format!("added a separator at #{}", at + 1))
 }
