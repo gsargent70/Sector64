@@ -278,6 +278,7 @@ impl App {
             Act::NewArchive if self.pane.is_dirty() => self.confirm = Some(Confirm::NewArchive),
             Act::NewArchive => self.new_archive(),
             Act::SaveArchiveAs => self.save_archive(),
+            Act::ConvertTo(to) => self.convert_to(to),
             Act::RunVice => self.run_vice(),
         }
     }
@@ -1034,6 +1035,56 @@ impl App {
         self.pane.selected = self.pane.nodes.iter().position(|n| n.name == name);
         self.basic.modified = false;
         self.status = done;
+    }
+
+    /// File > Convert To: write this pane's files (unsaved edits included)
+    /// to a new disk or archive of another format, chosen in a Save dialog.
+    /// The pane stays as it is.
+    pub(crate) fn convert_to(&mut self, to: sector64::convert::Target) {
+        let stem = self
+            .pane
+            .opened_path
+            .as_deref()
+            .and_then(|p| Path::new(p).file_stem()?.to_str().map(str::to_string))
+            .unwrap_or_else(|| "converted".into());
+        let converted = match self.pane.map_disk() {
+            Some(disk) => match sector64::convert::convert_disk(disk, to) {
+                Ok(c) => c,
+                Err(e) => {
+                    self.status = format!("Cannot convert this disk: {e}");
+                    return;
+                }
+            },
+            None if !self.pane.nodes.is_empty() => {
+                let (files, unreadable) = listed_files(&self.pane.nodes);
+                let mut c = sector64::convert::convert_files(&stem.to_uppercase(), &files, to);
+                c.skipped.splice(0..0, unreadable);
+                c
+            }
+            None => {
+                self.status = "Open a disk or archive to convert it".into();
+                return;
+            }
+        };
+        let ext = to.ext();
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter(ext.to_uppercase(), &[ext])
+            .set_file_name(format!("{stem}.{ext}"))
+            .save_file()
+        else {
+            return;
+        };
+        let path = path.with_extension(ext);
+        match std::fs::write(&path, &converted.bytes) {
+            Ok(()) => {
+                let shown = path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
+                self.status = convert_report(&shown, &converted);
+            }
+            Err(e) => self.status = format!("Save failed: {e}"),
+        }
     }
 
     /// Change the open disk as one undo step: `f` makes the change and says

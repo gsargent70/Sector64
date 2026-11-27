@@ -322,6 +322,8 @@ enum Act {
     Repair,
     NewArchive,
     SaveArchiveAs,
+    /// Write the focused pane's files out as a new disk or archive.
+    ConvertTo(sector64::convert::Target),
     /// Start the open disk, or the selected program, in VICE.
     RunVice,
     /// Dual-pane view: focus the other pane.

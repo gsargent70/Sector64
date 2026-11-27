@@ -25,6 +25,7 @@ pub mod blockmap;
 pub mod compare;
 pub mod bam;
 pub mod container;
+pub mod convert;
 pub mod cvt;
 pub mod directory;
 pub mod diredit;

@@ -134,8 +134,9 @@ the right and the listing makes room for it:
   +----------------------------------------------------------+
 
 - Menu bar (top):
-    File     New, Open, Open Recent, Save, Save As, Add Files,
-             Extract Selected, Extract All and Quit.
+    File     New, Open, Open Recent, Save, Save As, Convert
+             To, Add Files, Extract Selected, Extract All and
+             Quit.
     Edit     Undo, Redo, Rename, Delete, Select All, Move Up,
              Move Down, Add Separator, Lock / Unlock, Disk
              Name and ID, and Copy to Other Pane (in dual
@@ -554,6 +555,21 @@ THE UNSAVED-CHANGES GUARD
 
 The staging list shows the files you have added and their sizes
 before you save.
+
+CONVERTING TO ANOTHER FORMAT
+
+  File > Convert To ▸ writes everything in the pane (unsaved
+  edits included) to a new file of another format: a D64, D71
+  or D81 disk, or a T64, LNX or LBR archive. Pick the format,
+  then where to save it. The pane itself doesn't change.
+    - Disk to disk keeps each entry exactly: names, types,
+      locks, separator lines, and the disk's name and ID.
+    - An archive made into a disk is named after the archive.
+    - Separators are left out of an archive. A T64 stores
+      every file as PRG; use LNX or LBR to keep SEQ and USR.
+    - REL and GEOS files, and anything that doesn't fit, are
+      left out; the toast names them and says why.
+  The command-line tool s64conv does the same (see CLI.md).
 
 
 ----------------------------------------------------------------

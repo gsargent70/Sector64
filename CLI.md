@@ -191,6 +191,41 @@ arguments, a missing file, or a format it doesn't know).
 s64cmp original.d64 copy.d64 && echo "good copy"
 ```
 
+### `s64conv` — convert a disk or archive to another format
+
+```
+s64conv [--force] <input> <output.d64|.d71|.d81|.t64|.lnx|.lbr>
+```
+
+Writes every file of a disk image (D64, D71, D81, G64, D2M, or a Zip-Code
+set) or archive (any Sector64 reads) to a new disk or archive, whose
+format the output's extension picks.
+
+- Disk to disk keeps each entry exactly: its name, type and lock flag,
+  separator lines, and the disk's name and ID.
+- An archive made into a disk is named after the archive, with ID `01`.
+  Members of LHA and Wraptor archives, which record no type, become PRG
+  files.
+- Separators are left out of an archive, and a T64 records every file as
+  PRG (VICE reads them that way); `s64conv` says so on stderr. LNX and
+  LBR keep the types.
+- REL files and GEOS files aren't converted yet, and are listed with the
+  reason, as is anything that doesn't fit on the new disk.
+
+It won't replace an existing output file unless given `--force`.
+
+```
+$ s64conv games.d64 games.d81
+wrote games.d81: 14 files
+$ s64conv games.d64 games.t64
+s64conv: "----------------" a separator line, left out
+s64conv: "README" stored as PRG, not SEQ: a T64 holds only PRG files
+wrote games.t64: 13 files
+```
+
+The exit status is `0` when every file went across, `1` when some were
+left out (they're listed on stderr), and `2` when nothing was written.
+
 ### `s64write` — create and edit D64 images
 
 ```
@@ -335,6 +370,7 @@ s64tap game.tap
 | `s64extract` | Extract one file (or list it as BASIC)    | stdout       |
 | `s64val`     | Validate a disk, or draw its block map    | stdout + exit|
 | `s64cmp`     | Compare two disks or archives             | stdout + exit|
+| `s64conv`    | Convert a disk or archive to another format | the output |
 | `s64write`   | Create / edit a D64 (format/add/del/ren)  | the image    |
 | `s64basic`   | Turn a BASIC program's text into a PRG    | the PRG      |
 | `s64pack`    | Create a t64/lnx/lbr/p00 archive          | the archive  |

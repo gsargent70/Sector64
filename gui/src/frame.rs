@@ -241,6 +241,37 @@ impl App {
                             Act::SaveAs
                         });
                     }
+                    // Convert To ▸ (a disk or archive of another format)
+                    ui.add_enabled_ui(!self.pane.nodes.is_empty(), |ui| {
+                        egui::menu::menu_custom_button(
+                            ui,
+                            icon_button(&ic.floppy, "Convert To ▸"),
+                            |ui| {
+                                ui.set_min_width(180.0);
+                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                                for to in sector64::convert::Target::ALL {
+                                    let kind = match to {
+                                        sector64::convert::Target::T64 => "tape",
+                                        t if t.is_disk() => "disk",
+                                        _ => "archive",
+                                    };
+                                    let label = format!("{} {kind}…", to.ext().to_uppercase());
+                                    if menu_entry(
+                                        ui,
+                                        true,
+                                        entry(&ic.blank, &label, ""),
+                                        "write this pane's files to a new file of this \
+                                         format; the pane stays as it is",
+                                        "",
+                                    ) {
+                                        acts.push(Act::ConvertTo(to));
+                                    }
+                                }
+                            },
+                        );
+                    })
+                    .response
+                    .on_disabled_hover_text("open a disk or archive to convert it");
                     ui.separator();
                     // Add Files ▸ (pick several; the type for files whose
                     // name doesn't give one) — only with a disk/archive open.

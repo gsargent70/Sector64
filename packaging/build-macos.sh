@@ -17,7 +17,7 @@ set -eu
 
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
-CLI="s64ls s64extract s64val s64write s64pack s64arc s64lha s64wr3 s64cvt s64tap s64cmp s64basic"
+CLI="s64ls s64extract s64val s64write s64pack s64arc s64lha s64wr3 s64cvt s64tap s64cmp s64basic s64conv"
 ARM=aarch64-apple-darwin
 INTEL=x86_64-apple-darwin
 # The oldest macOS to support: the first that runs on both kinds of Mac.
