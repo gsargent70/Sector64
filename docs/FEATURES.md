@@ -92,7 +92,7 @@ Changing disks and building archives.
 | EDIT-06 | BASIC text → runnable PRG (V2, 7.0, Simons'), the reverse of VIEW-03/04 | L | Done v1.0.10 | core `sector64::tokenize`, `s64basic`, GUI BASIC editor; checked against petcat and the C64/C128 ROMs |
 | EDIT-07 | Directory editing: reorder, separator/"art" entries, disk name and ID, lock/unlock | M | Idea | |
 | EDIT-08 | Proper REL and GEOS copy between disks (side sectors, VLIR records) | M | Idea | both are skipped today |
-| EDIT-10 | Add Files: pick several at once; each one's type from its name (`.prg`/`.seq`/`.usr`/`.del`) or PC64 header (`.P00`/`.S00`/`.U00`/`.D00`), dropped files too; one undo step | S | Done (unreleased, #56) | other files keep their whole name and get the "other files as" type; REL (`.rel`, `.R00`) refused, see EDIT-08 |
+| EDIT-10 | Add Files: pick several at once; each one's type from its name (`.prg`/`.seq`/`.usr`/`.del`) or PC64 header (`.P00`/`.S00`/`.U00`/`.D00`), dropped files too; one undo step | S | Done v1.0.13 | other files keep their whole name and get the "other files as" type; REL (`.rel`, `.R00`) refused, see EDIT-08 |
 
 ## 4. Disk tools (DISK)
 
@@ -136,20 +136,20 @@ Checking and inspecting a disk's structure.
 | APP-07 | Background loading with a progress bar | M | Idea | |
 | APP-08 | Grow the window to fit the preview or long names | S | Idea | |
 | APP-09 | macOS build: universal, unsigned Sector64.app and CLI tools in a zip | M | Done v1.0.11 | CI builds, tests and starts it; v1.0.11 (Intel) tried by hand on macOS 14, incl. Run in VICE: all worked; Apple Silicon not tried by hand |
-| APP-14 | Menus regrouped as File / Edit / View / Tools / Help; Quit, Select All (Ctrl+A), Preview (Ctrl+P), F1, Help pages for shortcuts and About | S | Done (unreleased, #54) | from the 2026-11 review: File held 19 items |
-| APP-15 | Retire the Copy window: Dual Panes does all it did | S | Done (unreleased, #55) | Copy window from EDIT-04 (v1.0.7) predates Dual Panes (APP-06, v1.0.9) |
-| APP-17 | New Disk dialog (File > New > Disk Image…, Ctrl+N): name, ID, D64/D71/D81 with blocks free; Enter creates, Esc cancels | S | Done (unreleased, #57) | from the 2026-11 review; New disk and New archive now ask before replacing unsaved edits, as Open does |
-| APP-18 | Split `gui/src/main.rs` (8,400 lines) into modules; one Esc chain; one "listing changed" reset | M | Done (unreleased, #59) | from the 2026-11 review; fixes: one Esc closed two or three windows at once; New Disk/Archive left a read-only disk behind the disk map; GUI crate now rustfmt-clean |
-| APP-19 | Fix: a new archive with unsaved files was thrown away without asking (Open, New, Quit); it now gets the same Save first / Discard / Cancel prompt as a disk | S | Done (unreleased, #58) | found building APP-17; the title shows (unsaved)/(saved) |
-| APP-16 | Fix: Up or Down with a filter typed could crash (indexed past the filtered rows) | S | Done (unreleased, #54) | found in the 2026-11 review |
+| APP-14 | Menus regrouped as File / Edit / View / Tools / Help; Quit, Select All (Ctrl+A), Preview (Ctrl+P), F1, Help pages for shortcuts and About | S | Done v1.0.13 | from the 2026-11 review: File held 19 items |
+| APP-15 | Retire the Copy window: Dual Panes does all it did | S | Done v1.0.13 | Copy window from EDIT-04 (v1.0.7) predates Dual Panes (APP-06, v1.0.9) |
+| APP-17 | New Disk dialog (File > New > Disk Image…, Ctrl+N): name, ID, D64/D71/D81 with blocks free; Enter creates, Esc cancels | S | Done v1.0.13 | from the 2026-11 review; New disk and New archive now ask before replacing unsaved edits, as Open does |
+| APP-18 | Split `gui/src/main.rs` (8,400 lines) into modules; one Esc chain; one "listing changed" reset | M | Done v1.0.13 | from the 2026-11 review; fixes: one Esc closed two or three windows at once; New Disk/Archive left a read-only disk behind the disk map; GUI crate now rustfmt-clean |
+| APP-19 | Fix: a new archive with unsaved files was thrown away without asking (Open, New, Quit); it now gets the same Save first / Discard / Cancel prompt as a disk | S | Done v1.0.13 | found building APP-17; the title shows (unsaved)/(saved) |
+| APP-16 | Fix: Up or Down with a filter typed could crash (indexed past the filtered rows) | S | Done v1.0.13 | found in the 2026-11 review |
 | APP-13 | Fix: the preview pane left part of a narrow window unpainted (other windows showed through) | S | Done v1.0.12 | its header now wraps to fit; DIS scrolls sideways like HEX; a test runs the whole UI headless at several widths |
 
 ---
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Now:** APP-14 and APP-16 (#54), APP-15 (#55), EDIT-10 (#56), APP-17 (#57), APP-19 (#58), APP-18 (#59).
-2. **Next:** release v1.0.13, then EDIT-07, FMT-13.
+1. **Now:** EDIT-07 (directory editing), FMT-13.
+2. **Next:** DISK-08, CLI-06.
 
 ## Done by release
 
@@ -164,3 +164,4 @@ the rows above give each feature's first release.
 - **v1.0.10:** DISK-04, DISK-06, EDIT-06, CLI-03
 - **v1.0.11:** APP-09
 - **v1.0.12:** DISK-05, VIEW-10, APP-13
+- **v1.0.13:** EDIT-10, APP-14, APP-15, APP-16, APP-17, APP-18, APP-19
