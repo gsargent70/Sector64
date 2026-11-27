@@ -866,16 +866,30 @@ impl App {
             }
         }
 
+        // Esc closes the window in front, one per press, in this order. The
+        // New Disk dialog above has already taken Esc if it's open; with the
+        // cursor in the BASIC editor's text, Esc leaves the text and closes
+        // nothing.
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if show_help {
+                show_help = false;
+            } else if show_sector {
+                show_sector = false;
+            } else if show_map {
+                show_map = false;
+            } else if show_compare {
+                show_compare = false;
+            } else if self.show_validation {
+                self.show_validation = false;
+            } else if show_basic {
+                show_basic = basic.typing;
+            } else {
+                show_find = false;
+            }
+        }
+
         // Validation window: what the check found, and the fixes it offers.
         if self.show_validation {
-            if !show_help
-                && !show_map
-                && !show_sector
-                && !show_compare
-                && ctx.input(|i| i.key_pressed(egui::Key::Escape))
-            {
-                self.show_validation = false;
-            }
             let screen = ctx.screen_rect();
             let mut close = false;
             egui::Window::new(
@@ -906,9 +920,6 @@ impl App {
         // Help window: the user manual, its keyboard shortcuts, or what this
         // program is. Esc or the Close button dismisses it.
         if show_help {
-            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                show_help = false;
-            }
             let screen = ctx.screen_rect();
             egui::Window::new(
                 egui::RichText::new("SECTOR64 — HELP")
@@ -967,9 +978,6 @@ impl App {
             if self.pane.map_cache.is_none() {
                 self.pane.map_cache = self.pane.map_disk().map(Disk::block_map);
             }
-            if !show_help && !show_sector && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                show_map = false;
-            }
             if let Some(map) = &self.pane.map_cache {
                 let screen = ctx.screen_rect();
                 egui::Window::new(egui::RichText::new("DISK MAP").color(c64::ACCENT).strong())
@@ -1019,9 +1027,6 @@ impl App {
             if self.pane.map_cache.is_none() {
                 self.pane.map_cache = self.pane.map_disk().map(Disk::block_map);
             }
-            if !show_help && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                show_sector = false;
-            }
             let writable = self.pane.disk.is_some();
             if let (Some(disk), Some(map)) = (self.pane.map_disk(), &self.pane.map_cache) {
                 let screen = ctx.screen_rect();
@@ -1049,16 +1054,6 @@ impl App {
 
         // Find window: search the listing's files for text or bytes.
         if show_find {
-            if !show_help
-                && !show_map
-                && !show_sector
-                && !show_compare
-                && !show_basic
-                && !self.show_validation
-                && ctx.input(|i| i.key_pressed(egui::Key::Escape))
-            {
-                show_find = false;
-            }
             let source = self.sector_source();
             let stale = !self.find.source.is_empty() && self.find.source != source;
             let on_disk = self.pane.map_disk().is_some();
@@ -1088,13 +1083,6 @@ impl App {
                 dual = true;
                 show_preview = false;
             }
-            if !show_help
-                && !show_map
-                && !show_sector
-                && ctx.input(|i| i.key_pressed(egui::Key::Escape))
-            {
-                show_compare = false;
-            }
             let (left, right) = if self.focus_right {
                 (&self.back, &self.pane)
             } else {
@@ -1123,16 +1111,6 @@ impl App {
 
         // BASIC editor window. Esc leaves the text first, then closes it.
         if show_basic {
-            if !basic.typing
-                && !show_help
-                && !show_map
-                && !show_sector
-                && !show_compare
-                && !self.show_validation
-                && ctx.input(|i| i.key_pressed(egui::Key::Escape))
-            {
-                show_basic = false;
-            }
             let screen = ctx.screen_rect();
             let exists = match (&self.pane.disk, &self.pane.archive) {
                 (Some(ed), _) => ed

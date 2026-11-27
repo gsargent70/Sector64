@@ -1631,3 +1631,54 @@ fn ctrl_k_turns_dual_panes_on_and_off() {
     ctrl_k(&mut app);
     assert!(!app.dual);
 }
+
+#[test]
+fn esc_closes_one_window_per_press_front_first() {
+    let ctx = egui::Context::default();
+    let esc = |app: &mut App| {
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| app.frame_ui(ctx));
+    };
+    let open = |app: &App| {
+        [
+            ("help", app.show_help),
+            ("sector", app.show_sector),
+            ("map", app.show_map),
+            ("find", app.show_find),
+        ]
+        .into_iter()
+        .filter(|w| w.1)
+        .map(|w| w.0)
+        .collect::<Vec<_>>()
+    };
+    let mut app = app_with_disk();
+    (app.show_help, app.show_sector, app.show_map, app.show_find) = (true, true, true, true);
+    for left in [
+        &["sector", "map", "find"][..],
+        &["map", "find"],
+        &["find"],
+        &[],
+    ] {
+        esc(&mut app);
+        assert_eq!(open(&app), left);
+    }
+
+    // With the cursor in the BASIC editor's text, Esc only leaves the text.
+    let mut app = app_with_disk();
+    (app.show_basic, app.show_find) = (true, true);
+    app.basic.typing = true;
+    esc(&mut app);
+    assert!(app.show_basic && app.show_find);
+    app.basic.typing = false;
+    esc(&mut app);
+    assert!(!app.show_basic && app.show_find);
+}
