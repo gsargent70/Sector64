@@ -226,27 +226,57 @@ wrote games.t64: 13 files
 The exit status is `0` when every file went across, `1` when some were
 left out (they're listed on stderr), and `2` when nothing was written.
 
-### `s64write` — create and edit D64 images
+### `s64write` — create and edit disk images
 
 ```
-s64write format <image.d64> <disk name> <id>
-s64write add    <image.d64> <cbm name> <host file> [prg|seq|usr]
-s64write delete <image.d64> <cbm name>
-s64write rename <image.d64> <old name> <new name>
+s64write format    <image> <disk name> <id> [d64|d71|d81]
+s64write add       <image> <cbm name> <host file> [prg|seq|usr]
+s64write delete    <image> <entry>
+s64write rename    <image> <entry> <new name>
+s64write name      <image> <disk name> <id>
+s64write lock      <image> <entry>
+s64write unlock    <image> <entry>
+s64write move      <image> <entry> <position|last>
+s64write separator <image> [<after entry>]
+s64write import    <image> <archive.t64|.lnx|.lbr|.p00>
+s64write unzip     <out.d64> <zipcode base>
 ```
 
-Creates and edits a D64 image in place. `format` writes a fresh, empty
-image. `add` stores a host file's raw bytes as a new directory entry
-(type defaults to `prg`; for a PRG the bytes include the two-byte load
-address). `delete` scratches an entry and frees its blocks. `rename`
-changes a name. Edits are written back to the same image file.
+Creates and edits a D64, D71 or D81 image in place (CMD-native D2M
+images can be edited too). Edits are written back to the same file.
+
+- `format` writes a fresh, empty image (a D64 unless you say `d71` or
+  `d81`). It won't replace an existing file.
+- `add` stores a host file's raw bytes as a new directory entry (type
+  defaults to `prg`; for a PRG the bytes include the two-byte load
+  address).
+- `delete` scratches an entry and frees its blocks; `rename` changes a
+  name.
+- `name` changes the disk's name and two-character ID.
+- `lock` and `unlock` set the lock flag (`<` in a listing, so the drive
+  won't scratch the file).
+- `move` puts an entry at a position in the directory (`1` is first, or
+  `last`), shifting the others along.
+- `separator` adds a `----------------` line, a DEL entry of 0 blocks
+  that owns no blocks: after `<after entry>`, or at the end. Rename it
+  to change its text.
+- `import` adds every file of a T64, LNX, LBR or P00 archive; `unzip`
+  joins a Zip-Code set (`1!base` to `4!base`) into a D64.
+
+An `<entry>` is a file's name (the first with that name, in any case),
+or `#N` for the Nth entry in directory order. Separators all share one
+name, so `#N` is how to pick one.
 
 ```sh
-s64write format disk.d64 "MY DISK" 2A
-s64write add    disk.d64 HELLO hello.prg prg
-s64write add    disk.d64 README readme.txt seq
-s64write rename disk.d64 HELLO GREETING
-s64write delete disk.d64 README
+s64write format    disk.d64 "MY DISK" 2A
+s64write add       disk.d64 HELLO hello.prg prg
+s64write add       disk.d64 README readme.txt seq
+s64write rename    disk.d64 HELLO GREETING
+s64write move      disk.d64 README 1
+s64write separator disk.d64 README
+s64write lock      disk.d64 GREETING
+s64write name      disk.d64 "GAMES 1" G1
+s64write delete    disk.d64 '#2'
 ```
 
 ---
@@ -371,7 +401,7 @@ s64tap game.tap
 | `s64val`     | Validate a disk, or draw its block map    | stdout + exit|
 | `s64cmp`     | Compare two disks or archives             | stdout + exit|
 | `s64conv`    | Convert a disk or archive to another format | the output |
-| `s64write`   | Create / edit a D64 (format/add/del/ren)  | the image    |
+| `s64write`   | Create / edit a disk, its directory too   | the image    |
 | `s64basic`   | Turn a BASIC program's text into a PRG    | the PRG      |
 | `s64pack`    | Create a t64/lnx/lbr/p00 archive          | the archive  |
 | `s64arc`     | List / extract ARC or SDA                 | stdout       |

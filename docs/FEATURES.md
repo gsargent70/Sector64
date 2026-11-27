@@ -28,7 +28,6 @@ the core plus one front end.
 
 | ID | Idea | Notes |
 |---|---|---|
-| CLI-07 | Directory editing from the command line (`s64write`: move, lock, separator, disk name) | S; core done in EDIT-07 |
 | EDIT-11 | Directory art beyond separators: type PETSCII graphics into an entry's name (a character picker) | M; follow-up to EDIT-07, which adds plain `-` lines |
 | EDIT-09 | BASIC editor: renumber, find/replace, and keep machine code after a listed program | M; follow-up to EDIT-06 |
 | CLI-05 | Repair from the command line (`s64val --repair`) | S; core done in DISK-04 |
@@ -124,6 +123,7 @@ Checking and inspecting a disk's structure.
 | CLI-02 | `s64extract --list` (BASIC listing) and `s64val --map` (block map) | S | Done v1.0.7 | |
 | CLI-03 | Compare two disks or archives from the command line | S | Done v1.0.10 | `s64cmp`; core `sector64::listing` reads any disk or archive |
 | CLI-04 | `--json` output for scripts | M | Idea | |
+| CLI-07 | Directory editing from the command line: `s64write name`, `lock`/`unlock`, `move`, `separator`; `#N` picks an entry by place | S | Done (unreleased, #63) | core from EDIT-07; `delete`/`rename` take `#N` too; checked with c1541 |
 
 ## 7. GUI and app (APP)
 
@@ -151,7 +151,7 @@ Checking and inspecting a disk's structure.
 ## Suggested order (a design choice; the user decides)
 
 1. **Now:** EDIT-07 (#61), FMT-13 (#62).
-2. **Next:** CLI-07, DISK-08, CLI-06.
+2. **Next:** CLI-07 (#63), CLI-06, then DISK-08.
 
 ## Done by release
 

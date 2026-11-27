@@ -309,6 +309,11 @@ cargo run --bin s64cmp -- a.d64 b.d64                    # compare two disks
 cargo run --bin s64conv -- disk.d64 disk.d81             # convert to another format
 cargo run --bin s64write -- format disk.d64 "my disk" 01 # create a blank image
 cargo run --bin s64write -- add disk.d64 hello hello.prg # write a host file in
+cargo run --bin s64write -- move disk.d64 hello 1        # first in the directory
+cargo run --bin s64write -- separator disk.d64 hello     # a ---- line after it
+cargo run --bin s64write -- lock disk.d64 hello          # lock (shown <)
+cargo run --bin s64write -- name disk.d64 "games" g1     # disk name and ID
+cargo run --bin s64write -- unlock disk.d64 hello        # unlock it again
 cargo run --bin s64write -- rename disk.d64 hello hi     # rename
 cargo run --bin s64write -- delete disk.d64 hi           # scratch
 ```
@@ -382,7 +387,7 @@ against a real disk.
 | `src/convert.rs`   | one disk or archive written out as another format |
 | `src/bin/s64conv.rs` | CLI: convert a disk or archive to another format |
 | `src/diredit.rs`   | directory editing: reorder, separators, lock, disk name and ID |
-| `src/bin/s64write.rs` | CLI: format, add, delete, rename |
+| `src/bin/s64write.rs` | CLI: format, add, delete, rename, and edit the directory |
 | `src/bin/s64pack.rs` | CLI: create a T64/LNX/LBR/P00 archive |
 | `src/arc.rs`       | Commodore ARC + SDA walk, stored + crunch (LZW+RLE) decode |
 | `src/lha.rs`       | LHA / SFX archive walk + lh0/lh1 decode |
