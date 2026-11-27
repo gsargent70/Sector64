@@ -1515,7 +1515,9 @@ fn a_new_disk_or_archive_asks_before_replacing_unsaved_changes() {
 
 #[test]
 fn the_title_gives_way_to_the_menus_in_a_narrow_window() {
-    for (w, title) in [(1100.0, true), (520.0, false)] {
+    // Measured, not fixed widths: the C64 font is found at run time, and a
+    // machine without it (CI) draws everything narrower.
+    let draw = |w: f32| {
         let ctx = egui::Context::default();
         load_c64_font(&ctx);
         apply_c64_theme(&ctx);
@@ -1529,16 +1531,41 @@ fn the_title_gives_way_to_the_menus_in_a_narrow_window() {
         };
         let _ = ctx.run(input(), |ctx| app.frame_ui(ctx));
         let out = ctx.run(input(), |ctx| app.frame_ui(ctx));
-        let texts = drawn_texts(&out);
-        let shown = |name: &str| {
-            texts
-                .iter()
-                .any(|(t, r)| t == name && r.max.x <= w && r.min.y < 40.0)
-        };
-        assert_eq!(shown("SECTOR64"), title, "{w} px wide");
-        for menu in ["File", "Edit", "View", "Tools", "Help"] {
-            assert!(shown(menu), "{w} px wide: {menu} is cut off");
-        }
+        drawn_texts(&out)
+            .into_iter()
+            .filter(|(_, r)| r.max.x <= w && r.min.y < 40.0)
+            .collect::<Vec<_>>()
+    };
+    let find = |texts: &[(String, egui::Rect)], name: &str| {
+        texts.iter().find(|(t, _)| t == name).map(|(_, r)| *r)
+    };
+    let menus = ["File", "Edit", "View", "Tools", "Help"];
+
+    // Wide: the title and every menu.
+    let wide = draw(1100.0);
+    assert!(
+        find(&wide, "SECTOR64").is_some(),
+        "the title shows when there's room"
+    );
+    for menu in menus {
+        assert!(
+            find(&wide, menu).is_some(),
+            "1100 px wide: {menu} is cut off"
+        );
+    }
+
+    // Just too narrow for both: the title gives way and every menu shows.
+    let w = find(&wide, "Help").unwrap().max.x - 1.0;
+    let narrow = draw(w);
+    assert!(
+        find(&narrow, "SECTOR64").is_none(),
+        "{w} px wide: the title stayed"
+    );
+    for menu in menus {
+        assert!(
+            find(&narrow, menu).is_some(),
+            "{w} px wide: {menu} is cut off"
+        );
     }
 }
 
