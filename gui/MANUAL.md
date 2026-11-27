@@ -136,8 +136,10 @@ the right and the listing makes room for it:
 - Menu bar (top):
     File     New, Open, Open Recent, Save, Save As, Add Files,
              Extract Selected, Extract All and Quit.
-    Edit     Undo, Redo, Rename, Delete, Select All and Copy
-             to Other Pane (in dual view).
+    Edit     Undo, Redo, Rename, Delete, Select All, Move Up,
+             Move Down, Add Separator, Lock / Unlock, Disk
+             Name and ID, and Copy to Other Pane (in dual
+             view).
     View     Preview (shows or hides the preview pane), Dual
              Panes (two panes side by side, see 13; it takes
              turns with the preview pane) and Disk Map.
@@ -464,6 +466,31 @@ RENAMING
   right-click Rename. Edit the name in place:
       Enter  commits the new name.
       Esc    (or clicking away) cancels.
+
+EDITING THE DIRECTORY
+
+  These are in the Edit menu, and each is one undo step.
+    Move Up / Move Down (Alt+Up / Alt+Down)
+        Move the selected file one place in the directory, the
+        order a C64 lists it in. The list has to be in directory
+        order: if you've sorted it by a column, click that
+        column until the sort arrow goes.
+    Add Separator
+        Add a "----------------" line after the selected file
+        (or at the top). It's a DEL entry of 0 blocks that owns
+        no blocks on the disk, the usual way to divide a
+        directory into sections. Rename it (F2) to change its
+        text; delete it like a file.
+    Lock / Unlock (Ctrl+Shift+L)
+        Lock the selected files, so the drive won't scratch
+        them; the listing shows them with <. If they're all
+        locked already, this unlocks them.
+    Disk Name and ID…
+        Change the name and two-character ID in the
+        directory's header line.
+  Move Up and Move Down also reorder a new archive's files.
+  Copying a separator to another disk (F5, or Copy Missing in
+  Compare) adds it there as a separator.
 
 DELETING (SCRATCHING)
 
@@ -908,6 +935,7 @@ On a Mac, use Cmd for Ctrl (see "On a Mac" in section 19).
     Ctrl+A      Select every file listed
     Ctrl+P      Show or hide the preview pane
     Ctrl+L      Validate or repair the open disk
+    Ctrl+Shift+L  Lock or unlock the selected file(s)
     Ctrl+M      Show or hide the disk map
     Ctrl+E      Show or hide the sector editor
     Ctrl+F      Find text or bytes inside the listed files
@@ -922,6 +950,8 @@ On a Mac, use Cmd for Ctrl (see "On a Mac" in section 19).
     Delete      Delete / scratch the selected file(s)
     F2          Rename the selected file (in place)
     Up / Down   Move the selection
+    Alt+Up / Alt+Down
+                Move the selected file up or down the directory
     F1          Show or hide this manual
     Esc         Cancel an in-place rename; close the window
                 in front (one window per press)

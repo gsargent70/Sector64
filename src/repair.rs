@@ -510,7 +510,7 @@ impl Disk {
 
     /// Every used directory entry with its place, in [`Disk::directory`]'s
     /// order.
-    fn entry_slots(&self) -> Result<Vec<(Slot, Entry)>> {
+    pub(crate) fn entry_slots(&self) -> Result<Vec<(Slot, Entry)>> {
         self.directory()?; // the chain is sound
         let dir = self.geometry().directory_track();
         let (chain, _) = self.walk(dir, self.geometry().directory_first_sector());

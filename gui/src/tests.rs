@@ -1575,7 +1575,16 @@ fn every_menu_opens_whole_inside_a_narrow_window() {
         ("File", &["New ▸", "Open…", "Save As…", "Extract All"]),
         (
             "Edit",
-            &["Undo", "Redo", "Rename", "Select All", "Copy to Other Pane"],
+            &[
+                "Undo",
+                "Redo",
+                "Rename",
+                "Select All",
+                "Move Down",
+                "Lock / Unlock",
+                "Disk Name and ID…",
+                "Copy to Other Pane",
+            ],
         ),
         ("View", &["Preview", "Dual Panes", "Disk Map"]),
         (
@@ -1744,4 +1753,103 @@ fn any_listing_change_forgets_what_was_worked_out_from_the_old_one() {
         app.apply(act);
         assert!(app.pane.ro_disk.is_none());
     }
+}
+
+#[test]
+fn directory_editing_moves_locks_separates_and_renames_the_disk() {
+    let mut app = app_with_disk();
+    for n in ["A", "B", "C"] {
+        app.add(n.into(), &[1, 8, 0]);
+    }
+    let names = |app: &App| {
+        app.pane
+            .nodes
+            .iter()
+            .map(|n| n.name.clone())
+            .collect::<Vec<_>>()
+    };
+
+    // Alt+Down moves the selected file, which stays selected.
+    app.pane.selected = Some(0);
+    let ctx = egui::Context::default();
+    let alt_down = egui::RawInput {
+        events: vec![egui::Event::Key {
+            key: egui::Key::ArrowDown,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::ALT,
+        }],
+        modifiers: egui::Modifiers::ALT,
+        ..Default::default()
+    };
+    let _ = ctx.run(alt_down, |ctx| app.frame_ui(ctx));
+    assert_eq!(names(&app), ["B", "A", "C"]);
+    assert_eq!(app.pane.selected, Some(1));
+    app.apply(Act::MoveEntry(false));
+    app.apply(Act::MoveEntry(false)); // already first: nothing happens
+    assert_eq!(names(&app), ["A", "B", "C"]);
+    app.apply(Act::Undo);
+    assert_eq!(names(&app), ["B", "A", "C"]);
+
+    // Not while sorted: the order on screen isn't the directory's.
+    app.pane.sort = Some((SortKey::Name, true));
+    app.apply(Act::MoveEntry(true));
+    assert!(app.status.contains("directory order"), "{}", app.status);
+    assert_eq!(names(&app), ["B", "A", "C"]);
+    app.pane.sort = None;
+
+    // Lock the marked files; again unlocks them.
+    app.pane.marked.extend([0, 2]);
+    app.apply(Act::ToggleLock);
+    assert_eq!(app.status, "Locked 2 files");
+    let locked = |app: &App| {
+        let d = app.pane.disk.as_ref().unwrap().disk.directory().unwrap();
+        d.iter().map(|e| e.locked).collect::<Vec<_>>()
+    };
+    assert_eq!(locked(&app), [true, false, true]);
+    assert!(app.pane.nodes[0].detail.ends_with('<'));
+    assert_eq!(app.pane.marked.len(), 2, "the marks survive");
+    app.apply(Act::ToggleLock);
+    assert_eq!(locked(&app), [false, false, false]);
+
+    // A separator goes after the selected file and is selected.
+    app.pane.marked.clear();
+    app.pane.selected = Some(0);
+    app.apply(Act::AddSeparator);
+    assert_eq!(names(&app)[..2], ["B", "----------------"]);
+    assert_eq!(app.pane.selected, Some(1));
+    assert_eq!(app.pane.nodes[1].data.as_deref(), Ok(&[][..]));
+
+    // The Disk Name dialog starts from the disk's name and ID.
+    app.apply(Act::OpenDiskName);
+    assert!(app.show_disk_name);
+    assert_eq!(
+        (app.disk_name.as_str(), app.disk_id.as_str()),
+        ("UNDO TEST", "UT")
+    );
+    app.disk_name = "GAMES".into();
+    app.disk_id = "G1".into();
+    app.apply(Act::SetHeader);
+    let h = app.pane.disk.as_ref().unwrap().disk.header().unwrap();
+    assert_eq!((h.name.as_str(), h.id.as_str()), ("GAMES", "G1"));
+    assert!(app.pane.title.contains("GAMES"), "{}", app.pane.title);
+    app.apply(Act::Undo);
+    let h = app.pane.disk.as_ref().unwrap().disk.header().unwrap();
+    assert_eq!(h.name, "UNDO TEST");
+}
+
+#[test]
+fn a_new_archive_reorders_too() {
+    let mut app = App::default();
+    app.apply(Act::NewArchive);
+    app.add("ONE".into(), &[1]);
+    app.add("TWO".into(), &[2]);
+    app.pane.selected = Some(1);
+    app.apply(Act::MoveEntry(false));
+    let names: Vec<_> = app.pane.nodes.iter().map(|n| n.name.as_str()).collect();
+    assert_eq!(names, ["TWO", "ONE"]);
+    assert_eq!(app.pane.selected, Some(0));
+    app.apply(Act::Undo);
+    assert_eq!(app.pane.nodes[0].name, "ONE");
 }

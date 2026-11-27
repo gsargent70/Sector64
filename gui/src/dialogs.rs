@@ -122,3 +122,47 @@ pub(crate) fn unsaved_message(which: &[&str]) -> String {
     s[..1].make_ascii_uppercase();
     s
 }
+
+/// The Disk Name dialog: the name and ID in the directory's header line.
+/// `first` is true on the frame it opens, to put the cursor in the name.
+pub(crate) fn disk_name_ui(
+    ui: &mut egui::Ui,
+    (name, id): (&mut String, &mut String),
+    first: bool,
+    ok: &mut bool,
+    close: &mut bool,
+) {
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    egui::Grid::new("disk_name_grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label("Disk name");
+            let field = ui.add(
+                egui::TextEdit::singleline(name)
+                    .char_limit(16)
+                    .desired_width(180.0),
+            );
+            if first {
+                field.request_focus();
+            }
+            ui.end_row();
+            ui.label("ID");
+            ui.add(
+                egui::TextEdit::singleline(id)
+                    .char_limit(2)
+                    .desired_width(40.0),
+            )
+            .on_hover_text("two characters, shown after the name in the directory");
+            ui.end_row();
+        });
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        if ui.button("OK").clicked() {
+            *ok = true;
+        }
+        if ui.button("Cancel").clicked() {
+            *close = true;
+        }
+    });
+}
