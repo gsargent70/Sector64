@@ -1,7 +1,7 @@
 # Sector64 feature list
 
 Sector64 is a clean-room, dependency-free Rust toolkit for Commodore disk
-images and archives, with a C64-styled GUI and thirteen command-line tools. This
+images and archives, with a C64-styled GUI and fourteen command-line tools. This
 is the project's single list of features: what's built, what's planned, and
 ideas for later.
 
@@ -37,7 +37,6 @@ the core plus one front end.
 | APP-11 | Sign and notarize the Mac app | S once enrolled; needs an Apple Developer account ($99/yr) |
 | APP-12 | Test the Mac GUI by remote control in CI (or a Mac over SSH): file dialogs, drag-and-drop, shortcuts, Run in VICE | M; less urgent now v1.0.11 was tried by hand; follow-up to APP-09; needs the runners to allow scripted clicks and keys, not tried yet |
 | DISK-08 | Sector editor: type text into the PETSCII column, and search the disk for bytes or text | M; follow-up to DISK-05 (today it edits in hex only) |
-| CLI-06 | Search from the command line (`s64find`): text or hex inside the files of disks and archives | S; core done in VIEW-10 |
 
 ---
 
@@ -124,6 +123,7 @@ Checking and inspecting a disk's structure.
 | CLI-03 | Compare two disks or archives from the command line | S | Done v1.0.10 | `s64cmp`; core `sector64::listing` reads any disk or archive |
 | CLI-04 | `--json` output for scripts | M | Idea | |
 | CLI-07 | Directory editing from the command line: `s64write name`, `lock`/`unlock`, `move`, `separator`; `#N` picks an entry by place | S | Done (unreleased, #63) | core from EDIT-07; `delete`/`rename` take `#N` too; checked with c1541 |
+| CLI-06 | Search from the command line: `s64find [--hex] [-l] [--max N] <pattern> <files>...`, text or hex inside the files of disks and archives | S | Done (unreleased, #64) | core from VIEW-10; offsets plus the first match's track/sector on a disk; grep-like exit codes; the 14th tool; s64cmp/s64conv/s64find share one loader |
 
 ## 7. GUI and app (APP)
 
@@ -151,7 +151,7 @@ Checking and inspecting a disk's structure.
 ## Suggested order (a design choice; the user decides)
 
 1. **Now:** EDIT-07 (#61), FMT-13 (#62).
-2. **Next:** CLI-07 (#63), CLI-06, then DISK-08.
+2. **Next:** CLI-07 (#63), CLI-06 (#64), then DISK-08.
 
 ## Done by release
 

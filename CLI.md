@@ -191,6 +191,36 @@ arguments, a missing file, or a format it doesn't know).
 s64cmp original.d64 copy.d64 && echo "good copy"
 ```
 
+### `s64find` — search disks and archives for text or bytes
+
+```
+s64find [--hex] [-l] [--max N] <pattern> <disk or archive>...
+```
+
+Looks inside every file of each disk image or archive given. Text
+matches the way a C64 shows it: letters in either case, whichever
+character set wrote them, so `hello` finds `HELLO` in a BASIC listing
+and in shifted PETSCII alike. A file whose name contains the text is
+listed too (marked `name`). With `--hex` the pattern is bytes, such as
+`A9 00 8D`, with `??` for any byte; names aren't searched then.
+
+Each file with a match gets a line: its offsets (the first 8, or `--max
+N`, with a count of the rest), and on a disk the track, sector and byte
+of the first. `-l` prints only the files' names.
+
+```
+$ s64find hello games.d64 extras.lnx
+games.d64: "GREETINGS"        prg  3 matches at $000A $012C $01F4; first in track 1, sector 0, byte 12
+games.d64: "HELLO WORLD"      seq  name
+extras.lnx: "INSIDE"           prg  1 match at $0004
+$ s64find --hex "A9 ?? 8D" games.d64
+games.d64: "GREETINGS"        prg  1 match at $0208; first in track 1, sector 2, byte 14
+```
+
+The exit status is like `grep`'s: `0` when something matched, `1` when
+nothing did, `2` on an error (a bad pattern, or an input it couldn't
+read).
+
 ### `s64conv` — convert a disk or archive to another format
 
 ```
@@ -401,6 +431,7 @@ s64tap game.tap
 | `s64val`     | Validate a disk, or draw its block map    | stdout + exit|
 | `s64cmp`     | Compare two disks or archives             | stdout + exit|
 | `s64conv`    | Convert a disk or archive to another format | the output |
+| `s64find`    | Search disks and archives for text or bytes | stdout + exit|
 | `s64write`   | Create / edit a disk, its directory too   | the image    |
 | `s64basic`   | Turn a BASIC program's text into a PRG    | the PRG      |
 | `s64pack`    | Create a t64/lnx/lbr/p00 archive          | the archive  |

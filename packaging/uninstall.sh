@@ -3,7 +3,7 @@
 # Honours the same PREFIX and XDG_DATA_HOME variables.
 set -eu
 
-CLI="s64ls s64extract s64val s64write s64pack s64arc s64lha s64wr3 s64cvt s64tap s64cmp s64basic s64conv"
+CLI="s64ls s64extract s64val s64write s64pack s64arc s64lha s64wr3 s64cvt s64tap s64cmp s64basic s64conv s64find"
 
 PREFIX="${PREFIX:-$HOME/.local}"
 BIN="$PREFIX/bin"

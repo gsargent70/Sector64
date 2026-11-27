@@ -20,9 +20,8 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::process::ExitCode;
 
+use common::Loaded;
 use sector64::convert::{convert_disk, convert_files, Converted, Target};
-use sector64::listing::{read_archive, zipcode_parts};
-use sector64::Disk;
 
 const USAGE: &str = "usage: s64conv [--force] <input> <output.d64|.d71|.d81|.t64|.lnx|.lbr>";
 
@@ -94,39 +93,10 @@ fn main() -> ExitCode {
 
 /// Read `path` as a disk image (or Zip-Code set) or an archive and convert it.
 fn convert(path: &Path, to: Target) -> Result<Converted, String> {
-    let shown = path.display();
-    let read = |p: &Path| std::fs::read(p).map_err(|e| format!("cannot read {}: {e}", p.display()));
-    let disk = |bytes: Vec<u8>| -> Result<Converted, String> {
-        let disk = Disk::load(bytes).map_err(|e| format!("{shown}: {e}"))?;
-        convert_disk(&disk, to).map_err(|e| format!("{shown}: {e}"))
-    };
-    if let Some(names) = zipcode_parts(path) {
-        let mut parts = Vec::with_capacity(4);
-        for name in names {
-            parts.push(read(&path.with_file_name(name))?);
+    match common::load_any(path)? {
+        Loaded::Disk(disk) => {
+            convert_disk(&disk, to).map_err(|e| format!("{}: {e}", path.display()))
         }
-        let d64 = sector64::parse_zipcode([&parts[0], &parts[1], &parts[2], &parts[3]])
-            .map_err(|e| format!("{shown}: {e}"))?;
-        return disk(d64);
-    }
-    let bytes = read(path)?;
-    let ext = path.extension().and_then(OsStr::to_str).unwrap_or_default();
-    let disk_error = match Disk::load(bytes.as_slice()) {
-        Ok(_) => return disk(bytes),
-        Err(e) => e,
-    };
-    match read_archive(ext, &bytes) {
-        Some(Ok(archive)) => {
-            let title = path
-                .file_stem()
-                .and_then(OsStr::to_str)
-                .unwrap_or("archive")
-                .to_uppercase();
-            Ok(convert_files(&title, &archive.files, to))
-        }
-        Some(Err(e)) => Err(format!("{shown}: {e}")),
-        None => Err(format!(
-            "{shown}: not a disk image or archive ({disk_error})"
-        )),
+        Loaded::Archive(title, files) => Ok(convert_files(&title.to_uppercase(), &files, to)),
     }
 }
