@@ -254,6 +254,17 @@ impl App {
                 }
             }
             Act::AddPaths(paths) => self.add_paths(&paths),
+            Act::MoveEntry(down) => self.move_entry(down),
+            Act::ToggleLock => self.toggle_lock(),
+            Act::AddSeparator => self.add_separator(),
+            Act::OpenDiskName => {
+                if let Some(h) = self.pane.disk.as_ref().and_then(|e| e.disk.header().ok()) {
+                    self.disk_name = h.name;
+                    self.disk_id = h.id;
+                    self.show_disk_name = true;
+                }
+            }
+            Act::SetHeader => self.set_header(),
             Act::Rename => self.rename(),
             Act::Delete => self.delete(),
             Act::Save => self.save(false),
@@ -1025,6 +1036,140 @@ impl App {
         self.status = done;
     }
 
+    /// Change the open disk as one undo step: `f` makes the change and says
+    /// what it did. Returns what `f` returned, or `None` (with the reason
+    /// on the status line) if it failed.
+    pub(crate) fn edit_disk<T>(
+        &mut self,
+        f: impl FnOnce(&mut Disk) -> sector64::Result<(T, String)>,
+    ) -> Option<T> {
+        let before = self.pane.snapshot();
+        let ed = self.pane.disk.as_mut()?;
+        match f(&mut ed.disk) {
+            Ok((out, done)) => {
+                ed.dirty = true;
+                self.pane.record(before, &done);
+                self.pane.refresh();
+                self.status = done;
+                Some(out)
+            }
+            Err(e) => {
+                self.status = format!("Couldn't change the directory: {e}");
+                None
+            }
+        }
+    }
+
+    /// Move the selected entry one place up or down the directory (or the
+    /// new archive's list), keeping it selected.
+    pub(crate) fn move_entry(&mut self, down: bool) {
+        let Some(i) = self.pane.selected else {
+            self.status = "Select a file to move".into();
+            return;
+        };
+        if self.pane.sort.is_some() {
+            self.status = "Click the sorted column until the list is back in directory order, \
+                           then move files"
+                .into();
+            return;
+        }
+        let to = if down {
+            i.checked_add(1)
+        } else {
+            i.checked_sub(1)
+        };
+        let Some(to) = to.filter(|&t| t < self.pane.nodes.len()) else {
+            return; // already at the top or bottom
+        };
+        let name = self.pane.nodes[i].name.clone();
+        let done = format!("Moved \"{name}\" {}", if down { "down" } else { "up" });
+        if self.pane.disk.is_some() {
+            if self
+                .edit_disk(|d| d.move_entry(i, to).map(|()| ((), done)))
+                .is_none()
+            {
+                return;
+            }
+        } else if let Some(stage) = &mut self.pane.archive {
+            let before = Some(Snapshot::Archive(stage.clone()));
+            stage.swap(i, to);
+            self.pane.record(before, &done);
+            self.pane.refresh();
+            self.status = done;
+        }
+        self.pane.selected = Some(to);
+    }
+
+    /// Lock the selected files (the marked ones, or else the selected row),
+    /// or unlock them if they're all locked already.
+    pub(crate) fn toggle_lock(&mut self) {
+        let mut rows: Vec<usize> = if self.pane.marked.is_empty() {
+            self.pane.selected.into_iter().collect()
+        } else {
+            self.pane.marked.iter().copied().collect()
+        };
+        rows.sort_unstable();
+        let Some(dir) = self
+            .pane
+            .disk
+            .as_ref()
+            .and_then(|e| e.disk.directory().ok())
+        else {
+            return;
+        };
+        rows.retain(|&r| r < dir.len());
+        if rows.is_empty() {
+            self.status = "Select a file to lock or unlock".into();
+            return;
+        }
+        let lock = rows.iter().any(|&r| !dir[r].locked);
+        let what = match rows.as_slice() {
+            [r] => format!("\"{}\"", dir[*r].name),
+            many => format!("{} files", many.len()),
+        };
+        let done = format!("{} {what}", if lock { "Locked" } else { "Unlocked" });
+        let (sel, marked) = (self.pane.selected, self.pane.marked.clone());
+        let ok = self.edit_disk(|d| {
+            for &r in &rows {
+                d.set_locked(r, lock)?;
+            }
+            Ok(((), done))
+        });
+        if ok.is_some() {
+            // The rows didn't move, so the selection still holds.
+            self.pane.selected = sel;
+            self.pane.marked = marked;
+        }
+    }
+
+    /// Add a separator line after the selected entry (or first).
+    pub(crate) fn add_separator(&mut self) {
+        let after = self.pane.selected;
+        if self.pane.sort.is_some() {
+            self.status = "Click the sorted column until the list is back in directory order, \
+                           then add a separator"
+                .into();
+            return;
+        }
+        let at = self.edit_disk(|d| {
+            d.add_separator(sector64::SEPARATOR, after)
+                .map(|at| (at, "Added a separator line".to_string()))
+        });
+        if at.is_some() {
+            self.pane.selected = at;
+        }
+    }
+
+    /// Give the disk the name and ID typed in the Disk Name dialog.
+    pub(crate) fn set_header(&mut self) {
+        let (name, id) = (
+            self.disk_name.trim().to_string(),
+            self.disk_id.trim().to_string(),
+        );
+        let done = format!("Named the disk \"{name}\", ID {id}");
+        self.edit_disk(|d| d.set_header(&name, &id).map(|()| ((), done)));
+    }
+
     pub(crate) fn rename(&mut self) {
         let Some(i) = self.pane.selected else {
             self.status = "Select a file to rename".into();
@@ -1039,7 +1184,7 @@ impl App {
         let before = self.pane.snapshot();
         let done = format!("Renamed \"{old}\" → \"{new}\"");
         if let Some(ed) = &mut self.pane.disk {
-            match ed.disk.rename(&old, &new) {
+            match ed.disk.rename_entry(i, &new) {
                 Ok(()) => {
                     ed.dirty = true;
                     self.pane.record(before, &done);
@@ -1064,7 +1209,7 @@ impl App {
         let name = self.pane.nodes[i].name.clone();
         let before = self.pane.snapshot();
         if let Some(ed) = &mut self.pane.disk {
-            match ed.disk.scratch(&name) {
+            match ed.disk.scratch_entry(i) {
                 Ok(n) => {
                     ed.dirty = true;
                     let done = format!("Deleted \"{name}\" ({n} blocks freed)");

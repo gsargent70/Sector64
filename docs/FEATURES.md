@@ -28,6 +28,8 @@ the core plus one front end.
 
 | ID | Idea | Notes |
 |---|---|---|
+| CLI-07 | Directory editing from the command line (`s64write`: move, lock, separator, disk name) | S; core done in EDIT-07 |
+| EDIT-11 | Directory art beyond separators: type PETSCII graphics into an entry's name (a character picker) | M; follow-up to EDIT-07, which adds plain `-` lines |
 | EDIT-09 | BASIC editor: renumber, find/replace, and keep machine code after a listed program | M; follow-up to EDIT-06 |
 | CLI-05 | Repair from the command line (`s64val --repair`) | S; core done in DISK-04 |
 | FMT-14 | CMD-native subdirectories: list and map the files inside them | M; today only the top directory is read, so repair never frees blocks on such disks |
@@ -90,7 +92,7 @@ Changing disks and building archives.
 | EDIT-04 | Copy files between two disks (Copy window) | M | Done v1.0.7 | exact names, types, lock flags; the window was retired in APP-15 for Dual Panes |
 | EDIT-05 | Copy across panes with F5 | S | Done v1.0.9 | |
 | EDIT-06 | BASIC text → runnable PRG (V2, 7.0, Simons'), the reverse of VIEW-03/04 | L | Done v1.0.10 | core `sector64::tokenize`, `s64basic`, GUI BASIC editor; checked against petcat and the C64/C128 ROMs |
-| EDIT-07 | Directory editing: reorder, separator/"art" entries, disk name and ID, lock/unlock | M | Idea | |
+| EDIT-07 | Directory editing: reorder, separator/"art" entries, disk name and ID, lock/unlock | M | Done (unreleased, #61) | core `sector64::diredit` (`move_entry`, `add_separator`, `set_locked`, `set_header`); GUI Edit menu, Alt+Up/Down, Ctrl+Shift+L; checked with c1541 -dir/-validate (D64, D81); separators read empty and copy as separators; Rename/Delete now act on the row, not the first entry with that name, and deleting directory art no longer frees the directory's own blocks |
 | EDIT-08 | Proper REL and GEOS copy between disks (side sectors, VLIR records) | M | Idea | both are skipped today |
 | EDIT-10 | Add Files: pick several at once; each one's type from its name (`.prg`/`.seq`/`.usr`/`.del`) or PC64 header (`.P00`/`.S00`/`.U00`/`.D00`), dropped files too; one undo step | S | Done v1.0.13 | other files keep their whole name and get the "other files as" type; REL (`.rel`, `.R00`) refused, see EDIT-08 |
 
@@ -148,7 +150,7 @@ Checking and inspecting a disk's structure.
 
 ## Suggested order (a design choice; the user decides)
 
-1. **Now:** EDIT-07 (directory editing), FMT-13.
+1. **Now:** EDIT-07 (#61), FMT-13.
 2. **Next:** DISK-08, CLI-06.
 
 ## Done by release

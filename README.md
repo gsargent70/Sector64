@@ -248,7 +248,9 @@ not-yet-implemented decoder are listed with the reason instead of bytes.
 For the writable formats (`.d64/.d71/.d81` and CMD-native `.d2m`) it is also an
 **editor**: create a blank image (File > New > Disk Image…, Ctrl+N), add host
 files (File > Add Files…, several at once, or drag-and-drop; `.prg`/`.seq`/`.usr`
-and PC64 `.P00` files keep their type), rename, delete, and Save / Save As. G64, 1581-partition D2Ms, and
+and PC64 `.P00` files keep their type), rename, delete, reorder the directory
+(Alt+Up/Down), add separator lines, lock files, change the disk's name and ID,
+and Save / Save As. G64, 1581-partition D2Ms, and
 archives are read-only.
 Double-click a file to extract it; the Open dialog filters to known types.
 Drag a disk or archive onto the window to open it (when nothing editable is

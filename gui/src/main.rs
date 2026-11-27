@@ -233,6 +233,10 @@ struct App {
     show_basic: bool,
     /// The New Disk dialog is open.
     show_new_disk: bool,
+    /// The Disk Name dialog is open, with the name and ID being typed.
+    show_disk_name: bool,
+    disk_name: String,
+    disk_id: String,
     basic: BasicEditor,
     // preview/validation pane
     /// How the preview pane renders bytes (hex or PETSCII text).
@@ -283,6 +287,16 @@ enum Act {
     AddFile,
     /// Add these host files, each typed by its extension or P00 header.
     AddPaths(Vec<PathBuf>),
+    /// Move the selected entry one place up (`false`) or down the directory.
+    MoveEntry(bool),
+    /// Lock the selected files, or unlock them if all are locked.
+    ToggleLock,
+    /// Add a separator line after the selected entry.
+    AddSeparator,
+    /// Open the Disk Name dialog with the disk's name and ID.
+    OpenDiskName,
+    /// Give the disk the name and ID typed in the Disk Name dialog.
+    SetHeader,
     /// A file was dropped on the window with nothing editable open: open it.
     /// The count is how many other dropped files were ignored.
     OpenDropped(PathBuf, usize),

@@ -128,6 +128,11 @@ impl App {
         let can_run = self.vice_plan().is_ok();
         let mut show_basic = self.show_basic;
         let mut show_new_disk = self.show_new_disk;
+        let mut show_disk_name = self.show_disk_name;
+        let mut disk_name = std::mem::take(&mut self.disk_name);
+        let mut disk_id = std::mem::take(&mut self.disk_id);
+        // Reordering works on directory order, so not while sorted.
+        let in_dir_order = self.pane.sort.is_none();
         let mut basic = std::mem::take(&mut self.basic);
         let mut dual = self.dual;
         let back_editable = self.back.editable();
@@ -352,6 +357,64 @@ impl App {
                         "open a disk or archive first",
                     ) {
                         acts.push(Act::SelectAll);
+                    }
+                    ui.separator();
+                    let order_tip = if in_dir_order {
+                        "select a file on a disk or new archive"
+                    } else {
+                        "click the sorted column until the list is in directory order"
+                    };
+                    if menu_entry(
+                        ui,
+                        editable && has_sel && in_dir_order,
+                        entry(&ic.blank, "Move Up", "Alt+Up"),
+                        "move the selected file one place up the directory",
+                        order_tip,
+                    ) {
+                        acts.push(Act::MoveEntry(false));
+                    }
+                    if menu_entry(
+                        ui,
+                        editable && has_sel && in_dir_order,
+                        entry(&ic.blank, "Move Down", "Alt+Down"),
+                        "move the selected file one place down the directory",
+                        order_tip,
+                    ) {
+                        acts.push(Act::MoveEntry(true));
+                    }
+                    let disk_tip = "open a D64, D71, D81 or D2M disk";
+                    if menu_entry(
+                        ui,
+                        is_disk && in_dir_order,
+                        entry(&ic.blank, "Add Separator", ""),
+                        "add a ---------------- line (a 0-block DEL entry) after the \
+                         selected file",
+                        if is_disk { order_tip } else { disk_tip },
+                    ) {
+                        acts.push(Act::AddSeparator);
+                    }
+                    if menu_entry(
+                        ui,
+                        is_disk && has_sel,
+                        entry(&ic.blank, "Lock / Unlock", "Ctrl+Shift+L"),
+                        "lock the selected files (shown <), or unlock them if they're \
+                         all locked",
+                        if is_disk {
+                            "select a file on the disk"
+                        } else {
+                            disk_tip
+                        },
+                    ) {
+                        acts.push(Act::ToggleLock);
+                    }
+                    if menu_entry(
+                        ui,
+                        is_disk,
+                        entry(&ic.blank, "Disk Name and ID…", ""),
+                        "change the name and ID in the directory's header line",
+                        disk_tip,
+                    ) {
+                        acts.push(Act::OpenDiskName);
                     }
                     ui.separator();
                     if menu_entry(
@@ -864,8 +927,44 @@ impl App {
             }
         }
 
+        // Disk Name dialog: like New Disk, it takes Esc and Enter for itself.
+        if show_disk_name {
+            let (cancel, enter) = ctx.input_mut(|i| {
+                (
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                )
+            });
+            let mut ok = enter;
+            let mut close = cancel;
+            let was_open = egui::Id::new("disk_name_was_open");
+            let first = !ctx.data_mut(|d| d.get_temp(was_open).unwrap_or(false));
+            ctx.data_mut(|d| d.insert_temp(was_open, true));
+            egui::Window::new(egui::RichText::new("DISK NAME").color(c64::ACCENT).strong())
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    disk_name_ui(
+                        ui,
+                        (&mut disk_name, &mut disk_id),
+                        first,
+                        &mut ok,
+                        &mut close,
+                    )
+                });
+            if ok {
+                acts.push(Act::SetHeader);
+                close = true;
+            }
+            if close || !is_disk {
+                show_disk_name = false;
+                ctx.data_mut(|d| d.remove::<bool>(was_open));
+            }
+        }
+
         // Esc closes the window in front, one per press, in this order. The
-        // New Disk dialog above has already taken Esc if it's open; with the
+        // New Disk and Disk Name dialogs above have already taken Esc if open; with the
         // cursor in the BASIC editor's text, Esc leaves the text and closes
         // nothing.
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -1305,7 +1404,11 @@ impl App {
                 }
             }
             if i.modifiers.command && i.key_pressed(egui::Key::L) && is_disk {
-                acts.push(Act::Validate);
+                acts.push(if i.modifiers.shift {
+                    Act::ToggleLock
+                } else {
+                    Act::Validate
+                });
             }
             if i.modifiers.command && i.key_pressed(egui::Key::R) && can_run {
                 acts.push(Act::RunVice);
@@ -1364,9 +1467,14 @@ impl App {
                 }
                 // Arrow keys move through the current display order.
                 // The filter can hide rows, so clamp to what's shown.
+                // With Alt they move the selected file through the directory.
                 if i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp) {
                     let down = i.key_pressed(egui::Key::ArrowDown);
-                    if let Some(p) = step_in_order(&order, sel_now, down) {
+                    if i.modifiers.alt {
+                        if editable && has_sel && in_dir_order {
+                            acts.push(Act::MoveEntry(down));
+                        }
+                    } else if let Some(p) = step_in_order(&order, sel_now, down) {
                         acts.push(Act::Select(order[p]));
                     }
                 }
@@ -1379,6 +1487,9 @@ impl App {
         self.out_dir = out_dir;
         self.new_name = new_name;
         self.new_id = new_id;
+        self.show_disk_name = show_disk_name;
+        self.disk_name = disk_name;
+        self.disk_id = disk_id;
         self.pane.rename_to = rename_to;
         self.new_fmt = new_fmt;
         self.add_type = add_type;

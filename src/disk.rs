@@ -215,11 +215,11 @@ impl Disk {
                 .is_ok_and(|h| h.get(0xAD..0xAD + SIGNATURE.len()) == Some(SIGNATURE))
     }
 
-    fn dir_track(&self) -> u8 {
+    pub(crate) fn dir_track(&self) -> u8 {
         self.geom.directory_track()
     }
 
-    fn dir_first(&self) -> u8 {
+    pub(crate) fn dir_first(&self) -> u8 {
         self.geom.directory_first_sector()
     }
 
@@ -516,7 +516,14 @@ impl Disk {
     }
 
     /// Convenience: read the contents of a parsed directory [`Entry`].
+    ///
+    /// Directory art (a separator: a 0-block entry that points at the
+    /// directory itself) holds no data, so it reads as empty rather than as
+    /// the directory's blocks.
     pub fn read_entry(&self, entry: &Entry) -> Result<Vec<u8>> {
+        if self.is_placeholder(entry) {
+            return Ok(Vec::new());
+        }
         self.read_file(entry.first_track, entry.first_sector)
     }
 
@@ -915,7 +922,7 @@ impl Disk {
 
     /// Find a free directory slot, extending the directory chain with a new
     /// sector if every existing one is full. Returns (track, sector, slot).
-    fn find_dir_slot(&mut self) -> Result<(u8, u8, usize)> {
+    pub(crate) fn find_dir_slot(&mut self) -> Result<(u8, u8, usize)> {
         let (mut track, mut sector) = (self.dir_track(), self.dir_first());
         let mut visited: Vec<(u8, u8)> = Vec::new();
         loop {
@@ -1049,7 +1056,18 @@ impl Disk {
     /// BAM and mark its directory slot reusable. Returns the number of blocks
     /// freed. The directory itself is not shrunk, matching CBM DOS.
     pub fn scratch(&mut self, name: &str) -> Result<usize> {
-        let (dt, ds, slot) = self.entry_location(name)?.ok_or(Error::FileNotFound)?;
+        let at = self.entry_location(name)?.ok_or(Error::FileNotFound)?;
+        self.scratch_at(at)
+    }
+
+    /// [`Disk::scratch`] directory entry `index` (in [`Disk::directory`]'s
+    /// order) rather than the first with a name: separators share theirs.
+    pub fn scratch_entry(&mut self, index: usize) -> Result<usize> {
+        let at = self.entry_slots()?.get(index).ok_or(Error::FileNotFound)?.0;
+        self.scratch_at(at)
+    }
+
+    fn scratch_at(&mut self, (dt, ds, slot): (u8, u8, usize)) -> Result<usize> {
         let entry = {
             let b = self.block(dt, ds)?;
             let mut s = [0u8; SLOT_SIZE];
@@ -1058,7 +1076,14 @@ impl Disk {
         };
 
         let mut freed = 0usize;
-        for (t, s) in self.file_block_chain(entry.first_track, entry.first_sector)? {
+        // Directory art points at the directory itself, whose blocks aren't
+        // its to free.
+        let chain = if self.is_placeholder(&entry) {
+            Vec::new()
+        } else {
+            self.file_block_chain(entry.first_track, entry.first_sector)?
+        };
+        for (t, s) in chain {
             self.bam_set(t, s, false);
             freed += 1;
         }
@@ -1090,6 +1115,13 @@ impl Disk {
         if src.is_geos() && (entry.side_track != 0 || entry.rel_record_len != 0) {
             return Err(Error::CannotCopy("GEOS files"));
         }
+        // Directory art copies as directory art, at the end; its name can
+        // repeat, as separators' names do.
+        if src.is_placeholder(entry) {
+            let last = self.entry_slots()?.len().checked_sub(1);
+            self.add_separator(entry.name_raw, last)?;
+            return Ok(());
+        }
         if self.entry_location(&entry.name)?.is_some() {
             return Err(Error::FileExists);
         }
@@ -1111,7 +1143,18 @@ impl Disk {
 
     /// Rename a file in place, leaving its data untouched.
     pub fn rename(&mut self, old: &str, new: &str) -> Result<()> {
-        let (dt, ds, slot) = self.entry_location(old)?.ok_or(Error::FileNotFound)?;
+        let at = self.entry_location(old)?.ok_or(Error::FileNotFound)?;
+        self.rename_at(at, new)
+    }
+
+    /// [`Disk::rename`] directory entry `index` (in [`Disk::directory`]'s
+    /// order) rather than the first with a name: separators share theirs.
+    pub fn rename_entry(&mut self, index: usize, new: &str) -> Result<()> {
+        let at = self.entry_slots()?.get(index).ok_or(Error::FileNotFound)?.0;
+        self.rename_at(at, new)
+    }
+
+    fn rename_at(&mut self, (dt, ds, slot): (u8, u8, usize), new: &str) -> Result<()> {
         let name = petscii::encode_field(new, 16);
         let b = self.block_mut(dt, ds)?;
         let o = slot * SLOT_SIZE;
