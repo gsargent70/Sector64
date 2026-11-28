@@ -1984,3 +1984,72 @@ fn sector_editor_types_text_and_finds_on_the_disk() {
         "the search says where"
     );
 }
+
+/// A small PSID v2 file built from the format: two songs, PAL, 6581, with
+/// the data's own load address ($1000), an init routine at $1000 (LDA #0 /
+/// STA $D418 / RTS) and play at $1006.
+fn tiny_sid() -> Vec<u8> {
+    let mut h = vec![0u8; 0x7C];
+    h[..4].copy_from_slice(b"PSID");
+    h[4..6].copy_from_slice(&2u16.to_be_bytes());
+    h[6..8].copy_from_slice(&0x7Cu16.to_be_bytes());
+    h[0x0A..0x0C].copy_from_slice(&0x1000u16.to_be_bytes());
+    h[0x0C..0x0E].copy_from_slice(&0x1006u16.to_be_bytes());
+    h[0x0E..0x10].copy_from_slice(&2u16.to_be_bytes());
+    h[0x10..0x12].copy_from_slice(&1u16.to_be_bytes());
+    h[0x16..0x1F].copy_from_slice(b"Tiny Tune");
+    h[0x36..0x40].copy_from_slice(b"A Composer");
+    h[0x56..0x5A].copy_from_slice(b"2026");
+    h[0x76..0x78].copy_from_slice(&0b01_01_00u16.to_be_bytes());
+    h.extend([0x00, 0x10]); // load address $1000
+    h.extend([0xA9, 0x00, 0x8D, 0x18, 0xD4, 0x60, 0x60]);
+    h
+}
+
+#[test]
+fn a_sid_file_opens_and_shows_its_header_and_player() {
+    let dir = scratch("sid");
+    let path = dir.join("tiny.sid");
+    std::fs::write(&path, tiny_sid()).unwrap();
+    let mut app = App::default();
+    app.open(&path);
+    assert_eq!(app.pane.nodes.len(), 1, "{}", app.status);
+    assert_eq!(
+        (
+            app.pane.nodes[0].name.as_str(),
+            app.pane.nodes[0].badge.as_str()
+        ),
+        ("Tiny Tune", "sid")
+    );
+    app.pane.selected = Some(0);
+    app.show_preview = true;
+    let ctx = egui::Context::default();
+    let preview = |app: &mut App, mode| {
+        app.preview_mode = mode;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| app.frame_ui(ctx));
+        app.pane.hex_cache.as_ref().unwrap().3.clone()
+    };
+    let sid = preview(&mut app, PreviewMode::Sid);
+    for want in [
+        "PSID v2 music file",
+        "Title     Tiny Tune",
+        "Author    A Composer",
+        "Songs     2 songs, starting with song 1",
+        "Load      $1000-$1006 (7 bytes)",
+        "Play      $1006",
+        "SID chip  6581",
+    ] {
+        assert!(sid.contains(want), "{want:?} in:\n{sid}");
+    }
+    let dis = preview(&mut app, PreviewMode::Dis);
+    assert!(
+        dis.starts_with("; SID music: init $1000, play $1006"),
+        "{dis}"
+    );
+    assert!(dis.contains("1000  A9 00     LDA #$00"), "{dis}");
+    assert!(dis.contains("STA $D418"), "{dis}");
+
+    // Anything else says why there's nothing to show.
+    assert!(sid_preview(&[0x01, 0x08, 0, 0]).starts_with("(not a SID music file"));
+    assert!(sid_preview(b"PSID").contains("damaged or cut short"));
+}

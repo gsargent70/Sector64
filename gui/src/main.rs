@@ -109,6 +109,8 @@ enum PreviewMode {
     Dis,
     /// A paint program's bitmap picture.
     Pic,
+    /// A SID music file's header: title, author, addresses, songs.
+    Sid,
 }
 
 /// The sprite/character sheet the GFX preview shows, and what it was drawn

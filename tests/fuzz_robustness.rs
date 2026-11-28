@@ -109,6 +109,16 @@ fn no_panics_on_arbitrary_input() {
             let _ = parse_lbr(&buf);
             let _ = sector64::parse_p00(&buf);
             let _ = sector64::parse_cvt(&buf);
+            // ...and behind a SID magic and version, so the header parser
+            // gets past its first checks.
+            for (magic, version) in [(b"PSID", 1u8), (b"RSID", 2), (b"PSID", 3), (b"PSID", 4)] {
+                let mut sid = magic.to_vec();
+                sid.extend([0, version]);
+                sid.extend_from_slice(&buf);
+                if let Ok(info) = sector64::sid::parse_sid(&sid) {
+                    let _ = sector64::sid::describe(&info);
+                }
+            }
             let _ = sector64::detokenize_basic(&buf);
             // ...and the same bytes behind a C64 BASIC load address.
             let mut prg = vec![0x01, 0x08];

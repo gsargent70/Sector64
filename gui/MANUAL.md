@@ -23,7 +23,7 @@ This manual describes every feature of the graphical browser
        - Filtering
        - Selecting files
        - Keyboard navigation
-  6. The preview pane (HEX / TEXT / BASIC / DIS / GFX / PIC)
+  6. The preview pane (HEX / TEXT / BASIC / DIS / GFX / PIC / SID)
   7. Extracting files
   8. Editing a disk image
        - Creating a new disk
@@ -84,6 +84,10 @@ Archives (read + extract):
     .lnx  (Lynx)
     .p00  (PC64 single-file container)
     .wr3  (Wraptor 3)
+
+Music:
+    .sid  (PSID / RSID, as in the High Voltage SID Collection;
+           opens as a listing of one tune — see SID in section 6)
 
 Archives you can create and save:
     .t64  .lnx  .lbr  .p00
@@ -277,7 +281,7 @@ KEYBOARD NAVIGATION
 
 
 ----------------------------------------------------------------
- 6. THE PREVIEW PANE (HEX / TEXT / BASIC / DIS / GFX / PIC)
+ 6. THE PREVIEW PANE (HEX / TEXT / BASIC / DIS / GFX / PIC / SID)
 ----------------------------------------------------------------
 
 The preview pane is hidden by default. Click Preview in the menu
@@ -380,8 +384,20 @@ file. Use the toggle in its header to switch views:
          in it. Hover over the picture to see a pixel's
          position, its 8x8 cell, and its colour.
 
+  SID    A SID music file's header (PSID or RSID, versions 1
+         to 4): the title, author and release; how many songs
+         and which plays first; where it loads, its init and
+         play addresses; whether each song is timed by the
+         screen refresh or a CIA timer; and, from version 2,
+         PAL or NTSC, the SID chip it was written for, and any
+         second or third SID. A .sid file opens on its own
+         (File > Open) as a listing of one tune, and SID files
+         inside archives or on disks show here too. DIS lists a
+         SID file's player from its init routine. A tune saved
+         as a plain PRG has no header, so SID can't describe it.
+
 The pane sizes itself: wide enough for a whole hex line, or for
-40 columns of text, BASIC, disassembly, graphics or pictures (a C64 screen's width), whichever
+40 columns of text, BASIC, disassembly, graphics, pictures or SID details (a C64 screen's width), whichever
 mode is on. Long BASIC lines wrap at any character, as they do on
 a C64 screen.
 If the window is too narrow for that and the listing, the pane

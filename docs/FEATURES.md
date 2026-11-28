@@ -29,6 +29,7 @@ the core plus one front end.
 | ID | Idea | Notes |
 |---|---|---|
 | EDIT-11 | Directory art beyond separators: type PETSCII graphics into an entry's name (a character picker) | M; follow-up to EDIT-07, which adds plain `-` lines |
+| VIEW-11 | Play a SID tune: Run in VICE starts a .sid in VICE's `vsid` player (song picker) | S; follow-up to VIEW-09 |
 | EDIT-09 | BASIC editor: renumber, find/replace, and keep machine code after a listed program | M; follow-up to EDIT-06 |
 | CLI-05 | Repair from the command line (`s64val --repair`) | S; core done in DISK-04 |
 | FMT-14 | CMD-native subdirectories: list and map the files inside them | M; today only the top directory is read, so repair never frees blocks on such disks |
@@ -74,7 +75,7 @@ Seeing inside files without extracting them.
 | VIEW-06 | DIS: 6502 disassembly, starting at the SYS target | M | Done v1.0.8 | all 256 opcodes checked against VICE |
 | VIEW-07 | PIC: Koala, Art Studio, Advanced Art Studio, Doodle! | M | Done v1.0.8 | pixel-checked against VICE |
 | VIEW-08 | geoPaint pictures in PIC | L | Idea | needs a GEOS geoPaint decoder first |
-| VIEW-09 | SID music info: title, author, release, load/init/play addresses, songs | S | Idea | |
+| VIEW-09 | SID music info: title, author, release, load/init/play addresses, songs | S | Done (unreleased, #66) | core `sector64::sid` (PSID/RSID v1-4, from the published format); GUI SID preview mode; DIS starts at a SID's init; a `.sid` opens as a one-tune listing (so s64find/s64cmp/s64conv read it too) |
 | VIEW-10 | Search by name across a listing, or inside files for text or hex bytes | M | Done v1.0.12 | core `sector64::search`; GUI Find window (Ctrl+F) shows matches in the hex preview or the Sector Editor |
 
 ## 3. Editing (EDIT)
@@ -151,7 +152,7 @@ Checking and inspecting a disk's structure.
 ## Suggested order (a design choice; the user decides)
 
 1. **Now:** EDIT-07 (#61), FMT-13 (#62), CLI-07 (#63), CLI-06 (#64).
-2. **Next:** DISK-08 (#65), then release v1.0.14.
+2. **Next:** VIEW-09 (#66), then release v1.0.14.
 
 ## Done by release
 

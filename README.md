@@ -168,6 +168,13 @@ job with those failure modes designed out:
   GEOS tool exists to check the bytes, so the split follows the documented
   record geometry rather than an oracle.)
 
+- **SID music** (`sid::parse_sid`): the PSID/RSID header of a High Voltage
+  SID Collection tune, versions 1 to 4 — title, author and release (Latin-1),
+  songs and start song, load/init/play addresses (the load address from the
+  data when the header's is 0), per-song speed, clock, SID models and any
+  second or third SID. Written from the published format and checked with
+  headers built field by field; no `.sid` files are committed.
+
 - **PC64 single-file** (`parse_p00`, `s64write import`): the `.P00`/`.S00`/
   `.U00`/`.R00`/`.D00` container — a 26-byte `C64File` header (16-byte CBM name,
   reserved and REL-record bytes) in front of the raw file. The CBM type comes
@@ -218,15 +225,16 @@ cargo run -p sector64-gui                 # open the window
 cargo run -p sector64-gui -- disk.d64     # open a file on launch
 ```
 
-Open a `.d64/.d71/.d81/.g64/.d2m` disk or an `.arc/.sda/.lha/.lzh/.sfx/.lbr/
-.t64/.lnx/.p00/.wr3` archive, click a file, and **Extract selected** (or
+Open a `.d64/.d71/.d81/.g64/.d2m` disk, an `.arc/.sda/.lha/.lzh/.sfx/.lbr/
+.t64/.lnx/.p00/.wr3` archive or a `.sid` tune, click a file, and **Extract selected** (or
 **Extract all**) to the chosen output directory. The side pane **previews** the
 selected file as a hex dump, PETSCII text, or a BASIC program listed as
 `LIST` shows it, in BASIC V2, the C128's BASIC 7.0 or Simons' BASIC (detected
 automatically, or picked by hand), as 6502 machine code (disassembled from the
 address a BASIC `SYS` line jumps to), as a Koala Painter, Art Studio, Advanced
-Art Studio or Doodle! picture, or as sprites and characters (hires or
-multicolour, lined up with the memory a PRG loads to); for an open D64/D71/D81, **Validate
+Art Studio or Doodle! picture, as sprites and characters (hires or
+multicolour, lined up with the memory a PRG loads to), or as a SID tune's
+details (title, author, songs, load/init/play addresses, clock and SID chip); for an open D64/D71/D81, **Validate
 / Repair** cross-checks every file chain against the BAM and offers fixes to
 tick. The **disk map** draws
 every block of any disk image as a track-by-sector grid, coloured by the file
