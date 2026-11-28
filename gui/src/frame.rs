@@ -58,6 +58,7 @@ impl App {
                             // Drawn from the bytes by the pane itself; this
                             // only marks that there is something to show.
                             PreviewMode::Gfx | PreviewMode::Pic => "gfx".into(),
+                            PreviewMode::Sid => sid_preview(d),
                         },
                         Err(e) => format!("(not extractable: {e})"),
                     };

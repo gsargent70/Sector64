@@ -54,6 +54,7 @@ pub fn read_archive(ext: &str, bytes: &[u8]) -> Option<Result<Archive>> {
         "lnx" => ("Lynx archive", parse_lnx(bytes).map(stored)),
         "wr3" => ("Wraptor-3 archive", wr3_files(bytes)),
         e if is_p00(e) => ("PC64 container", parse_p00(bytes).map(|f| stored(vec![f]))),
+        "sid" => ("SID music file", sid_file(bytes)),
         _ => return None,
     };
     Some(files.map(|files| Archive { label, files }))
@@ -76,6 +77,23 @@ fn is_p00(ext: &str) -> bool {
         ext.as_bytes(),
         [b'p' | b's' | b'u' | b'r' | b'd', b'0'..=b'9', b'0'..=b'9']
     )
+}
+
+/// A SID file as a listing of one: the tune, named by its title, with the
+/// whole file (header included) as its bytes.
+fn sid_file(bytes: &[u8]) -> Result<Vec<ListedFile>> {
+    let info = crate::sid::parse_sid(bytes)?;
+    let name = if info.title.is_empty() {
+        "SID TUNE".to_string()
+    } else {
+        info.title
+    };
+    Ok(vec![ListedFile {
+        name,
+        kind: "sid",
+        data: Ok(bytes.to_vec()),
+        packed: None,
+    }])
 }
 
 fn stored(files: Vec<ImportFile>) -> Vec<ListedFile> {

@@ -112,7 +112,7 @@ impl App {
                     "Commodore disks & archives",
                     &[
                         "d64", "d71", "d81", "g64", "d2m", "arc", "sda", "lha", "lzh", "sfx",
-                        "lbr", "t64", "lnx", "wr3", "p00",
+                        "lbr", "t64", "lnx", "wr3", "p00", "sid",
                     ],
                 );
                 if let Some(p) = dlg.pick_file() {

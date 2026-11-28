@@ -6,7 +6,7 @@ use crate::*;
 pub(crate) const TEXT_PREVIEW_COLS: usize = 40;
 
 /// The preview pane's modes: what each toggle is called and does.
-pub(crate) const PREVIEW_MODES: [(PreviewMode, &str, &str); 6] = [
+pub(crate) const PREVIEW_MODES: [(PreviewMode, &str, &str); 7] = [
     (PreviewMode::Hex, "HEX", "show an offset + hex + ASCII dump"),
     (PreviewMode::Text, "TEXT", "show the bytes as PETSCII text"),
     (
@@ -28,6 +28,11 @@ pub(crate) const PREVIEW_MODES: [(PreviewMode, &str, &str); 6] = [
         PreviewMode::Pic,
         "PIC",
         "show a Koala Painter, Art Studio or Doodle! picture",
+    ),
+    (
+        PreviewMode::Sid,
+        "SID",
+        "show a SID music file's title, author, addresses and songs",
     ),
 ];
 
@@ -77,7 +82,8 @@ pub(crate) fn preview_width(
         | PreviewMode::Basic
         | PreviewMode::Gfx
         | PreviewMode::Dis
-        | PreviewMode::Pic => TEXT_PREVIEW_COLS,
+        | PreviewMode::Pic
+        | PreviewMode::Sid => TEXT_PREVIEW_COLS,
     };
     // "PREVIEW — NAME" plus the HEX / TEXT / BASIC / DIS / GFX / PIC toggle.
     let header_chars = "PREVIEW — ".chars().count() + name.map_or(0, |n| n.chars().count()) + 30;
@@ -472,6 +478,24 @@ pub(crate) fn pic_ui(
 /// the file isn't BASIC. `data` is the whole file, load address included;
 /// `dialect` is the one to list in, or `None` to detect it (a detected
 /// BASIC 7.0 or Simons' BASIC program says so on its first line).
+/// The SID preview: a SID music file's header, or why there isn't one.
+pub(crate) fn sid_preview(data: &[u8]) -> String {
+    match sector64::sid::parse_sid(data) {
+        Ok(info) => {
+            let mut s = sector64::sid::describe(&info);
+            s += "\nDIS lists the player from its init routine.";
+            s
+        }
+        Err(_) if sector64::sid::is_sid(data) => {
+            "(it starts like a SID file, but its header is damaged or cut short)".into()
+        }
+        Err(_) => "(not a SID music file: those start with PSID or RSID, as the High \
+                   Voltage SID Collection's do; a tune saved as a plain PRG has no header \
+                   to read)"
+            .into(),
+    }
+}
+
 pub(crate) fn basic_preview(data: &[u8], dialect: Option<BasicDialect>) -> String {
     let listing = match dialect {
         Some(d) => sector64::detokenize_basic_as(data, d),
@@ -503,6 +527,27 @@ pub(crate) const DIS_MAX_LINES: usize = 8192;
 /// is listed from $0000.
 pub(crate) fn dis_preview(data: &[u8], is_prg: bool) -> String {
     use sector64::disasm;
+    // A SID file's code is after its header; list it from the init routine.
+    if let Ok(info) = sector64::sid::parse_sid(data) {
+        let body = &data[info.data_offset..];
+        let body = if body.len() > info.load_len {
+            &body[2..]
+        } else {
+            body
+        };
+        let start = usize::from(info.init.wrapping_sub(info.load));
+        if start >= body.len() {
+            return format!(
+                "; a SID file: its init routine, ${:04X}, is outside the data it loads",
+                info.init
+            );
+        }
+        let note = format!(
+            "; SID music: init ${:04X}, play ${:04X} (loads at ${:04X})",
+            info.init, info.play, info.load
+        );
+        return dis_lines(&body[start..], info.init, note);
+    }
     let (addr, offset, note) = if is_prg {
         let Some(s) = disasm::code_start(data) else {
             return "(too short to hold any code)".into();
@@ -524,7 +569,12 @@ pub(crate) fn dis_preview(data: &[u8], is_prg: bool) -> String {
     } else {
         (0, 0, "; no load address: listed from $0000".to_string())
     };
-    let code = &data[offset.min(data.len())..];
+    dis_lines(&data[offset.min(data.len())..], addr, note)
+}
+
+/// Disassemble `code` from address `addr`, under a first line `note`.
+fn dis_lines(code: &[u8], addr: u16, note: String) -> String {
+    use sector64::disasm;
     let lines = disasm::disassemble(code, addr, DIS_MAX_LINES);
     let mut out = note;
     out.push('\n');

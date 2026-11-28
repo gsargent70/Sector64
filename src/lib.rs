@@ -44,6 +44,7 @@ pub mod petscii;
 pub mod picture;
 pub mod repair;
 pub mod search;
+pub mod sid;
 pub mod disk;
 
 pub use arc::{parse_arc, parse_sda, ArcEntry, ArcMethod};
