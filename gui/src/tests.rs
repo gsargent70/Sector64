@@ -1901,3 +1901,86 @@ fn convert_reports_what_went_across_and_what_did_not() {
     );
     assert!(ToastKind::of(&report) == ToastKind::Error);
 }
+
+#[test]
+fn sector_editor_types_text_and_finds_on_the_disk() {
+    let ctx = egui::Context::default();
+    load_c64_font(&ctx);
+    apply_c64_theme(&ctx);
+    let mut app = app_with_disk();
+    app.add("NOTES".into(), b"xxxxxxxxxx A SECRET WORD xxxxxxxxxx");
+    app.show_sector = true;
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 800.0));
+    let frame = |app: &mut App, events: Vec<egui::Event>| {
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            events,
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| app.frame_ui(ctx))
+    };
+    let mut out = frame(&mut app, vec![]);
+    for _ in 0..3 {
+        out = frame(&mut app, vec![]);
+    }
+    let texts = drawn_texts(&out);
+    assert!(texts.iter().any(|(t, _)| t == "Find next"));
+
+    // Click byte 2 of row $10 in the text column, then type.
+    // Row $10's offset label, at grid column 0: the leftmost "10" (a byte
+    // of $10 is drawn as "10" too).
+    let label = texts
+        .iter()
+        .filter(|(t, _)| t == "10")
+        .map(|(_, r)| *r)
+        .min_by(|a, b| a.min.x.total_cmp(&b.min.x))
+        .unwrap();
+    // A grid column is one glyph of the monospace font (the ink of "10" is
+    // narrower than its two cells).
+    // The editor shrinks its font to fit the grid on screen; do the same.
+    let mut font = egui::TextStyle::Monospace.resolve(&ctx.style());
+    let full = ctx.fonts(|f| f.glyph_width(&font, '0'));
+    let fit = (screen.width() - 80.0) / (SEC_COLS as f32 * full);
+    if fit < 1.0 {
+        font.size = (font.size * fit).floor().max(7.0);
+    }
+    let cw = ctx.fonts(|f| f.glyph_width(&font, '0'));
+    let at = egui::pos2(
+        label.min.x + (SEC_TEXT0 as f32 + 2.5) * cw,
+        label.center().y,
+    );
+    let click = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let _ = frame(&mut app, vec![egui::Event::PointerMoved(at)]);
+    let _ = frame(&mut app, vec![click(true)]);
+    let _ = frame(&mut app, vec![click(false)]);
+    assert!(app.sector.text_mode, "the text column was clicked");
+    assert_eq!(app.sector.cursor, 0x12);
+    let _ = frame(&mut app, vec![egui::Event::Text("Hi!".into())]);
+    assert_eq!(&app.sector.buf[0x12..0x15], b"HI!");
+    assert_eq!(app.sector.cursor, 0x15);
+    app.sector.revert();
+
+    // Find goes to the file's block and highlights the match.
+    app.sector.find_query = "secret".into();
+    let d = &app.pane.disk.as_ref().unwrap().disk;
+    app.sector.find_next(d);
+    let notes = d.find_entry("NOTES").unwrap().unwrap();
+    let h = app.sector.found.expect("found");
+    assert_eq!(
+        (h.track, h.sector, h.at),
+        (notes.first_track, notes.first_sector, 2 + 13)
+    );
+    assert!(app.sector.in_match(15) && app.sector.in_match(20));
+    let out = frame(&mut app, vec![]);
+    assert!(
+        drawn_texts(&out)
+            .iter()
+            .any(|(t, _)| t.starts_with("Found at track")),
+        "the search says where"
+    );
+}

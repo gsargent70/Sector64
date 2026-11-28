@@ -430,6 +430,8 @@ pub(crate) struct SectorView<'a> {
 pub(crate) const SEC_HEX0: usize = 4;
 pub(crate) const SEC_TEXT0: usize = SEC_HEX0 + 16 * 3 + 1 + 2;
 pub(crate) const SEC_COLS: usize = SEC_TEXT0 + 16;
+/// The fill behind the bytes of the last Find match.
+const SEC_MATCH: Color32 = Color32::from_rgb(0x3e, 0x5c, 0x3a);
 
 /// The grid column where byte `i` of a row starts in hex.
 pub(crate) fn sec_hex_col(i: usize) -> usize {
@@ -544,6 +546,37 @@ pub(crate) fn sector_ui(
         }
     });
 
+    // Find: text (any C64 case) or hex bytes, anywhere on the disk, from
+    // the cursor on.
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Find");
+        let hint = if ed.find_hex { "A9 ?? 8D" } else { "text" };
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut ed.find_query)
+                .desired_width(150.0)
+                .hint_text(hint),
+        );
+        ui.selectable_value(&mut ed.find_hex, false, "TEXT")
+            .on_hover_text("letters match in either case, whichever character set wrote them");
+        ui.selectable_value(&mut ed.find_hex, true, "HEX")
+            .on_hover_text("bytes in hex, ?? for any byte");
+        // Enter in the field searches (and isn't also Extract).
+        let enter = field.lost_focus()
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        let ready = !ed.find_query.trim().is_empty();
+        let clicked = ui
+            .add_enabled(idle && ready, egui::Button::new("Find next"))
+            .on_hover_text("go to the next match on the disk, after the cursor (Back returns)")
+            .on_disabled_hover_text(if idle { "type what to look for" } else { busy })
+            .clicked();
+        if (clicked || enter) && idle && ready {
+            ed.find_next(disk);
+        }
+    });
+    if !ed.find_msg.is_empty() {
+        ui.label(egui::RichText::new(&ed.find_msg).color(c64::TEXT_DIM));
+    }
+
     // Who owns the block, and where its link goes.
     let owner = block_tooltip(v.map, ed.track, ed.sector);
     let owner: Vec<&str> = owner.lines().skip(1).collect();
@@ -578,6 +611,8 @@ pub(crate) fn sector_ui(
             let row = ((p.y - rect.min.y) / rh) as usize;
             if let Some(i) = sec_byte_at(col).filter(|_| row < 16) {
                 ed.place(row * 16 + i);
+                // The column clicked decides what typing puts in.
+                ed.text_mode = col >= SEC_TEXT0;
             }
         }
     }
@@ -597,17 +632,20 @@ pub(crate) fn sector_ui(
         let events = ui.input(|i| i.events.clone());
         for e in events {
             match e {
-                egui::Event::Text(text) => {
-                    for d in text.chars().filter_map(sector::hex_digit) {
-                        if v.writable {
-                            ed.type_digit(d);
-                        }
+                egui::Event::Text(text) if v.writable => {
+                    if ed.text_mode {
+                        text.chars().for_each(|c| ed.type_char(c));
+                    } else {
+                        text.chars()
+                            .filter_map(sector::hex_digit)
+                            .for_each(|d| ed.type_digit(d));
                     }
                 }
                 egui::Event::Key {
                     key, pressed: true, ..
                 } => match key {
                     egui::Key::ArrowLeft => ed.move_cursor(-1),
+                    egui::Key::Backspace if ed.text_mode => ed.move_cursor(-1),
                     egui::Key::ArrowRight => ed.move_cursor(1),
                     egui::Key::ArrowUp => ed.move_cursor(-16),
                     egui::Key::ArrowDown => ed.move_cursor(16),
@@ -647,18 +685,31 @@ pub(crate) fn sector_ui(
             let Some(&b) = ed.buf.get(n) else { continue };
             let color = if ed.changed(n) {
                 c64::ORPHAN
+            } else if ed.in_match(n) {
+                c64::BRIGHT
             } else if n < 2 {
                 c64::ACCENT
             } else {
                 c64::TEXT
             };
             let (hx, tx) = (at(sec_hex_col(i), row), at(SEC_TEXT0 + i, row));
+            let cell = |p: egui::Pos2, w: f32| {
+                egui::Rect::from_min_size(p - egui::vec2(0.0, 1.5), egui::vec2(w, rh))
+            };
+            let matched = ed.in_match(n);
+            if matched {
+                painter.rect_filled(cell(hx, 2.0 * cw), 0.0, SEC_MATCH);
+                painter.rect_filled(cell(tx, cw), 0.0, SEC_MATCH);
+            }
             if n == ed.cursor {
-                let cell = |p: egui::Pos2, w: f32| {
-                    egui::Rect::from_min_size(p - egui::vec2(0.0, 1.5), egui::vec2(w, rh))
+                // The column typing goes into gets the stronger fill.
+                let (hex_fill, text_fill) = if ed.text_mode {
+                    (c64::STRIPE, cursor_fill)
+                } else {
+                    (cursor_fill, c64::STRIPE)
                 };
-                painter.rect_filled(cell(hx, 2.0 * cw), 1.0, cursor_fill);
-                painter.rect_filled(cell(tx, cw), 1.0, cursor_fill);
+                painter.rect_filled(cell(hx, 2.0 * cw), 1.0, hex_fill);
+                painter.rect_filled(cell(tx, cw), 1.0, text_fill);
                 if ed.low_nibble {
                     let y = hx.y + rh - 2.5;
                     painter.line_segment(
@@ -725,7 +776,8 @@ pub(crate) fn sector_ui(
         });
     });
     let hint = if v.writable {
-        "Click a byte, then type hex digits. Arrows move; PgUp/PgDn step through blocks."
+        "Click a byte in the hex to type hex digits, or in the text to type text. \
+         Arrows move; PgUp/PgDn step through blocks."
     } else {
         "This disk is read-only (view only). Arrows move; PgUp/PgDn step through blocks."
     };

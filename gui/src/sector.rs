@@ -1,9 +1,11 @@
-//! The sector editor (DISK-05): one 256-byte block of a disk in hex, with
-//! edits staged until they're written back, and the block's T/S link to
-//! follow a file or directory chain.
+//! The sector editor (DISK-05, DISK-08): one 256-byte block of a disk in
+//! hex and as text, with edits (typed as hex digits or as text) staged until
+//! they're written back, the block's T/S link to follow a file or directory
+//! chain, and a search of the whole disk for text or bytes.
 //!
 //! This holds the editor's state and rules; `main.rs` draws it.
 
+use sector64::search::Pattern;
 use sector64::Disk;
 
 /// What a block's first two bytes say about the chain it's part of.
@@ -31,6 +33,16 @@ pub struct SectorEditor {
     /// The high nibble of the cursor byte has been typed; the next digit
     /// fills the low one.
     pub low_nibble: bool,
+    /// The cursor is in the text column: typing puts in characters, not
+    /// hex digits.
+    pub text_mode: bool,
+    /// The Find row: what to look for, as text or hex.
+    pub find_query: String,
+    pub find_hex: bool,
+    /// The last match found, highlighted while its block is showing.
+    pub found: Option<DiskHit>,
+    /// What the last search said ("Not found", "Wrapped to the start", …).
+    pub find_msg: String,
     /// Blocks left by following links, newest last, for Back.
     history: Vec<(u8, u8)>,
     /// Why the block couldn't be read, if it couldn't.
@@ -41,6 +53,75 @@ pub struct SectorEditor {
 
 /// Bytes per block.
 pub const SIZE: usize = 256;
+
+/// Where a disk search matched: the block, and the match's first byte and
+/// length (a match can run on into the next block).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiskHit {
+    pub track: u8,
+    pub sector: u8,
+    pub at: usize,
+    pub len: usize,
+    /// The search went past the last block and on from the first.
+    pub wrapped: bool,
+}
+
+/// Every block of `disk` in disk order (track by track, sector by sector):
+/// the order Prev/Next step through.
+pub fn blocks_in_order(disk: &Disk) -> Vec<(u8, u8)> {
+    let g = disk.geometry();
+    (1..=g.tracks())
+        .flat_map(|t| (0..g.sector_count(t).unwrap_or(0).min(256)).map(move |s| (t, s as u8)))
+        .collect()
+}
+
+/// Search the whole disk, block by block in disk order, for `pattern`,
+/// starting just after byte `from` of block `from_ts` and wrapping round to
+/// the first block. A match may run across a block boundary.
+pub fn find_on_disk(
+    disk: &Disk,
+    pattern: &Pattern,
+    from_ts: (u8, u8),
+    from: usize,
+) -> Option<DiskHit> {
+    let order = blocks_in_order(disk);
+    let mut bytes = Vec::with_capacity(order.len() * SIZE);
+    for &(t, s) in &order {
+        match disk.block(t, s) {
+            Ok(b) => bytes.extend_from_slice(b),
+            Err(_) => bytes.extend_from_slice(&[0; SIZE]),
+        }
+    }
+    let here = order.iter().position(|&b| b == from_ts).unwrap_or(0);
+    let start = (here * SIZE + from + 1).min(bytes.len());
+    let hit = |offset: usize, wrapped: bool| {
+        let (t, s) = order[offset / SIZE];
+        DiskHit {
+            track: t,
+            sector: s,
+            at: offset % SIZE,
+            len: pattern.len(),
+            wrapped,
+        }
+    };
+    if let Some(&o) = pattern.find(&bytes[start..], 1).first() {
+        return Some(hit(start + o, false));
+    }
+    // From the start, up to (and including) where this search began.
+    let end = (start + pattern.len()).min(bytes.len());
+    pattern
+        .find(&bytes[..end], 1)
+        .first()
+        .map(|&o| hit(o, true))
+}
+
+/// The byte typed text puts in: the character as the C64 shows it in its
+/// upper-case set (letters in either case become `$41`-`$5A`). `None` for
+/// a character that set doesn't have.
+pub fn text_byte(c: char) -> Option<u8> {
+    let u = c.to_ascii_uppercase();
+    (u.is_ascii() && (0x20..=0x5F).contains(&(u as u32))).then_some(u as u8)
+}
 
 impl SectorEditor {
     /// Show `track`/`sector` of `disk`, dropping any staged edits.
@@ -197,6 +278,58 @@ impl SectorEditor {
             *b = (*b & 0x0F) | (d << 4);
             self.low_nibble = true;
         }
+    }
+
+    /// Type one character at the cursor (in the text column) and move on.
+    /// Characters the C64 can't show are ignored.
+    pub fn type_char(&mut self, c: char) {
+        let Some(byte) = text_byte(c) else { return };
+        if let Some(b) = self.buf.get_mut(self.cursor) {
+            *b = byte;
+            self.cursor = (self.cursor + 1).min(SIZE - 1);
+            self.low_nibble = false;
+        }
+    }
+
+    /// Look for the Find row's text or bytes from just after the cursor,
+    /// and go to the match (Back returns). Says what happened in
+    /// `find_msg`.
+    pub fn find_next(&mut self, disk: &Disk) {
+        let pattern = if self.find_hex {
+            Pattern::hex(&self.find_query)
+        } else {
+            Pattern::text(&self.find_query)
+        };
+        let pattern = match pattern {
+            Ok(p) => p,
+            Err(e) => {
+                self.find_msg = e;
+                self.found = None;
+                return;
+            }
+        };
+        let hit = find_on_disk(disk, &pattern, (self.track, self.sector), self.cursor);
+        self.found = hit;
+        self.find_msg = match hit {
+            None => "Not found on this disk".into(),
+            Some(h) => {
+                self.jump(disk, h.track, h.sector);
+                self.place(h.at);
+                let at = format!("track {}, sector {}, byte {}", h.track, h.sector, h.at);
+                if h.wrapped {
+                    format!("Found at {at} (went on from the start of the disk)")
+                } else {
+                    format!("Found at {at}")
+                }
+            }
+        };
+    }
+
+    /// Whether byte `i` of the block showing is part of the last match.
+    pub fn in_match(&self, i: usize) -> bool {
+        self.found.is_some_and(|h| {
+            (h.track, h.sector) == (self.track, self.sector) && (h.at..h.at + h.len).contains(&i)
+        })
     }
 
     /// Move the cursor by `delta` bytes, staying in the block.
@@ -376,5 +509,82 @@ mod tests {
         assert_eq!(hex_digit('F'), Some(15));
         assert_eq!(hex_digit('g'), None);
         assert!(describe(Link::Last(93)).contains("92 bytes"));
+    }
+
+    #[test]
+    fn typing_text_puts_in_c64_characters_and_moves_on() {
+        let d = disk();
+        let mut ed = SectorEditor::default();
+        ed.load(&d, 18, 1);
+        ed.place(5);
+        for c in "Hi, @[£".chars() {
+            ed.type_char(c);
+        }
+        // £ isn't in the C64's upper-case set, so it's skipped.
+        assert_eq!(&ed.buf[5..11], b"HI, @[");
+        assert_eq!(ed.cursor, 11);
+        assert!(ed.changed(5) && ed.modified());
+        assert_eq!(text_byte('z'), Some(b'Z'));
+        assert_eq!(text_byte('{'), None);
+        // The last byte doesn't push the cursor off the block.
+        ed.place(SIZE - 1);
+        ed.type_char('A');
+        ed.type_char('B');
+        assert_eq!((ed.cursor, ed.buf[SIZE - 1]), (SIZE - 1, b'B'));
+    }
+
+    #[test]
+    fn the_disk_search_goes_on_from_the_cursor_and_wraps() {
+        let mut d = disk();
+        d.block_mut(3, 4).unwrap()[100..105].copy_from_slice(b"MAGIC");
+        // Shifted capitals: still a match for text.
+        d.block_mut(20, 2).unwrap()[10..15].copy_from_slice(&[0xCD, 0xC1, 0xC7, 0xC9, 0xC3]);
+        // Across a block boundary: "MAG" ends one block, "IC" starts the next.
+        let (t, s) = SectorEditor::neighbour(&d, 25, 0, 1).unwrap();
+        d.block_mut(25, 0).unwrap()[253..].copy_from_slice(b"MAG");
+        d.block_mut(t, s).unwrap()[..2].copy_from_slice(b"IC");
+
+        let mut ed = SectorEditor::default();
+        ed.load(&d, 1, 0);
+        ed.find_query = "magic".into();
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            ed.find_next(&d);
+            let h = ed.found.unwrap();
+            seen.push((h.track, h.sector, h.at, h.wrapped));
+            assert_eq!((ed.track, ed.sector, ed.cursor), (h.track, h.sector, h.at));
+        }
+        assert_eq!(
+            seen,
+            [
+                (3, 4, 100, false),
+                (20, 2, 10, false),
+                (25, 0, 253, false),
+                (3, 4, 100, true)
+            ]
+        );
+        assert!(
+            ed.find_msg.contains("went on from the start"),
+            "{}",
+            ed.find_msg
+        );
+        assert!(
+            ed.can_go_back(),
+            "Back returns to where the search jumped from"
+        );
+        assert!(ed.in_match(102) && !ed.in_match(105));
+
+        // Hex, with a wildcard; then something that isn't there.
+        ed.find_hex = true;
+        ed.find_query = "4D ?? 47".into();
+        ed.find_next(&d);
+        assert_eq!(ed.found.map(|h| (h.track, h.sector)), Some((25, 0)));
+        ed.find_query = "FE ED FA CE".into();
+        ed.find_next(&d);
+        assert!(ed.found.is_none());
+        assert_eq!(ed.find_msg, "Not found on this disk");
+        ed.find_query = "XYZ".into();
+        ed.find_next(&d);
+        assert!(ed.find_msg.contains("hex"), "{}", ed.find_msg);
     }
 }

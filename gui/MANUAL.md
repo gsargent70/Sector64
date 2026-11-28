@@ -682,14 +682,29 @@ bytes to a line, with the bytes as PETSCII text on the right.
   Selected file jumps to the first block of the file selected in
   the listing.
 
-To change bytes, click one in the grid (in the hex or the text
-part), then type hex digits: two to a byte, and the cursor moves
-on. The arrow keys move the cursor; Home and End go to the start
-and end of a line. Changed bytes are shown in amber and nothing
+To change bytes, click one in the grid, then type:
+- In the hex part, type hex digits: two to a byte, and the cursor
+  moves on.
+- In the text part, type text: each character becomes one byte,
+  as the C64 shows it in its upper-case set (a and A both put in
+  $41), and the cursor moves on. Characters the C64 doesn't have
+  are skipped; Backspace moves back a byte.
+The cursor's column (hex or text) has the brighter box. The arrow
+keys move the cursor; Home and End go to the start and end of a
+line. Changed bytes are shown in amber and nothing
 is written yet. Write puts them on the disk as one edit, which
 Undo takes back; Revert forgets them. Until you do one or the
 other, the other blocks can't be opened. As with every edit, the
 disk file itself only changes when you Save.
+
+Find looks through the whole disk, block by block in disk order,
+from just after the cursor, and goes to the next match, with the
+cursor on its first byte and the match shown in green; press Find
+next (or Enter in the box) again for the one after. TEXT matches
+letters in either case, whichever character set wrote them; HEX
+takes bytes such as A9 00 8D, with ?? for any byte. A match can
+run on into the next block. After the last block it goes on from
+the first, and says so. Back returns to where you were.
 
 The editor shows the disk in the focused pane. Read-only disks
 (G64, D2M partitions, Zip-Code sets) can be viewed but not
